@@ -1,7 +1,47 @@
 {
-  "milestones": [],
-  "stories": [],
-  "tasks": [],
+  "milestones": [
+    { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
+    { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "not_started" },
+    { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "not_started" },
+    { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
+  ],
+  "stories": [
+    { "id": "s-session0-scaffolding", "milestoneId": "m1-foundations", "title": "Session 0 — architecture scaffolding (CLAUDE.md, agent roster, skills, architecture diagram, progress.json skeleton)", "status": "done" },
+    { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO, Dockerfile, backend project skeleton)", "status": "done" },
+    { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon project, Cloudflare R2 bucket, Microsoft Graph app registration + OneDrive OAuth consent, Azure Container Apps environment, budget alert", "status": "not_started", "note": "Touches OneDrive/.env/deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list." },
+    { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record directly in Postgres (one-time script, no admin UI)", "status": "not_started" },
+    { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1) — Pydantic models, status codes, error envelope, offline-queue idempotency", "status": "done" },
+
+    { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + this trip's bikes", "status": "not_started" },
+    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "not_started" },
+    { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync — multipart upload to S3-compatible storage, background Graph sync job", "status": "not_started" },
+    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "not_started" },
+    { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "not_started" },
+
+    { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt (localStorage identity-by-label)", "status": "not_started" },
+    { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map with stop pins + auto-generated trail + chronological timeline feed", "status": "not_started" },
+    { "id": "s-frontend-add-stop-flow", "milestoneId": "m3-frontend-pwa", "title": "Add-stop flow — camera capture, GPS auto-fill with manual map-tap fallback, notes", "status": "not_started" },
+    { "id": "s-frontend-timeline-gallery", "milestoneId": "m3-frontend-pwa", "title": "Stop detail — photo gallery (thumbnail grid → enlarge), notes, timestamp on pin click", "status": "not_started" },
+    { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — service worker + IndexedDB, resumable multipart upload, client-side photo resize/compress + HEIC→JPEG", "status": "not_started" },
+
+    { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page — this trip's 3 motorcycles, make/model/specs", "status": "not_started" },
+    { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN on top of the rider link", "status": "not_started" },
+    { "id": "s-offline-indicator", "milestoneId": "m4-polish-deploy", "title": "Offline indicator — queued/pending sync UI", "status": "not_started" },
+    { "id": "s-real-device-testing", "milestoneId": "m4-polish-deploy", "title": "Real-device testing day with friends (airplane-mode capture, concurrent uploads, GPS-denied path)", "status": "not_started" },
+    { "id": "s-deploy-cutover", "milestoneId": "m4-polish-deploy", "title": "Azure Container Apps production cutover", "status": "not_started", "note": "Deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list." },
+    { "id": "s-handover-docs", "milestoneId": "m4-polish-deploy", "title": "Handover documentation — architecture-handover.md, user-guide.md", "status": "not_started" }
+  ],
+  "tasks": [
+    { "id": "t-session0-scaffolding", "storyId": "s-session0-scaffolding", "title": "Session 0 output: CLAUDE.md, .claude/agents/*.md, .claude/skills/*/SKILL.md, docs/architecture-diagram.md, docs/progress.json skeleton", "status": "done", "agent": "orchestrator", "blockers": [] },
+    { "id": "t-local-dev-env-setup", "storyId": "s-local-dev-env", "title": "docker-compose.yml (api/postgres/minio), Dockerfile, backend project skeleton (app/core, app/data, app/storage, app/api/routes stubs)", "status": "done", "agent": "orchestrator", "blockers": [] },
+    { "id": "t-error-envelope-model", "storyId": "s-api-contract", "title": "backend/app/models/common.py — ErrorCode, ErrorDetail, ErrorEnvelope", "status": "done", "agent": "orchestrator", "blockers": [], "note": "Written directly by the orchestrator before the Architect-vs-pipeline process (spec Section 10) was fully locked down this session — not retroactively re-scoped." },
+    { "id": "t-trip-model", "storyId": "s-api-contract", "title": "backend/app/models/trip.py — Access, TripOut", "status": "done", "agent": "orchestrator", "blockers": [], "note": "Same pre-pipeline context as t-error-envelope-model." },
+    { "id": "t-stop-model", "storyId": "s-api-contract", "title": "backend/app/models/stop.py — LocationSource, StopCreate, StopOut", "status": "done", "agent": "orchestrator", "blockers": [], "note": "Same pre-pipeline context as t-error-envelope-model." },
+    { "id": "t-bike-model", "storyId": "s-api-contract", "title": "backend/app/models/bike.py — BikeCreate, BikePatch, BikeOut", "status": "done", "agent": "orchestrator", "blockers": [], "note": "Same pre-pipeline context as t-error-envelope-model." },
+    { "id": "t-photo-model", "storyId": "s-api-contract", "title": "backend/app/models/photo.py — PhotoCreateForm, PhotoOut", "status": "done", "agent": "orchestrator", "blockers": [], "note": "Same pre-pipeline context as t-error-envelope-model." },
+    { "id": "t-map-model", "storyId": "s-api-contract", "title": "backend/app/models/map.py — GeoJSON FeatureCollection response models for GET /trips/{slug}/map", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-api-contract-doc", "storyId": "s-api-contract", "title": "docs/api-contract.md — consolidated Session 1 API contract (8 endpoints, idempotency, error envelope, 403-vs-404, map/photo notes)", "status": "done", "agent": "docs", "blockers": [] }
+  ],
   "currentTask": null,
-  "lastUpdated": null
+  "lastUpdated": "2026-09-12T00:00:00Z"
 }

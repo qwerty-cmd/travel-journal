@@ -13,6 +13,10 @@ The "how." For the "what and why," see `bike-trip-journal-spec.md` — read it b
 ## Build order — a strict gate, not a suggestion
 **Architecture → API contract → build.** Nothing in spec Section 5 gets implemented until its contract is written down (Pydantic models, status codes, error envelope). No task gets defined by the `ba` agent ahead of its contract existing.
 
+**Before starting any session or task, read `docs/architecture-diagram.md` first.** It's the reference every agent checks against to confirm the build still matches the intended shape.
+
+**Architect vs. Orchestrator (spec Section 10/11):** the contract's *shape* (Sessions 0, 1, Handover) is Architect work — you and the user together, discussed and agreed in conversation. Architect work produces a decision, not code — never write the resulting files directly, even after agreement. Once agreed, it goes through the same pipeline as everything else: `ba` scopes it as a task, `dev` implements it. (Session 0 is the sole exception — its own output is the agent definitions, so nothing exists yet to dispatch to. Every session after that goes through the pipeline, no exceptions.)
+
 ## Agent roster (`.claude/agents/`) — use these, don't do task work directly in the main session
 | Agent | Job | Tools |
 |---|---|---|
@@ -27,7 +31,7 @@ Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry 
 
 The main session is the orchestrator/PM (merged — see spec Section 11): decides what's next, dispatches to the agents above, surfaces every resulting patch for review before starting the next task. One task = one reviewable patch — don't queue up several unreviewed.
 
-Reference `docs/architecture-diagram.md` when in doubt about how pieces connect; update it in the same patch if a change makes it wrong.
+Update `docs/architecture-diagram.md` in the same patch if a change makes it wrong — it's read before every session/task starts (above), so it can't be allowed to drift.
 
 ## Commands
 ```
