@@ -1,0 +1,19 @@
+---
+name: add-endpoint
+description: The repeatable recipe for turning one API-contract entry into a working, tested, documented endpoint. Use this whenever the dev/test-writer/qa/docs agents are working through one of the endpoints in spec Section 5.
+---
+
+# Add endpoint
+
+One API-contract entry (spec Section 5) becomes one endpoint via this sequence. Every step is a small, checkable unit — don't skip ahead if an earlier one isn't actually done.
+
+1. **Pydantic model** (`backend/app/models/`) — request and response shapes exactly as defined in the API contract. Every field gets a real `description=` (this feeds the OpenAPI spec, which feeds Kubb's generated frontend types — spec Section 5).
+2. **Repository function** (`backend/app/data/repositories/`) — the Postgres query/mutation this endpoint needs. Never call SQLAlchemy from the route handler directly.
+3. **Storage call, if the endpoint touches photos** (`backend/app/storage/`) — via the S3-compatible client module, never boto3 directly from the route.
+4. **Route handler** (`backend/app/api/routes/`) — wires the above together. Enforces the access-control rule from spec Section 4 (403 on a viewer slug for any write) via the shared dependency in `backend/app/core/security.py`.
+5. **Test** (`test-writer` agent) — contract-first if this endpoint touches access control or data integrity (spec Section 12), implementation-following otherwise.
+6. **QA validation** (`qa` agent) — re-derive acceptance criteria from the contract, verify behavior directly, don't just trust green tests.
+7. **Docs** (`docs` agent) — Context/How it works/Related APIs, written from what was actually built.
+8. **Frontend hook regeneration** — once the backend endpoint exists and its OpenAPI description is complete, regenerate the Kubb client (`frontend/src/api/`) so the frontend gets the new typed hook automatically — never hand-write a matching fetch call.
+
+Stop and flag it if any step reveals the API contract itself needs to change — don't quietly improvise around a contract gap; that's a Session 1 problem, not something to patch over mid-task.

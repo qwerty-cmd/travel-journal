@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.local
+*.key
+**/graph_token.json
+
+# Python
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/src/routeTree.gen.ts
+
+# Docker
+minio-data/
+postgres-data/
+
+# Editors / OS
+.vscode/
+.DS_Store
+Thumbs.db
