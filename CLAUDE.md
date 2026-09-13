@@ -15,6 +15,8 @@ The "how." For the "what and why," see `bike-trip-journal-spec.md` — read it b
 
 **Before starting any session or task, read `docs/architecture-diagram.md` first.** It's the reference every agent checks against to confirm the build still matches the intended shape.
 
+**`docs/decision-log.md` records contested calls** — where one agent overruled, contradicted or empirically disproved another, and why. Check it before reopening a settled decision or reintroducing an approach that looks obvious; several already were tried and rejected for measured reasons. Owned by the `docs` agent, who adds an entry each time a disagreement is resolved.
+
 **Architect vs. Orchestrator (spec Section 10/11):** the contract's *shape* (Sessions 0, 1, Handover) is Architect work — you and the user together, discussed and agreed in conversation. Architect work produces a decision, not code — never write the resulting files directly, even after agreement. Once agreed, it goes through the same pipeline as everything else: `ba` scopes it as a task, `dev` implements it. (Session 0 is the sole exception — its own output is the agent definitions, so nothing exists yet to dispatch to. Every session after that goes through the pipeline, no exceptions.)
 
 ## Agent roster (`.claude/agents/`) — use these, don't do task work directly in the main session
@@ -25,7 +27,7 @@ The "how." For the "what and why," see `bike-trip-journal-spec.md` — read it b
 | `test-writer` | Writes tests — contract-first for access control/data integrity/offline queue, implementation-following elsewhere | Read/Edit/Write/Bash |
 | `qa` | Independently verifies acceptance criteria; no edit access, reports back rather than fixing | Read/Bash/Grep |
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
-| `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint | Read/Write/Edit, `docs/` only |
+| `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint and `docs/decision-log.md` | Read/Write/Edit, `docs/` only |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
