@@ -376,11 +376,29 @@ someone ever rewrites the lookup to infer access from the query structure (two s
 `CASE` over the predicate, a returned "matched_on" flag), this dismissal stops being valid and the
 gap becomes real.
 
-**Outstanding — rationale not yet co-located (Entry 4's rule).** `security.py` is still a stub at
+**~~Outstanding~~ — rationale not yet co-located (Entry 4's rule).** `security.py` is still a stub at
 the time of writing, so the "derive access from the matched row's columns, never from which `OR`
 branch fired" rationale exists only here. It belongs *beside the lookup*, where the rewrite would
 be attempted. `t-slug-access-dependency` should land that comment in `security.py` as part of the
 implementation; this entry is then the long form of it.
+
+> **Closed 2026-09-13 — co-located and verified.** Left standing above rather than deleted, per the
+> same convention as Entry 6's correction and this entry's amendment: a reader should be able to see
+> that the item existed and was discharged, not find a gap where it was. `t-slug-access-dependency`
+> landed it. The rationale now lives in `backend/app/core/security.py`, in the docstring of
+> `access_for_slug` — which is the function that performs the comparison, i.e. exactly where the
+> "just infer access from which `OR` branch matched" rewrite would be attempted. Verified by reading
+> the landed code, not assumed from the task being marked done.
+>
+> The docstring goes further than this item asked for, and the extra part is the half that was still
+> missing: it states the **precondition** the Amendment established — that deriving access from the
+> matched row is sound *only if that row's two slug columns are distinct* — names
+> `trips_slugs_differ_check` as what makes that true, and says plainly what breaks without it
+> ("if that constraint is ever dropped, this function starts granting writes through viewer links and
+> nothing here will notice"). That closes the loop in both directions: `migrations/0002_trips_slugs_differ_check.sql`
+> carries the reason the constraint exists (checked, present), and `security.py` carries the reason it
+> may not be dropped. Neither file depends on a reader having found this log first. The Amendment's
+> own "Co-location" paragraph is likewise satisfied by that migration's header comment.
 
 ### Amendment (2026-09-13) — this entry was narrower than it reads, and the second shape went the other way
 
@@ -458,3 +476,122 @@ are distinct*. The CHECK is what makes that precondition true; it is not redunda
 that is where the "this can't happen anyway, drop the CHECK" instinct will strike — most likely from
 a future agent who reads the original Entry 8, sees collisions dismissed, and concludes the
 constraint contradicts a settled call. This amendment is the long form of that comment.
+
+---
+
+## 9. Seed script: print the slugs before committing, or after? — and a fix-up dispatch that was interrupted mid-run
+
+**Who:** `qa` vs `dev`. Resolved **in `dev`'s favour on the ordering**, in `qa`'s favour on
+everything around it. **Where:** `backend/app/data/seed_trip.py` (`_seed_with_new_engine`),
+task `t-seed-trip-script`.
+
+Two things are recorded together here because they happened in the same round and the second one is
+*why the first one's fix landed in two pieces*. They are otherwise unrelated; skip to "The process
+event" if that is what you came for.
+
+### The contested call — commit-then-print vs. print-then-commit
+
+**What `dev` built.** `seed_trip()` inserts the trip, `main()` commits, and only then are the two
+slugs printed to stdout. The slugs are the entire access model: `secrets.token_urlsafe` tokens, no
+accounts, no rotation, no recovery flow, and this single stdout write is the only copy the operator
+will ever be handed.
+
+**`qa`'s challenge, and the part of it that was correct.** `qa` did not merely note the ordering —
+it analysed both orderings to their failure modes and found a **real asymmetry**, which was accepted
+and is not in dispute:
+
+- **Print-then-commit fails *recoverably*.** If the commit dies after the print, the operator is
+  holding slugs for a trip that does not exist. Nothing is lost. `trips` is empty, so the script's
+  own already-exists refusal does not trigger, and the fix is to run the command again.
+- **Commit-then-print fails *unrecoverably*.** If the print dies after the commit, the trip exists
+  in Postgres with two slugs **no human has ever seen** — and the script, seeing a row in `trips`,
+  now *refuses to run again*. The operator is locked out of the trip by the very guard that exists
+  to protect it.
+
+That is a genuine difference in kind, not degree, and `qa` was right to press on it.
+
+**Why print-first lost anyway.** The two failures are not comparable on severity alone, because they
+are different *kinds* of wrong. Commit-then-print's bad outcome is an **operational** one: a trip
+exists that the operator can't reach through the script. Print-then-commit's bad outcome is that the
+script **hands out credentials for a row that was never written** — it tells the operator "here are
+the rider and viewer links for your trip" when there is no trip. That is a security-shaped lie: the
+output's entire contract is "this is authoritative, save it, it is the only copy," and print-first
+makes that statement conditionally false in a way the operator cannot detect from the output itself.
+An operator who saves those slugs and closes the terminal believes they hold a working trip.
+
+The decisive point is that the unrecoverable case is only unrecoverable **from inside the script**.
+A `SELECT rider_slug, viewer_slug FROM trips` reads them straight back out. So the asymmetry `qa`
+identified is real but its severity depends on something fixable — whether the operator knows that
+query exists. Print-first's failure has no equivalent mitigation, because a row that was never
+committed cannot be read back by anything.
+
+**Resolution — the ordering was kept and the window was narrowed instead.** Commit-before-print
+stands. What changed is everything that made it dangerous:
+
+1. `emit()` moved **inside** the `try`, ahead of engine disposal. The window between commit and
+   print previously contained `engine.dispose()` — several milliseconds of real network I/O on
+   connections that may already be dead or idle-timed-out by Neon. A raising `dispose()` would have
+   propagated *instead of* the result: trip committed, slugs never printed, operator shown an
+   `OSError` about a socket.
+2. Disposal moved to a `finally` wrapped in `suppress(Exception)`, so it can no longer replace a
+   return value or an in-flight error. By then the work is either committed and printed or already
+   propagating a better error; whatever is still open is closed by the process exiting.
+3. The **documented recovery `SELECT`** is what makes the residual risk survivable, and it is
+   printed on both paths that leave an operator without slugs in front of them — the already-exists
+   refusal and a failed stdout write (which exits 1 with the query on stderr). The refusal also
+   explicitly warns *against* DELETE-and-reseed, because an operator who believes the slugs are
+   irrecoverable will reach for exactly that, destroying the trip and everything scoped to it.
+
+**Why it matters going forward.** If you are reading `_seed_with_new_engine` and the commit-then-
+print ordering looks like an oversight: it isn't, it was challenged on exactly these grounds, and
+the challenge was answered by shrinking the window rather than by reversing the order. **Do not
+reorder it.** The thing that must be preserved is not the order by itself — it is the pairing: the
+order is only defensible while (a) nothing that can perform I/O or raise sits between the commit and
+the print, and (b) the recovery query is actually told to the operator on every path that loses the
+output. Delete either and the ordering becomes the bad call `qa` said it was. The rationale is
+co-located in that function's docstring and in the comment above `return emit(result)`, which is
+where the reversal would be attempted; this entry is the long form of those comments.
+
+Noted alongside, because it constrains any future rewrite of the error paths: `dev` confirmed
+empirically that the bound-parameter leak is **not** limited to `IntegrityError`. An
+undefined-column INSERT renders **both slugs into the raw exception string** on the generic
+`SQLAlchemyError` branch. That is why no branch in this module interpolates a driver exception into
+a message, and why the generic branch reports SQLSTATE rather than `str(exc)`.
+
+### The process event — a fix-up dispatch that landed half its work
+
+**Who:** `dev` (second run) vs. the task description it was handed. Resolved in `dev`'s favour.
+
+The first fix-up dispatch was **interrupted mid-run**. It had applied the six source changes to
+`seed_trip.py` but had not written the corresponding tests. The next `dev` run received a task
+describing work as outstanding that was, in the file, already done — and noticed, because the task's
+cited line numbers did not match the file in front of it.
+
+**What it did instead of either obvious thing.** It did not assume the task was right and redo the
+edits (which would have double-applied or conflicted). It did not assume the task was stale and
+declare the work complete. It **verified each of the six fixes by behaviour rather than by reading
+the code**, made no edits to the source at all, and wrote only the genuinely missing piece — the
+tests. It then demonstrated the test suite was complete rather than merely passing, by **reverting
+each of the six fixes in turn and confirming each mapped to exactly one failing test.**
+
+**Why it matters going forward.** This is the general rule, and it is not specific to seeding:
+**when a task's premise does not match the file in front of you, the premise is the thing to check
+first — empirically, then report the discrepancy.** Both default reactions are wrong in the same
+way: "the task must be right, redo it" and "the file must be right, it's done" each resolve the
+contradiction by *assuming* one side, and an interrupted run is exactly the situation where neither
+side is trustworthy. Read the current state, prove it by behaviour, and hand the discrepancy back.
+
+Note also the verification technique, which is worth reusing wherever a fix-up lands tests after
+source: reverting each fix individually and requiring exactly one test to fail is a *completeness*
+check on the test set, not a vacuousness check on individual tests. It answers "is there a fix here
+that nothing would catch," which is the question Entry 7(a) showed mutation testing structurally
+cannot answer about paths you did not think of — here the set of paths was enumerated externally, by
+`qa`'s findings list, rather than by the author's own recollection.
+
+### Status footnote, because it is easy to misread
+
+`t-seed-trip-script` is **done**; story `s-seed-trip-record` is **not**. The script is built and
+`trips` still holds **0 rows** — the one-time seed is deliberately unconsumed. Running it is a human
+step: it prints permanent, unrotatable credentials, and no agent should run it because that puts
+live slugs into an agent transcript (the module's own rule 1 — no logs, no files — exists for the
+same reason and would be defeated by it). The story closes when the trip actually exists.
