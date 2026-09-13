@@ -66,19 +66,47 @@ Every non-2xx response uses one shape:
 
 `ErrorEnvelope` / `ErrorDetail` / `ErrorCode` — `backend/app/models/common.py`.
 
-`code` is one of exactly three values:
+`code` is one of exactly five values:
 
 | `code` | Meaning |
 |---|---|
 | `FORBIDDEN` | Valid slug, but it's the viewer slug on a write endpoint |
 | `NOT_FOUND` | No trip has this slug at all — or the stop/bike id doesn't exist |
 | `VALIDATION_ERROR` | Request body or form failed schema validation |
+| `METHOD_NOT_ALLOWED` | The path exists but not for this HTTP method — a client mistake, not a server fault |
+| `INTERNAL_ERROR` | Anything else, including an unhandled server-side exception |
 
-`message` is human-readable and safe to show a rider directly.
+#### Status → code mapping
 
-One shape for every failure is what lets the frontend have a single error path. Kubb generates the client from the OpenAPI spec, so if half the endpoints failed in one shape and half in another, every call site would need to branch on which.
+This is the mapping the global exception handler implements. It is exhaustive by construction: there is no status a response can carry that does not land on a code.
 
-**FastAPI's default 422 does not look like this.** Out of the box, a validation failure returns FastAPI's own `{"detail": [...]}` structure. That has to be overridden by a global exception handler that maps validation errors onto the envelope above with `code: "VALIDATION_ERROR"` — otherwise a `422` is the one response the generated client can't parse like the others. **That handler is Week 2 work and is not built yet** (see Outstanding, below). The envelope model exists; the wiring does not.
+| HTTP status | `code` |
+|---|---|
+| 403 | `FORBIDDEN` |
+| 404 | `NOT_FOUND` |
+| 422 | `VALIDATION_ERROR` |
+| 405 | `METHOD_NOT_ALLOWED` |
+| anything else, including an unhandled 500 | `INTERNAL_ERROR` |
+
+`METHOD_NOT_ALLOWED` and `INTERNAL_ERROR` were added after the original three proved insufficient to keep the "every non-2xx uses this envelope" promise. Both statuses are reachable today: `POST /api/health` hits a real, `GET`-only route and returns a `405`, and an unhandled exception is a `500` by definition. With only three codes, neither had a legal value to report.
+
+A `405` requires a **registered path with a different method** — it is not what an unregistered path returns. `DELETE /trips/{slug}/stops` returns `404`, not `405`, because the stops router is still an empty `APIRouter` stub with no methods registered: Starlette finds no matching route at all, so there is nothing for the method to mismatch against. (An earlier revision of this document used that request as the `405` example; `qa` ran it and found `404`. See `docs/decision-log.md` Entry 6.)
+
+They are two codes rather than one catch-all because **a `405` is a client error and a `500` is a server fault** — collapsing them would make the envelope inaccurate about which side went wrong. That distinction is not cosmetic: the offline queue decides retry-vs-never-retry programmatically from `code`, and "the server is broken, try later" and "this request can never succeed as written" are opposite answers.
+
+#### `message` and the `INTERNAL_ERROR` leak boundary
+
+`message` is human-readable and **documented as safe to show a rider directly**. That guarantee is what makes the single frontend error path possible — the UI renders `message` without sanitising or whitelisting it.
+
+It follows, and the implementation is bound by it, that **the `INTERNAL_ERROR` message is always a fixed generic string.** The originating exception text is logged server-side and never appears in the response body. This is a leak boundary, not politeness: a raw database error can carry the database host, user and query fragments, and the rider-facing error surface is a public one — the slug in the URL is the only access control there is.
+
+The other four codes carry messages written for the situation, because they describe conditions the caller is allowed to know about.
+
+One shape for every failure is what lets the frontend have a single error path. Kubb generates the client from the OpenAPI spec, so if half the endpoints failed in one shape and half in another, every call site would need to branch on which — including the offline queue, which spec Section 12 ranks in the top three for testing rigor. Two parsing paths there would mean two places for retry logic to be wrong.
+
+**FastAPI's default 422 does not look like this.** Out of the box, a validation failure returns FastAPI's own `{"detail": [...]}` structure, and a `405` or an unhandled `500` returns `{"detail": "..."}`. All of those have to be overridden by global exception handlers that map onto the envelope above — otherwise they are the responses the generated client can't parse like the others. **Those handlers are being implemented now** (task `t-error-envelope-handlers`; see Outstanding, below). The envelope model exists; the wiring is in progress.
+
+**`405` and `500` are framework-level responses, not endpoint contract.** They are reachable from any path and are therefore deliberately *not* listed in the per-endpoint status codes below. No endpoint declares a 405 or a 500 row. The envelope guarantee still covers them — that guarantee is global, which is precisely why it doesn't belong in a per-endpoint column.
 
 ---
 
@@ -200,7 +228,7 @@ It exists so a viewer can tell an exact fix from an approximate tap, and so the 
 Everything below is known and deliberate, not an oversight:
 
 1. **No route handler exists.** Not one of the eight endpoints is implemented. The six files in `backend/app/models/` *are* the contract as it stands; Week 2 implements against them. Until handlers exist there is no OpenAPI spec to generate a Kubb client from either.
-2. **The global exception handler is not written.** FastAPI's default `422` body does not match `ErrorEnvelope`, and nothing currently normalises it. Until that handler lands, a validation failure is the one response shape that differs from every other failure. `backend/app/models/common.py` defines the shape only — the wiring is Week 2 work.
+2. **The global exception handlers are in progress, not done.** Task `t-error-envelope-handlers` (`backend/app/core/errors.py` + `main.py` wiring) is being implemented now; it is not closed until it passes QA. Until it lands, FastAPI's default `422`, `405` and `500` bodies do not match `ErrorEnvelope` and nothing normalises them, so those are the response shapes that differ from every other failure. `backend/app/models/common.py` defines the shape — including the two codes added for `405`/`500` (see Error envelope, above) — and the wiring renders it.
 3. **Handler-side map behaviour is unenforced by the models.** Sorting stops by `arrivedAt` before building the trail, and omitting the trail below 2 stops, are both route-handler responsibilities. `backend/app/models/map.py` encodes the shape and the ">= 2 positions" constraint; it cannot enforce that positions arrive in the right order.
 4. **Replay detection is a handler responsibility too.** The models carry the client-generated `id`; recognising an already-seen id and returning the stored record with `200` is implemented in the route + `data/` layer, and needs its own tests per spec Section 12's offline-queue priority.
 5. **No trip record is seeded yet.** Story `s-seed-trip-record` still has to put the single trip and its two slugs in Postgres before any of these endpoints can return anything. Slug values live only in the database — none appear in this document, and `{slug}` throughout is a placeholder.
