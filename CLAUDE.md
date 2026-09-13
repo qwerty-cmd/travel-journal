@@ -53,6 +53,15 @@ cd frontend && npm install && npm run dev
 cd frontend && npx kubb generate
 ```
 
+## Commit convention
+Conventional Commits: `type(scope): subject`. Types in use: `feat`, `fix`, `docs`, `chore`, `build`. Scopes seen: `data`, `api`, `docs`. Subject in imperative mood, lower case, no trailing period.
+
+**The body carries the *why*, not the *what*** — the diff already shows what changed; it can't show what was considered and rejected. The existing history is the reference, not a style guide elsewhere: read it before writing a message. It records why primary keys are `text` and not `uuid`, why `INTERNAL_ERROR` always returns a fixed generic message, and why the bespoke SQL splitter was removed. That reasoning isn't recoverable from the diff later. (Where a *contested* call is involved, the commit body is the short form — `docs/decision-log.md` is the long one.)
+
+Split commits by logical change, ordered so **each one leaves a working tree**: the `DATABASE_URL` driver fix landed before the migrations that depend on it, and the two new `ErrorCode` members landed in the same commit as the handlers using them rather than orphaned in a docs commit.
+
+**Never commit without being asked. Never push unless explicitly told to.**
+
 ## Off-limits without explicit approval
 - OneDrive token handling (`backend/app/storage/onedrive_sync.py`, `GRAPH_*` env vars)
 - Anything in `.env`, `.env.example` real values, or `infra/` deployment config
