@@ -315,6 +315,48 @@ This is live and specific right now: the `main.py` catch-all guard and `frontend
 concrete instance, and `s-offline-queue` / the Week 3 frontend stories are when the directory
 appears.
 
+> **Correction (2026-09-14) — half of this entry's (b) fix does not work, and the test that says it
+> does is blind by construction. Logged rather than silently edited, per Entry 6's convention.**
+>
+> **Who:** `qa`, verifying `t-trip-metadata-endpoint` on a real uvicorn process, against the fix this
+> entry records as landed. **Status: open, not resolved** — `ba` is scoping
+> `t-405-router-route-collapse`. This note exists because, until then, a reader of Entry 7 would
+> reasonably conclude the catch-all problem was fixed and covered. It was not.
+>
+> The fix had two halves: unknown `GET /api/*` must return a `404` envelope rather than `200
+> text/html`, and a *wrong verb on a real API route* must return `405` rather than `404`. The first
+> half holds. The second half works for exactly one route in the application —
+> `/api/health`, the only one registered directly on `app`. `_methods_allowed_elsewhere` in
+> `main.py` skips any route where `not getattr(route, "methods", None)`, and this FastAPI version
+> represents an included router as a single lazy `_IncludedRouter` entry with `path=None`,
+> `methods=None` and no `.routes` attribute. So **all eight contract endpoints are invisible to the
+> scan**: `POST /api/trips/whatever` returns `404`, with no `Allow` header. `qa` confirmed the
+> catch-all is the cause rather than Starlette — deleting it makes the same requests return `405`
+> correctly, because `_IncludedRouter.matches()` *does* report `Match.PARTIAL` for the wrong verb.
+> The information was there; the `getattr` probe just could not reach it.
+>
+> **Why this matters beyond one header.** Entry 6 is the reason: `405`-collapsed-to-`404` is exactly
+> the contract lie that entry refused to accept, and the offline queue branches retry-vs-never-retry
+> on `code`. A `404` tells the queue "this resource doesn't exist" when the truth is "this method is
+> never accepted." The two new codes were added *specifically* so this would not happen, and at
+> runtime it happens anyway on every route that matters.
+>
+> **The transferable part — this entry's own rule was followed and still produced a blind test.**
+> `test_spa_wrong_method_on_a_real_api_route_is_still_405` does create `frontend/dist`, exactly as
+> (b) demands. It is green, and it has never once exercised the case it is named for, because it
+> asserts against `/api/health` — the single route the broken scan can see. So (b) needs a second
+> half: **creating the environment state is necessary and not sufficient; the assertion must also
+> target a representative instance of the population the guard claims to cover.** Picking the
+> most convenient fixture picked the one route that is structurally unlike all eight real ones. That
+> is Entry 2's vacuousness failure mode wearing different clothes — a guard that cannot fail for the
+> cases it exists to protect — recurring inside the entry written to prevent its neighbour.
+>
+> **Do not read this as "remove the catch-all" being pre-approved.** Whether the fix is a
+> `route.matches()`-based probe, a rewrite of the scan, or deleting the catch-all outright is open,
+> and the first half of the fix (unknown `GET /api/*` not returning the SPA shell) depends on the
+> catch-all existing. `s-stop-crud` is the deadline: a `DELETE` on a registered stops path must be
+> `405` and will silently stay `404`.
+
 ---
 
 ## 8. Cross-trip slug collision: the schema permits it, and that is deliberately left alone
