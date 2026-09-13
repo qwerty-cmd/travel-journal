@@ -36,11 +36,24 @@ async def health() -> dict[str, str]:
 #
 # So /api gets its own catch-all, registered after `api_router` (real routes win
 # on a full match) and before the SPA fallback (which therefore never sees /api).
+#
+# None of this is observable in a fresh checkout, which is why it went unnoticed
+# until QA (decision-log entry 7b): the SPA fallback is only registered when
+# `frontend/dist` exists, and without a built frontend this route just 404s paths
+# that would have 404'd anyway. It reads as dead code and isn't. The `spa_client`
+# fixture in `tests/test_error_envelope.py` creates that directory rather than
+# waiting for the Week 3 frontend build to create it, so the tests that fail if
+# this route is deleted do run today — a green local suite is not evidence the
+# route is redundant.
 API_PREFIX = "/api"
 UNKNOWN_API_PATH = "/api/{rest:path}"
 
-# Every method a client can realistically send. The point of the route is that
-# it matches regardless of verb, so listing GET alone would recreate F2.
+# Every method a client can realistically send, because the point of the route is
+# that it matches regardless of verb. A GET-only guard would leave every non-GET
+# request for an unknown /api path falling through to the SPA fallback, which is
+# itself GET-only: it would partial-match on path and the router would report a
+# method-mismatch 405 ("wrong verb on a real endpoint") for a path that does not
+# exist under any verb.
 _ALL_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"]
 
 
