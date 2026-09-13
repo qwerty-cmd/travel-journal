@@ -314,3 +314,147 @@ someone unrelated makes the condition true, and the failure will be attributed t
 This is live and specific right now: the `main.py` catch-all guard and `frontend/dist` are the
 concrete instance, and `s-offline-queue` / the Week 3 frontend stories are when the directory
 appears.
+
+---
+
+## 8. Cross-trip slug collision: the schema permits it, and that is deliberately left alone
+
+> **Scope amended — see "Amendment (2026-09-13)" at the end of this entry before relying on it.**
+> This entry covers **one** of two collision shapes. `qa` later found a second, different shape
+> (`rider_slug == viewer_slug` on a *single row*) which this entry's reasoning does **not** cover and
+> which was resolved the opposite way. Everything below is the original text, unedited.
+
+**Category note — this entry is a different shape from the others.** Entries 1–7 record a
+*disagreement* that one side won. This one records a design gap that was **raised and consciously
+dismissed**: `ba` found it, argued it needs no fix rather than quietly passing over it, and the
+orchestrator agreed. It is here because the gap is real and visible in the schema, so a future
+reader will find it independently and re-raise it. Without a record they would either re-derive this
+analysis from scratch or, worse, "fix" it — and the obvious fix has a cost (below). A considered
+dismissal that leaves no trace is indistinguishable from an oversight.
+
+**Who:** `ba`, raised while scoping `t-slug-access-dependency`; agreed by the orchestrator.
+**Where:** `backend/migrations/0001_initial_schema.sql` (the two `UNIQUE` constraints on `trips`),
+`backend/app/core/security.py`.
+
+**The observation.** `trips.rider_slug` and `trips.viewer_slug` each carry their own `UNIQUE`
+constraint, and the two are **independent**. Nothing in the schema is a cross-column constraint. So
+a single string can legally be trip A's `rider_slug` and simultaneously trip B's `viewer_slug`.
+Every per-column uniqueness guarantee holds; the pair is still ambiguous. A lookup that matches on
+`rider_slug = :slug OR viewer_slug = :slug` could in principle match two different rows.
+
+**Why it is moot — three independent reasons, any one of which would be enough:**
+
+1. **The collision cannot occur.** Slugs are `secrets.token_urlsafe` tokens (spec Section 4,
+   restated in Entry 3). This is not "unlikely by convention" like a user-chosen handle; it is the
+   same order of improbability as guessing a slug outright, which is the security assumption the
+   whole authorization model already rests on. If it *did* happen, the cause would be a broken RNG
+   or a duplicated insert — a bug signal, exactly as Entry 3 concluded for the single-column case,
+   and not a condition to design around.
+2. **The contract says nothing about it.** `docs/api-contract.md` defines behaviour for "the trip
+   this slug belongs to." It makes no promise about a slug belonging to two trips, so there is no
+   specified behaviour being violated. There is nothing to bring the implementation into line with.
+3. **The design is self-consistent regardless — this is the load-bearing one.** `security.py`
+   derives `Access` by comparing the presented slug against the **matched row's own columns**, not
+   by inferring which branch of the `OR` fired. Whichever single row the query returns, the answer
+   it yields is internally coherent: that row's `rider_slug`/`viewer_slug` decide the access level
+   for that row. There is no path where a collision produces rider access to a trip whose rider slug
+   was never presented. The ambiguity would be "which trip did you mean," never "what may you do."
+
+**Rejected: adding a cross-column constraint.** The obvious remedy is an exclusion constraint or a
+shared uniqueness index across both columns (e.g. a lookup table of all slugs, or a functional index
+over the pair). Rejected on cost-versus-impossibility: it puts a **second index on the hot slug
+lookup path** — the query on the critical path of every single authenticated request in the app —
+to rule out a case that cryptographically random tokens already rule out. It also adds a failure
+mode at insert time that the seed script would then have to reason about, for a condition that
+signals a broken RNG rather than a data conflict worth resolving.
+
+**Why it matters going forward.** If you are reading the schema and notice that the two `UNIQUE`
+constraints don't talk to each other: yes, that is true, it was seen, and it is intentional. The
+thing that makes it safe is **not** the schema — it is that `security.py` reads access off the
+matched row rather than off which `OR` branch matched. That property is what must be preserved. If
+someone ever rewrites the lookup to infer access from the query structure (two separate queries, a
+`CASE` over the predicate, a returned "matched_on" flag), this dismissal stops being valid and the
+gap becomes real.
+
+**Outstanding — rationale not yet co-located (Entry 4's rule).** `security.py` is still a stub at
+the time of writing, so the "derive access from the matched row's columns, never from which `OR`
+branch fired" rationale exists only here. It belongs *beside the lookup*, where the rewrite would
+be attempted. `t-slug-access-dependency` should land that comment in `security.py` as part of the
+implementation; this entry is then the long form of it.
+
+### Amendment (2026-09-13) — this entry was narrower than it reads, and the second shape went the other way
+
+**Who:** `qa`, reviewing `t-slug-access-dependency`, against this entry as written. Resolved by the
+user, who approved a fix. **Where:** `backend/migrations/0002_*.sql` (new, landing in the current
+fix-up), `backend/app/core/security.py`.
+
+**Recorded here as an amendment rather than a new entry because it corrects this entry's *scope*.**
+The original text is left standing above, per the same principle as Entry 6's correction: a log that
+rewrites itself invisibly is worth less than one that shows where it was too broad and who caught it.
+A reader who found only the original would reasonably conclude that "slug collisions were considered
+and dismissed," full stop. That conclusion is wrong for half the problem.
+
+**There are two collision shapes, not one.** The original entry addressed only the first:
+
+1. **Cross-trip** — one string is trip A's `rider_slug` and trip B's `viewer_slug`. Two rows.
+   **Still waived, for the reasons above, unchanged.**
+2. **Same-row** — `rider_slug == viewer_slug` **on a single trip row**. Nothing in the schema
+   prevents it: both `UNIQUE` constraints are satisfied, because each column is unique *within its
+   own column*, and one row holding the same value in both columns violates neither.
+   **Not waived. Constrained.**
+
+**What `qa` demonstrated — empirically, not on taste.** It inserted a trip row with the same string
+in both slug columns. The insert **succeeded**. It then resolved that slug through
+`access_for_slug`, which returned **`RIDER`** — because the rider comparison is checked first and
+matches. So a link handed out as the *viewer* link for that trip silently grants **write** access,
+and nothing anywhere reports an anomaly. The viewer link and the rider link are the same string;
+there is no observable difference between them for the person holding one.
+
+**Why this entry's two arguments do not transfer:**
+
+- **"The ambiguity would be 'which trip did you mean', never 'what may you do'."** That sentence is
+  the load-bearing claim of the original dismissal, and it is *true for the cross-trip shape*. For
+  the same-row shape it is **false, and inverted**: there is exactly one trip, so "which trip" is
+  never in question — the ambiguity is precisely and only "what may you do." The one case the
+  original reasoning declared impossible is the case that actually exists.
+- **"Rejected on hot-path cost."** The cross-column index that argument priced is a cost *on every
+  authenticated lookup*, and that pricing stands for the cross-trip shape. It does not apply here.
+  A `CHECK (rider_slug <> viewer_slug)` is evaluated at **insert/update time only** and costs
+  **nothing** on the lookup path. The remedy for shape 2 is not the remedy that was priced and
+  rejected for shape 1, so the rejection does not carry over.
+
+Note the third original argument — that a `token_urlsafe` collision is astronomically improbable —
+is *also* weaker here. Shape 1 needs two independently generated tokens to collide. Shape 2 needs
+only a **single generation bug**: one variable reused, one copy-paste in a seed script, one
+`slug = generate()` called once and assigned twice. That is an ordinary programming mistake, not an
+RNG failure, and `s-seed-trip-record` is precisely where it would be made.
+
+**Resolution.** The user approved adding `CHECK (rider_slug <> viewer_slug)` to `trips`. It lands as
+migration **`0002`** in the current `t-slug-access-dependency` fix-up. The same-row case now fails
+**loudly at insert**, which is the Entry 3 principle applied consistently: with random tokens, a
+collision is a **bug signal**, and the correct response to a bug signal is to refuse the write, not
+to resolve it.
+
+**Which half of Entry 8 still stands.** The cross-trip dismissal, entirely — including its rejection
+of a cross-column index on the hot lookup path. Do not add one. What no longer stands is the
+*implied generality*: this entry is not authority for waiving slug collisions as a class, and the
+sentence about "which trip did you mean" describes shape 1 only.
+
+**Why it matters going forward — the transferable part.** Two cases that share a name were resolved
+**differently and for different reasons**: same-row constrained, cross-trip waived. That asymmetry
+looks arbitrary from the schema alone — someone reading `0002` may reasonably ask why the CHECK
+stops short of covering cross-trip too, and someone reading Entry 8 may reasonably ask why a
+dismissed problem grew a constraint. Neither is inconsistent; they are different failure modes with
+different costs and different remedies.
+
+More generally: **a dismissal is only as broad as the case it actually analysed.** The original entry
+enumerated three independent reasons and was careful about each — and still generalised one shape of
+a problem to a name that covered two. When waiving something, state the shape examined, not just the
+category. And the specific rule that fell out: the safety of this system rests on
+`security.py` deriving access from the matched row's columns, which is sound *only if those columns
+are distinct*. The CHECK is what makes that precondition true; it is not redundant belt-and-braces.
+
+**Co-location (Entry 4's rule).** The rationale must sit beside the constraint in `0002`, because
+that is where the "this can't happen anyway, drop the CHECK" instinct will strike — most likely from
+a future agent who reads the original Entry 8, sees collisions dismissed, and concludes the
+constraint contradicts a settled call. This amendment is the long form of that comment.

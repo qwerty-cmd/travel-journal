@@ -10,11 +10,13 @@ Two things are being protected here:
    still compiles and the failure only surfaces as a runtime error from a real
    request. Reflecting the live database and comparing it to the metadata turns
    that into a test failure at the point the mistake is made.
-2. **The location_source CHECK constraint.** The Pydantic ``LocationSource``
-   enum guards the API edge, but the database is reachable from seed scripts
-   and repositories that don't go through it. The constraint is what makes
-   "every stop is either a GPS fix or a manual tap" true of the data rather
-   than merely of the happy path.
+2. **The CHECK constraints.** The Pydantic models guard the API edge, but the
+   database is reachable from seed scripts and repositories that don't go
+   through it. A constraint is what makes a rule true of the *data* rather than
+   merely of the happy path. Two are asserted here: ``location_source``, so
+   every stop is a GPS fix or a manual tap; and ``trips_slugs_differ_check``, so
+   no trip can carry the same string as both its rider and its viewer slug —
+   which would silently turn a read-only link into a writable one.
 
 These tests need a real Postgres (docker-compose service ``postgres``, or any
 DATABASE_URL) — see tests/conftest.py.
@@ -25,7 +27,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 
 import pytest
-from sqlalchemy import DateTime, MetaData, exc, text
+from sqlalchemy import CheckConstraint, DateTime, MetaData, exc, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.data import tables
@@ -179,6 +181,131 @@ async def test_slugs_are_unique(migrated_engine: AsyncEngine, column_name: str) 
         f"trips.{column_name} has no single-column UNIQUE constraint or index "
         f"(uniquely-constrained columns on trips: {sorted(unique_columns) or 'none'})"
     )
+
+
+# --------------------------------------------------------------------------
+# trips_slugs_differ_check — rider_slug <> viewer_slug
+# --------------------------------------------------------------------------
+# Per-column UNIQUE says two *trips* cannot share a slug. It says nothing about
+# one trip carrying the same string in both columns, and that row is a silent
+# privilege escalation: `security.py` derives access as "RIDER if the presented
+# slug equals rider_slug, else VIEWER", so on such a row the rider branch always
+# wins and a link handed out as read-only writes. No code can tell the two links
+# apart, because there is only one link — which is why this is enforced in the
+# schema rather than by a check somewhere in the request path.
+#
+# Distinct from the cross-trip collision decision-log entry 8 dismissed: there
+# the open question was "which trip did you mean", and every answer was
+# self-consistent. Here it is "what may you do", and the answer is wrong.
+
+_SLUGS_DIFFER_CONSTRAINT = "trips_slugs_differ_check"
+
+# One row per CHECK constraint on the table, with its definition. Asked of
+# pg_constraint per named constraint rather than by scanning a dump of the DDL
+# for "<>", per decision-log entry 2: a keyword search over concatenated
+# introspection output passes on the strength of some unrelated object.
+_CHECK_CONSTRAINTS_SQL = """
+SELECT c.conname, pg_get_constraintdef(c.oid)
+FROM pg_constraint c
+JOIN pg_class t ON t.oid = c.conrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE t.relname = :table
+  AND n.nspname = current_schema()
+  AND c.contype = 'c'
+"""
+
+
+async def test_slugs_differ_constraint_exists(migrated_engine: AsyncEngine) -> None:
+    """The CHECK is present in the live database as a check constraint by name."""
+    async with migrated_engine.connect() as conn:
+        rows = await conn.execute(text(_CHECK_CONSTRAINTS_SQL), {"table": "trips"})
+        checks = {row[0]: row[1] for row in rows}
+
+    assert _SLUGS_DIFFER_CONSTRAINT in checks, (
+        f"trips has no CHECK named {_SLUGS_DIFFER_CONSTRAINT} "
+        f"(CHECK constraints on trips: {sorted(checks) or 'none'})"
+    )
+    definition = checks[_SLUGS_DIFFER_CONSTRAINT]
+    assert "rider_slug" in definition and "viewer_slug" in definition, (
+        f"{_SLUGS_DIFFER_CONSTRAINT} does not compare the two slug columns: {definition}"
+    )
+
+
+def test_slugs_differ_constraint_is_declared_in_core_metadata() -> None:
+    """
+    ...and in ``app/data/tables.py``, which the migrations README requires in the
+    same patch.
+
+    ``test_columns_match_metadata`` compares columns only, so a migration that
+    added this constraint without the matching Core declaration would pass every
+    other test in this file while leaving the two descriptions of ``trips``
+    disagreeing.
+    """
+    declared = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in tables.trips.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert _SLUGS_DIFFER_CONSTRAINT in declared, (
+        f"tables.trips declares no CheckConstraint named {_SLUGS_DIFFER_CONSTRAINT} "
+        f"(declared: {sorted(declared) or 'none'})"
+    )
+    assert "rider_slug" in declared[_SLUGS_DIFFER_CONSTRAINT]
+    assert "viewer_slug" in declared[_SLUGS_DIFFER_CONSTRAINT]
+
+
+async def test_equal_slugs_are_rejected(migrated_engine: AsyncEngine) -> None:
+    """
+    The insert that would grant write access through a read-only link fails.
+
+    This is the concrete thing the constraint buys, and it is due now rather
+    than later: ``s-seed-trip-record`` is the next story that inserts a trip,
+    and a copy-paste of ``rider_slug`` into ``viewer_slug`` there looks exactly
+    like a working seed.
+    """
+    async with migrated_engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            with pytest.raises(exc.IntegrityError):
+                await conn.execute(
+                    text(_INSERT_TRIP),
+                    {
+                        "id": "test-trip-equal-slugs",
+                        "name": "Equal slugs fixture",
+                        "rider": "test-slug-used-for-both",
+                        "viewer": "test-slug-used-for-both",
+                        "start_date": _START_DATE,
+                    },
+                )
+        finally:
+            await trans.rollback()
+
+
+async def test_distinct_slugs_are_accepted(migrated_engine: AsyncEngine) -> None:
+    """
+    ...and the normal case is untouched.
+
+    Paired with the test above deliberately: a constraint written as
+    ``CHECK (false)`` would satisfy the rejection test perfectly and break every
+    trip in the system.
+    """
+    async with migrated_engine.connect() as conn:
+        trans = await conn.begin()
+        try:
+            await conn.execute(
+                text(_INSERT_TRIP),
+                {
+                    "id": "test-trip-distinct-slugs",
+                    "name": "Distinct slugs fixture",
+                    "rider": "test-rider-distinct-slugs",
+                    "viewer": "test-viewer-distinct-slugs",
+                    "start_date": _START_DATE,
+                },
+            )
+        finally:
+            # Nothing this test wrote survives it.
+            await trans.rollback()
 
 
 async def test_location_source_check_rejects_unknown_value(migrated_engine: AsyncEngine) -> None:

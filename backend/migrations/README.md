@@ -62,3 +62,4 @@ never been run is worse than not having one.
 | File | What it does |
 |---|---|
 | `0001_initial_schema.sql` | Creates `trips`, `stops`, `photos`, `bikes`, their FK indexes and the `location_source` check constraint. |
+| `0002_trips_slugs_differ_check.sql` | Adds `trips_slugs_differ_check` — `rider_slug <> viewer_slug`. A row with both slugs equal resolves to rider access, so a read-only link would silently grant writes. |

@@ -52,6 +52,17 @@ trips = Table(
     Column("rider_slug", Text, nullable=False, unique=True),
     Column("viewer_slug", Text, nullable=False, unique=True),
     Column("start_date", Date, nullable=False),
+    # migrations/0002_trips_slugs_differ_check.sql. Per-column UNIQUE does not
+    # stop one *row* from carrying the same string twice, and that row is a
+    # privilege escalation: security.py derives access as "rider if the slug
+    # equals rider_slug, else viewer", so on such a row a link issued as
+    # read-only resolves to RIDER. The two links are indistinguishable because
+    # there is only one link. Cheap to enforce — a CHECK runs on write, never
+    # on the slug lookup every request performs.
+    CheckConstraint(
+        "rider_slug <> viewer_slug",
+        name="trips_slugs_differ_check",
+    ),
 )
 
 # Stop — captured on the road, possibly offline, with a client-generated id.
