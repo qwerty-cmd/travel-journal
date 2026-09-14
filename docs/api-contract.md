@@ -92,6 +92,14 @@ This is the mapping the global exception handler implements. It is exhaustive by
 
 A `405` requires a **registered path with a different method** — it is not what an unregistered path returns. `DELETE /trips/{slug}/stops` returns `404`, not `405`, because the stops router is still an empty `APIRouter` stub with no methods registered: Starlette finds no matching route at all, so there is nothing for the method to mismatch against. (An earlier revision of this document used that request as the `405` example; `qa` ran it and found `404`. See `docs/decision-log.md` Entry 6.)
 
+> **Forward-note (2026-09-14) — this paragraph has an expiry date.** The `DELETE /trips/{slug}/stops`
+> → `404` statement is true **only while the stops router is unregistered**. The moment `s-stop-crud`
+> registers `GET`/`POST` on that path, the path exists, the method mismatches, and the correct
+> response becomes `405` — assuming `t-405-router-route-collapse` has landed, without which it will
+> *silently stay* `404` for the wrong reason. **Revisit this paragraph at `s-stop-crud`**; tracked as
+> task `t-stops-405-doc-revisit`. The surrounding rule ("a `405` requires a registered path with a
+> different method") does not expire — only the example does.
+
 They are two codes rather than one catch-all because **a `405` is a client error and a `500` is a server fault** — collapsing them would make the envelope inaccurate about which side went wrong. That distinction is not cosmetic: the offline queue decides retry-vs-never-retry programmatically from `code`, and "the server is broken, try later" and "this request can never succeed as written" are opposite answers.
 
 #### `message` and the `INTERNAL_ERROR` leak boundary

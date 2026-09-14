@@ -8,12 +8,28 @@ that survives is visible in git; the option that was tried, measured and rejecte
 this file, a future agent rediscovers the same constraint, reaches the same first conclusion, and
 re-introduces something that was already disproved.
 
-**Read this before reopening a settled call.** If you're about to argue for something listed under
-"Rejected" below, the burden is to show why the original evidence no longer applies — not to
-re-derive it from scratch.
+**Do not read this whole file.** Scan the index below, then read only entries relevant to your current task.
+
+**Except when you are reopening a settled call** — if you are about to argue for something recorded
+here as rejected, read that entry in full first. **The burden is on whoever reopens it to show the
+original evidence no longer applies, not to re-derive that evidence from scratch.**
 
 Owned by the `docs` agent. A new entry gets written whenever one agent overrules, contradicts, or
 empirically disproves another.
+
+## Index
+
+| # | Topic | Files | One-line summary |
+|---|-------|-------|-----------------|
+| 1 | SQL splitter vs asyncpg simple-query | `migrate.py` | Bespoke splitter deleted; asyncpg simple-query works inside SA transactions — qa proved it |
+| 2 | Vacuous slug-uniqueness test | `test_schema.py` | Substring-match test couldn't fail; fixed to assert per-column against pg_index |
+| 3 | Slug uniqueness — ON CONFLICT DO UPDATE | `progress.json`, seed script | DO UPDATE on slugs is an authorization leak, not an upsert — let UNIQUE reject and regenerate |
+| 4 | "Add a note" ambiguity | `map.py`, `__init__.py` | Barrel-export instruction was ambiguous; cost a recorded rationale |
+| 5 | Barrel export convention | `models/__init__.py` | One-off barrel re-export rejected — don't invent conventions for a single use |
+| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration expires when `s-stop-crud` lands** — see correction + 2026-09-14 footnote (`t-stops-405-doc-revisit`) |
+| 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both. **Half the fix is still broken and open** — 405 collapses to 404 on every router-registered route; read the 2026-09-14 correction before touching `main.py` (`t-405-router-route-collapse`) |
+| 8 | Cross-trip slug collision | `0001_initial_schema.sql`, `security.py` | Same slug on two trips is fine (random tokens); same slug on one row is not — migration 0002 added CHECK |
+| 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
 
 ---
 
@@ -209,6 +225,28 @@ merely underspecified.
 > remain the right call. Only the illustration was false. This correction is recorded rather than
 > quietly overwritten: a decision log that rewrites itself invisibly is worth less than one that
 > shows where it was wrong and who caught it.
+>
+> **Footnote (2026-09-14) — the correction above is itself time-limited.** Appended, not merged into
+> the correction, for the same reason the correction was appended rather than edited in: the record
+> of what `qa` measured and when must stay readable as written.
+>
+> The correction's finding — `DELETE /trips/{slug}/stops` returns `404`, because the stops router is
+> an empty `APIRouter` stub with nothing for the method to mismatch against — **is still true today
+> and is not being changed here.** But it is true for a reason with an expiry date. Once `s-stop-crud`
+> registers `GET`/`POST` on that path, the path *is* registered, and the same request becomes a
+> genuine `405` — which would make this correction's illustration wrong in the opposite direction,
+> and would make `qa`'s original measurement look like a mistake rather than an accurate reading of a
+> different codebase. Flagged by `ba` while scoping the 405 fix.
+>
+> Two consequences worth stating separately, because they fail differently:
+> - The illustration goes stale. Tracked as `t-stops-405-doc-revisit`; **do not pre-emptively edit it
+>   now** — it is correct as it stands.
+> - The *behaviour* may not follow the docs. `t-405-router-route-collapse` (Entry 7's 2026-09-14
+>   correction) is the reason a registered stops path could still return `404` after `s-stop-crud`
+>   lands, silently, via the same `getattr(route, "methods", None)` blindness. If this footnote is
+>   being read at `s-stop-crud` and that task has **not** landed, the right move is to verify the
+>   observed status before writing anything down — the two failures look identical from the outside,
+>   and this entry exists because an unverified illustration was written down once already.
 
 **What `ba` did — the part worth recording.** It declined to decide. Its stated reasoning: inventing
 a new `ErrorCode` member is a *contract change*, not an implementation detail, and a scoping agent
