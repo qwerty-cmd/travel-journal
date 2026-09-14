@@ -76,25 +76,67 @@ Dependency + repository only; no endpoint wired. GET /trips/{slug} follows under
 
 The project has no [build-system] so uv never installs it into .venv; `import app` fails under the pytest console script without the bootstrap. QA confirmed `uv run python -m pytest` works without it — that invocation-dependent fragility is why pyproject is the right fix. pyproject.toml was out of scope for the schema task.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
+- Finding: the suite's `import app` depends on a `sys.path` bootstrap in `conftest.py` rather than `pyproject.toml`'s `pythonpath`.
+- Evidence: the suite is green under both invocations. QA confirmed `uv run python -m pytest` passes without the bootstrap, and the bootstrap itself makes the console-script invocation work today. Nothing fails now.
+- Gate classification: ORDINARY DEBT (Gate 4). Invocation-dependent fragility is not a failure — `could break ≠ is broken`.
+- Current consumer: none.
+- Promotion trigger: none. Deliberately not "when someone runs plain pytest" — that is a hypothetical, and it works anyway.
+
 ## t-schema-type-drift-check
 
 QA confirmed Text vs VARCHAR(20), Double vs REAL, and Integer vs BigInteger all compare equal under column.type.python_type. A migration creating varchar(20) where tables.py declares Text would pass the drift guard. Low urgency: current schema is text/double precision throughout.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: `test_columns_match_metadata` compares `column.type.python_type`, which cannot distinguish Text from VARCHAR(20), Double from REAL, or Integer from BigInteger.
+- Evidence: QA confirmed all three pairs compare equal. The current schema is text/double precision throughout, so there is no drift present for the blind spot to miss — the guard runs today and has nothing to catch.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none.
+- Promotion trigger: the first migration introducing a narrower or length-constrained column type where `tables.py` declares the wider one.
 
 ## t-tests-readme-stale
 
 First real test landed as tests/test_schema.py at the root. Cosmetic, pre-existing — was outside the schema task's scope.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
+- Finding: `backend/tests/README.md` documents test subdirectories that do not exist.
+- Evidence: the first real test landed as `tests/test_schema.py` at the root. A README has no runtime path — nothing imports it, executes it or serves it, so no behaviour can depend on its being wrong.
+- Gate classification: ORDINARY DEBT (Gate 4).
+- Current consumer: none.
+- Promotion trigger: none.
+
 ## t-openapi-error-responses
 
 QA found components.schemas is entirely empty — ErrorEnvelope appears nowhere in the OpenAPI document, so the uniform-error-shape promise holds only at runtime and never reaches the generated frontend client. That client was the stated rationale for having one shape at all (api-contract.md). Needs ba scoping first: it touches every route signature, so it interacts with the endpoint stories rather than being a standalone patch. QA escalated this from polish to real work. GET /api/trips/{slug} declares 422 -> HTTPValidationError, and HTTPValidationError plus ValidationError are emitted into components.schemas alongside ErrorEnvelope. The 422 is structurally unreachable on that route (Starlette's [^/]+ converter guarantees a non-empty slash-free string before Pydantic sees it, and Path() declares no length or pattern constraint — QA confirmed with 15 hostile inputs, all clean 404s). So the generated client gets an error union of ErrorEnvelope | HTTPValidationError for a branch the server never produces, and HTTPValidationError has no error.code — directly contradicting the contract's premise that one envelope shape is what lets the frontend have a single error path and lets the offline queue branch on code alone. Every route copying this pattern multiplies it.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: `ErrorEnvelope` reached the OpenAPI document on one route only, so the uniform-error-shape promise holds at runtime but does not reach the generated frontend client; the structurally unreachable `422 -> HTTPValidationError` union ships alongside it.
+- Evidence: at runtime every non-2xx **does** use the envelope — the handlers are registered and the suite exercises them. `t-trip-metadata-endpoint` landed `responses={404: ErrorEnvelope}` on its own route, so `components.schemas` is no longer empty. All of `m3-frontend-pwa` is `not_started`, so no component imports a generated type and no client has yet branched on a shape it was given.
+- Gate classification: TRIGGERED DEBT (Gate 3). One of the two closest calls in this triage — see `t-backlog-retro-triage`. The generated client is a *future* consumer, and `could consume ≠ currently consumes`.
+- Current consumer: none.
+- Promotion trigger: the next route to land (`s-stop-crud`), where the shared `responses=` constant is decided once rather than improvised per route.
 
 ## t-ruff-format-gate
 
 ruff format --check would reformat app/core/errors.py and three other files; ruff check alone doesn't cover formatting. Decide whether format joins the validation gate.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
+- Finding: `ruff format --check` would reformat `app/core/errors.py` and three other files; `ruff check` alone does not cover formatting.
+- Evidence: no spec requirement, invariant, access-control rule, data-integrity rule or behavioural contract mandates format enforcement. Nothing is violated by those files being unformatted.
+- Gate classification: ORDINARY DEBT (Gate 4). It is a standing decision, not a defect.
+- Current consumer: none.
+- Promotion trigger: none. Take it at a story boundary per the gate's Debt Promotion clause — explicitly not a calendar review.
+
 ## t-validation-message-offset
 
 422 message for an unparseable JSON body reads '1: JSON decode error' — the '1' is pydantic's byte offset rendered as if it were a field path. message is contractually safe to show a rider directly; this is safe but meaningless to one.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: the 422 `message` for an unparseable JSON body renders pydantic's byte offset as if it were a field path.
+- Evidence: every registered route today is a GET and none accepts a request body, so no client can reach the branch at all. The text is safe, merely meaningless.
+- Gate classification: TRIGGERED DEBT (Gate 3). The second of the two closest calls — see `t-backlog-retro-triage` — because the defect is real and already rendered; what is absent is any path to it.
+- Current consumer: none.
+- Promotion trigger: the first request-body endpoint, `POST /trips/{slug}/stops`.
 
 ## t-errors-docstring-tense
 
@@ -104,13 +146,38 @@ app/core/errors.py docstring says core/security.py raises FORBIDDEN/NOT_FOUND th
 
 QA demonstrated the mistake is silent: a write route declaring require_trip_access instead of require_rider_access accepts a viewer slug and returns 200, and all 34 slug tests still pass because they exercise the dependencies through probe routes rather than real routes. Five upcoming tasks each declare a guard by hand, and the stops router carries both a GET (either slug) and a POST (rider only) under one prefix, so a router-level dependencies=[...] cannot be used. The signal already exists and nothing consumes it: FastAPI exposes route.dependant, and the two dependencies' Path(description=...) strings differ in the generated OpenAPI. MUST land with the FIRST wired write endpoint (s-stop-crud), not after all five.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: a write route declaring `require_trip_access` instead of `require_rider_access` accepts a viewer slug and returns 200, silently, and the existing slug tests cannot see it because they exercise the dependencies through probe routes rather than real routes.
+- Evidence: QA demonstrated it rather than reasoning about it. But no write route exists today — every registered route is a read, and `t-trip-metadata-endpoint` confirmed the inverse mistake on a read route is loud, not silent.
+- Gate classification: TRIGGERED DEBT (Gate 3). Access control, so it is top priority *within* the debt — priority is ordering, not classification.
+- Current consumer: none.
+- Promotion trigger, reused verbatim from the note above: "MUST land with the FIRST wired write endpoint (s-stop-crud), not after all five."
+
 ## t-trip-context-slug-exposure
 
 QA: TripContext.trip necessarily holds rider_slug and viewer_slug so the dependency can derive access, and TripOut has no slug fields — but the first handler that spreads the record into a response (return {**asdict(context.trip)}) breaks the guarantee invisibly. The existing test_no_slug_appears_in_any_response_body asserts against probe routes only, so it will not cover real handlers. Pairs naturally with t-route-dependency-audit.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: `TripContext.trip` necessarily holds both slugs, and the first handler that spreads the record into a response body would break the no-slug guarantee invisibly; `test_no_slug_appears_in_any_response_body` asserts against probe routes only.
+- Evidence: `t-trip-metadata-endpoint` folded in a route-local assertion for its own 200 body, so the one real handler that exists today is covered. What remains open is the generalised guard, which has no route to generalise over yet.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none.
+- Promotion trigger: the generalised all-routes guard landing with `t-route-dependency-audit` at `s-stop-crud`.
+
 ## t-error-log-parameter-redaction
 
 QA: unhandled_exception_handler uses logger.exception, so a DBAPIError traceback carries parameters: ('<live-slug>', ...). The slug is already in the uvicorn access log by virtue of being in the URL, so this is a duplicate rather than a new exposure class — but it is the copy most likely to reach a third-party error tracker. Low priority; noted so it is a decision rather than an oversight.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: observable`. **THE ONLY FIX NOW IN THE BACKLOG, AND THE ONLY CONTESTED CLASSIFICATION — see decision-log Entry 13.**
+- Finding: `unhandled_exception_handler` (`backend/app/core/errors.py:241`) calls `logger.exception` at :248, so a `DBAPIError` traceback carries `parameters: ('<live-slug>', ...)` — a live trip slug, which is the credential.
+- Evidence: QA **observed the rendered traceback**, it did not reason about it. Both the handler and the route that reaches it are registered and run today.
+- Gate classification: CURRENTLY OBSERVABLE (Gate 2) → FIX NOW. Gate 2 asks whether a runtime path existing today exercises the behaviour, not how severe the consequence is. Severity belongs in ordering, not classification — which is why "low priority" above and "fix now" here are not in conflict.
+- Current consumer: the 500 handler itself, on any unhandled `DBAPIError`.
+- Promotion trigger: none — already promoted.
+- CONTESTED. The note's own argument was for ORDINARY DEBT with trigger "first error tracker or log shipper configured", on the grounds that the slug is already in the uvicorn access log so marginal disclosure is zero. Stated fairly and recorded in full at decision-log Entry 13; do not re-argue it from this summary.
+- SCOPE CHANGED, CLASSIFICATION UNCHANGED. The orchestrator observed — and the user accepted — that the task as written closes only *one of two* copies: fixing `logger.exception` leaves the slug in the access log, so the task does not close the exposure it names. It is re-scoped to cover BOTH sinks, or to explicitly decide the access log is acceptable and say why. That is a change to what the task must do, not to its gate.
+- NOT IMPLEMENTED IN THE TRIAGE PATCH. Classified FIX NOW and left unstarted, deliberately — the Stop Condition binds `t-backlog-retro-triage` itself, and the evidence for a Gate 2 call should survive being written down and reviewed before anyone edits production code on the strength of it.
+- CO-LOCATION OWED: decision-log Entry 13's rationale belongs beside `unhandled_exception_handler` in `backend/app/core/errors.py`, which is outside the docs agent's `docs/`-only scope. Whoever implements this carries it into that file; it is not optional tidy-up (Entry 4's rule).
 
 ## t-405-router-route-collapse
 
@@ -118,15 +185,32 @@ LIVE CONTRACT VIOLATION found by QA on real uvicorn. _methods_allowed_elsewhere 
 
 COMPLETED 2026-09-14. The fix: _methods_allowed_elsewhere probes each verb in _ALL_METHODS against a copy of the request scope and collects Match.FULL, deriving the Allow set that route.matches() does not return. It replaces the getattr(route,'methods',None) scan, which was blind to every route registered through api_router because this FastAPI version represents an included router as a single lazy _IncludedRouter with path=None and methods=None. Defect confirmed present at HEAD before the fix: POST /api/trips/whatever -> 404 with no Allow header, while POST /api/health -> 405 Allow: GET — that second result is precisely why the broken guard looked correct, since /api/health is the one route registered directly on app. QA verified every acceptance criterion on real uvicorn with ZERO SURVIVING MUTANTS ACROSS SIX MUTATIONS, including one isolating only the FastAPI-key write; baseline independently reconstructed from the HEAD tree, 170 -> 186 tests. Zero cost on the happy path: one caller, on the unknown-path/405 branch only — QA instrumented the probe and measured 0 invocations on a 200 and 1 on a 405. Allow on /api/trips/{slug} is exactly GET with no HEAD, because FastAPI's APIRoute does not auto-add HEAD the way Starlette's plain Route does; t-head-on-get-routes changes that and must flip the affected Allow assertions.
 
+CORRECTION 2026-09-15: the sentence immediately above expired on 2026-09-14 and is left readable because it records what was true when this task shipped. It did happen. `t-head-on-get-routes` landed (`ec34a13`): all three Allow assertions now assert `{"GET", "HEAD"}`, and `qa` verified `allow: GET, HEAD` on real uvicorn rather than in the test client. So `Allow` on `/api/trips/{slug}` is no longer "exactly GET with no HEAD" — it is GET+HEAD, via the second schema-excluded registration of the same handler (decision-log Entry 11). The reasoning in that sentence was correct: FastAPI's `APIRoute` still does not auto-add HEAD the way Starlette's plain `Route` does, which is precisely why an explicit second registration was needed.
+
 DEEP-COPY PROPOSAL — CONSIDERED AND CLOSED, DO NOT RE-PROPOSE, NO TASK ID. The proposal was to deep-copy the request scope for probing instead of the one-level {**request.scope, ...}. Its plausible half — "a future FastAPI stops restoring the bookkeeping key, so the shallow copy leaks a probe write onto the live scope" — is now covered by test_probing_leaves_the_live_request_scope_unchanged, proven non-vacuous by disabling the restore. Its other half — "this probe loop stays synchronous, so no other task observes the intermediate state" — is uncovered and STRUCTURALLY UNCOVERABLE by a post-condition test: a state that is restored before the call returns is invisible to any assertion made after it. That half is a code-review invariant, not a test gap, and the invariant is simply that there is no await in that function. If the proposal is ever revived it MUST be a one-level dict() copy and NEVER copy.deepcopy — the scope's values are _IncludedRouter instances and route contexts that FastAPI reads back by identity, so deepcopy would clone live routing objects and the probe would then match against copies rather than the real routing table. See decision-log.md Entry 10 for why the copy exists at all (it is not the reason dev's first docstring gave).
 
 ## t-session-dep-alias
 
 QA: app/api/routes/trips.py is the only file under app/api/ importing SQLAlchemy, for the DI annotation only — not a violation in substance (identical to what security.py does, no statement built, no column named), but db.py's own header says routes depend on repositories 'never on SQLAlchemy directly', and seven more routes are about to copy the import. Proposed: SessionDep = Annotated[AsyncSession, Depends(get_session)] in app/data/db.py, so routes write session: SessionDep. Keeps DI wiring in the layer allowed to know SQLAlchemy exists and makes it impossible for one route to wire a different session callable. ba is deciding whether this folds into t-405-router-route-collapse or stands alone. Cheap now, seven diffs later. ba decided: separate task, NOT folded into the 405 fix and not declined. Reasons: it changes app/data/db.py, which every data task depends on, from inside a task scoped to main.py; the 405 patch's value is a reviewable diff of a subtle routing change and an unrelated DI-convention change muddies it; and it needs a decision that task cannot make — core/security.py has two Annotated[AsyncSession, Depends(get_session)] sites, so adopting the alias in routes only leaves the convention applied to some of its sites, which is Entry 5's failure mode. SEQUENCING IS THE POINT: MUST land BEFORE the first s-stop-crud handler, since that is where the copying starts — same shape of constraint as t-route-dependency-audit. When scoped, enumerate every session-taking site (routes plus core/security.py) and state which adopt the alias and which do not, deliberately rather than by omission. Be honest about what it buys: the alias hides the IMPORT, not the coupling — the session is still a SQLAlchemy object handed to a repository — so the justification is greppability and making db.py's header true, not a portability fix.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`. **THIS TRIGGER IS FIRING NOW.**
+- Finding: routes annotate `Annotated[AsyncSession, Depends(get_session)]` directly, against `db.py`'s own header saying routes depend on repositories and never on SQLAlchemy directly; seven more routes are about to copy the import.
+- Evidence: one file does it today (`app/api/routes/trips.py`), for the DI annotation only — no statement built, no column named. `ba` already ruled it is not a violation in substance.
+- Gate classification: TRIGGERED DEBT (Gate 3) — and the trigger is firing as this is written, with `s-stop-crud` being scoped concurrently.
+- Current consumer: none in the defect sense; the one existing site works.
+- Promotion trigger, reused verbatim from the note above: "MUST land BEFORE the first s-stop-crud handler, since that is where the copying starts."
+- A firing trigger is a promotion candidate, not a licence: it is still not implemented in this patch, and whoever promotes it must first do what the note above requires — enumerate every session-taking site (routes plus `core/security.py`) and state which adopt the alias and which do not, deliberately rather than by omission.
+
 ## t-bike-order-collation
 
 QA: the local Postgres is Alpine/musl, where en_US.utf8 is unimplemented so the default collation is byte order, identical to C and to Python's sorted(). Neon runs glibc and orders differently — default gives 'ALEX, Alex, Ana, Zoe, alex, Ana-with-accent'; en-US-x-icu gives 'alex, Alex, ALEX, Ana, Ana-with-accent, Zoe'. test_bikes_are_ordered_by_rider_name_then_id compares against Python's sorted(), which agrees with musl by construction. Today the seeded_bikes fixture masks it because rider names differ in their first letter. The moment anyone adds a case- or accent-differing rider name, the test passes locally and fails on Neon. Determinism itself is unconditional (bikes_pkey on id alone makes ORDER BY rider_name, id a total order under any collation) — only the concrete sequence differs. Not urgent; nothing may depend on order per the contract. Note for whoever next edits seeded_bikes.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: `test_bikes_are_ordered_by_rider_name_then_id` compares against Python's `sorted()`, which agrees with the local Alpine/musl byte-order collation by construction and disagrees with glibc.
+- Evidence: QA measured both orderings. The `seeded_bikes` fixture currently masks it because every rider name differs in its first letter, and determinism itself is unconditional — `bikes_pkey` on `id` makes `ORDER BY rider_name, id` a total order under any collation. Only the concrete sequence differs.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none — nothing may depend on bike order per the contract.
+- Promotion trigger, reused verbatim from the note above: running against Neon/glibc, or anyone adding a case- or accent-differing rider name to `seeded_bikes`.
 
 ## t-head-on-get-routes
 
@@ -152,6 +236,14 @@ Why the existing tests structurally cannot see it: the per-path guard (test_ever
 
 PROPOSED SHAPE: for every path carrying both a GET and a HEAD route, assert the two resolved `dependant` trees and route-level dependency lists are EQUAL. RELATE IT TO t-route-dependency-audit: that task guards a write route declaring the wrong guard (one route, wrong dependency); this one guards two routes on one path drifting apart (right dependency, reaching one of two). Adjacent, not the same — and neither subsumes the other, so do not fold one into the other. Whoever lands the second should state whether they share a file; both enumerate routes off app.routes and would otherwise grow two near-identical traversals. This is ACCESS CONTROL, spec Section 12's top priority, and the demonstrated failure is silent — it should not sit indefinitely.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: a route-level `dependencies=[...]` kwarg belongs to the decorator, not the handler, so on a path carrying a GET/HEAD pair it reaches one route of the two — GET could enforce rider-only while HEAD kept serving viewers.
+- Evidence: QA demonstrated it (GET resolved `['require_rider_access']`, HEAD resolved `[]`, and all 5 tests in `test_head_method.py` still passed). But no route in the codebase uses that kwarg today; every dependency is declared in the shared handler signature, where the pair stays in sync automatically.
+- Gate classification: TRIGGERED DEBT (Gate 3). Access control, so it leads the ordering within the debt — but there is no divergence to catch until the kwarg is used.
+- Current consumer: none.
+- Promotion trigger: the first route-level `dependencies=[...]` kwarg on any path carrying a GET/HEAD pair.
+- `ba`'s RISK NOTE ON THE TRIGGER ITSELF, and it is the reason this entry is not just filed and forgotten: the trigger fires on a **spelling** choice, not on a behaviour. `s-stop-crud` could land a rider-only POST with the guard in the handler signature and never fire it — correctly, since that spelling is safe. Review this at the `s-stop-crud` boundary regardless of whether the trigger fires, because it shares an `app.routes` traversal with `t-route-dependency-audit` and the two would otherwise grow near-identical traversals independently.
+
 ## t-api-healthcheck-wiring
 
 From qa's Finding 2 remainder on t-head-on-get-routes. LOW PRIORITY. /api/health exists and NOTHING PROBES IT: docker-compose.yml has healthcheck blocks on postgres and minio but none on the api service, Dockerfile has no HEALTHCHECK instruction, and nothing in infra/ references the path. Filed under s-deploy-cutover rather than s-local-dev-env because the latter is closed and this needs devops plus approval; the compose half is local-dev work and could land earlier if that is preferred.
@@ -160,11 +252,28 @@ NEEDS EXPLICIT HUMAN APPROVAL before anything in infra/ is touched (CLAUDE.md of
 
 CARRIES A DOC EXPIRY THAT IS PART OF THE WORK, NOT A NICE-TO-HAVE. dev re-worded the /api/health description= under t-head-on-get-routes so it describes intent rather than asserting configuration — it now says the endpoint is intended as the liveness probe and that NOTHING IS WIRED TO IT YET (no HEALTHCHECK, no compose healthcheck on api). True today, FALSE THE MOMENT THIS TASK IS DONE, and because it is a route description= it feeds the OpenAPI document, Kubb's client and every agent's context. The stale text lives in backend/app/main.py — application code, outside devops's scope (Dockerfile, docker-compose.yml, infra/ only) and outside the docs agent's docs/-only tree. So this task needs a dev follow-up in the same patch for that string, or devops stops and hands it back; it is not something whoever does the wiring can just edit in passing.
 
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: `/api/health` exists and nothing probes it — no `HEALTHCHECK` in the Dockerfile, no healthcheck on the compose `api` service, nothing in `infra/` referencing the path.
+- Evidence: QA enumerated all three. No requirement mandates a probe before deployment, and the route's own `description=` was already re-worded to say that nothing is wired to it yet, so the documentation is true rather than stale.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none — that is the finding.
+- Promotion trigger: `s-deploy-cutover`.
+- BOTH EXISTING CONDITIONS ABOVE SURVIVE THIS CLASSIFICATION UNCHANGED. (1) The `infra/` half needs explicit human approval per the CLAUDE.md off-limits list — **a gate classification is not clearance**, and a fired trigger is not approval either. (2) The `/api/health` `description=` in `backend/app/main.py` becomes false the moment this lands, and it feeds the OpenAPI document and the generated client, so it needs a `dev` follow-up in the same patch or `devops` stops and hands it back.
+
 ## t-add-endpoint-head-convention
 
 One line in .claude/skills/add-endpoint/SKILL.md step 4: a GET route declares ["GET", "HEAD"]. That is the whole task. Its point is that the convention reaches ALL of its sites rather than only the two t-head-on-get-routes touches — the skill is the recipe every future endpoint is built from, so a convention absent from it is a convention that stops at whichever routes existed on the day it was decided. That is Entry 5's failure mode (a convention applied to one file out of six reads as significant when it is merely incomplete). Filed under s-data-layer-foundation alongside t-head-on-get-routes because it is the same decision's second half. Sequence it with or after that task; writing the recipe before the pattern exists in the codebase leaves the skill pointing at nothing.
 
 FLAGGED 2026-09-14, NOT FIXED — THIS TASK CANNOT BE EXECUTED BY ITS ASSIGNED AGENT. It is recorded with agent: "docs", but its target is .claude/skills/add-endpoint/SKILL.md, which is OUTSIDE docs/ — the only tree the docs agent can write to. Whoever picks this up must reassign it rather than rediscovering the wall; the roster is not being changed here, and the docs agent did not attempt the edit. Also note the CONTENT changed under it: t-head-on-get-routes did NOT ship methods=["GET", "HEAD"] (decision-log Entry 11), so the line to add to step 4 is a HEAD SIBLING REGISTRATION — add_api_route(..., methods=["HEAD"], include_in_schema=False) alongside the GET — and must say WHY include_in_schema=False is load-bearing, not just that it is there. Writing the original spelling into the skill would propagate the exact construction Entry 11 rejected to all seven remaining endpoints, which is this task's own stated failure mode in reverse. The task title in progress.json was corrected accordingly.
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
+- Finding: the `add-endpoint` skill's step 4 does not mention the HEAD sibling registration, so the convention stops at whichever routes existed on the day it was decided.
+- Evidence: the skill is the recipe every future endpoint is built from, and seven contract endpoints remain unbuilt. Nothing is currently wrong — the two routes that exist already carry the sibling registration.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none — no endpoint has been built from the skill since the convention was decided.
+- Promotion trigger: the next endpoint built from the skill (`s-stop-crud`). The recipe must be right *before* `dev` follows it, not after — a skill corrected afterwards has already propagated the wrong construction.
+
+UNBLOCKED 2026-09-15 (`t-backlog-retro-triage`). `agent` changed `"docs"` -> `"orchestrator"` and the blocker emptied. Nothing about the task's content changed — the correction recorded above still stands in full. What unblocked it is `CLAUDE.md`'s governance-ownership rule (landed by `t-claude-md-triage-gate`, decision-log Entry 12b): `.claude/skills/` has no agent owner and the orchestrator writes it, so the "Needs reassignment" blocker now has somewhere to point. The docs agent's refusal to edit outside `docs/` was correct and is not being reversed here; the owner was missing, not the permission.
 
 ## t-finding-triage-gate-doc
 
@@ -186,6 +295,20 @@ TASK D, LAST. ba analyses, docs writes — ba is read-only, so its classificatio
 
 THE STOP CONDITION APPLIES TO THIS TASK'S OWN OUTPUT, AND THIS IS THE INSTRUCTION MOST LIKELY TO BE VIOLATED IN GOOD FAITH. NO TASK CLASSIFIED HERE MAY BE IMPLEMENTED IN THIS PATCH OR THE NEXT. Re-reading a backlog item closely enough to classify it is exactly the state in which "while I'm here" happens, and a retro-triage that ends with three fixes has demonstrated the gate does not bind its own author. Classification is the deliverable; the fixes are whatever the next story boundary promotes. If the analysis turns up something that genuinely satisfies Gate 1 or Gate 2 — a live contract violation or a current consumer — it is still filed and reported here, not fixed in this patch, because the evidence for CURRENTLY BROKEN should survive being written down and reviewed before anyone edits production code on the strength of it.
 
+COMPLETED 2026-09-15. `ba` classified all 15 open tasks; `docs` recorded them. **NOTHING WAS IMPLEMENTED, INCLUDING THE ONE ITEM CLASSIFIED FIX NOW** — the Stop Condition binds this patch, and the warning above was the instruction most at risk, so it is worth recording that it held rather than assuming it.
+
+RESULT: 3 ORDINARY DEBT, 11 TRIGGERED DEBT, 1 CURRENTLY OBSERVABLE, **zero CURRENTLY BROKEN, zero needing more evidence.**
+
+`gate` VALUES IN `progress.json` — the allowed set is exactly four, one per gate: `"broken"` (Gate 1, CURRENTLY BROKEN), `"observable"` (Gate 2, CURRENTLY OBSERVABLE), `"triggered"` (Gate 3, TRIGGERED DEBT), `"ordinary"` (Gate 4, ORDINARY DEBT). Every Gate 3 item's note names a concrete **event**, never a date — "revisit at the next story boundary" is not a trigger, and a calendar review is explicitly ruled out by the gate's Debt Promotion clause.
+
+ZERO NEEDS-EVIDENCE IS A RESULT, NOT A DEFAULT. It would have been legitimate — and expected — for several items to come back "cannot classify, needs evidence." None did, because the existing notes already carried what the gate asks for: what was observed, by whom, and whether anything reaches it. Two came closest, and how each resolved is the useful part:
+- `t-openapi-error-responses` — the question was whether the generated frontend client counts as a consumer. It resolved on a checkable fact rather than a judgment call: all of `m3-frontend-pwa` is `not_started`, so no component imports a generated type. `Could consume ≠ currently consumes`. TRIGGERED DEBT.
+- `t-validation-message-offset` — the question was whether a defect that is already rendered counts as observable. Resolved the same way: every registered route is a GET and none takes a request body, so no client can reach the branch. The defect is real and unreachable. TRIGGERED DEBT.
+
+ONE CONTESTED CALL: `t-error-log-parameter-redaction`, decision-log **Entry 13**. Classified CURRENTLY OBSERVABLE against its own note's argument for ORDINARY DEBT. Its scope also changed (it closes one of two sinks) — that is a scope change, not a reclassification.
+
+FLAGGED FOR THE USER, NOT RESOLVED HERE: adding `gate` extends the `progress.json` shape sketched in **spec Section 11**, which lists `{ "id", "storyId", "title", "status", "agent", "blockers": [] }` and no `gate`. `CLAUDE.md` already says a finding-derived task carries the field, so the two now disagree and the spec is the one that is stale. The spec was not edited — it is the user's document and outside this task's scope. Either the sketch gains the field or `CLAUDE.md` is wrong; that is a user call.
+
 ## t-stops-405-doc-revisit
 
 Both documents currently state that DELETE on that path returns 404 because the stops router is an empty stub with no methods to mismatch against. True today, false the moment GET/POST /trips/{slug}/stops register — at which point it becomes 405, assuming t-405-router-route-collapse has landed. Entry 6's claim is load-bearing there (it records QA catching a false illustration the orchestrator introduced), so it gets a dated footnote rather than a rewrite. FOLDED IN 2026-09-14 (no new id — this task already owns a dated revisit of the same paragraph). t-head-on-get-routes falsifies the "GET-only" wording in TWO places, and this note names both deliberately: a revisit task that lists one of two sites gets exactly that one site fixed and is then closed, which is Entry 5's failure mode (a convention reaching only some of its sites).
@@ -202,6 +325,15 @@ HOW each site gets fixed differs, because the two files have different conventio
 DO NOT PRE-EMPTIVELY EDIT EITHER SITE. Both are correct as they stand until t-head-on-get-routes actually lands; editing now would make them describe a codebase that does not exist, which is the mistake Entry 6 exists to record. All three edits owned by this task — the original DELETE /trips/{slug}/stops illustration plus these two — land together at s-stop-crud, or earlier if t-head-on-get-routes lands first.
 
 TRIGGER FIRED 2026-09-14: t-head-on-get-routes LANDED, so /api/health is now GET+HEAD and the "GET-only" wording at SITE 1 and SITE 2 is false as of today. This task is unblocked and the two wording edits can be made now rather than waiting for s-stop-crud; the third (the DELETE illustration) still waits for the stops router. Nothing above was pre-emptively edited. Decision-log Entry 6's INDEX ROW has been updated to say the first expiry fired — the index is a live summary the docs agent owns — but Entry 6's BODY is untouched and still gets an appended dated footnote, never an in-place rewrite, per its own convention. Re-word, do not re-argue: POST is in neither GET-only nor GET+HEAD, so the 405 remains reachable and every conclusion stands.
+
+TWO OF THREE EDITS LANDED 2026-09-15 (commit `30d2e35`). SITE 1 (`docs/api-contract.md:91`) was re-worded in place, and SITE 2 (decision-log Entry 6) received a dated appended footnote below the existing 2026-09-14 one — Entry 6's body untouched, per its own convention. **THE TASK STAYS OPEN.** The third edit — the `DELETE /trips/{slug}/stops` -> 404 illustration at both its sites — still waits for the stops router to register. Per Entry 6's own footnote, the observed status at that point must be **verified** rather than assumed: the claim is that it becomes 405 once the router registers, and `t-405-router-route-collapse` has landed, but that is a prediction until someone sends the request. Closing this task on the two wording edits is exactly the failure mode the note above names (a revisit task that lists one of two sites gets one site fixed and is then closed).
+
+GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`. **TRIGGER ALREADY FIRED, PARTIALLY DISCHARGED.**
+- Finding: two documents state that `DELETE` on the stops path returns 404 because the stops router is an empty stub, and one illustration described `/api/health` as GET-only.
+- Evidence: the GET-only half was falsified when `t-head-on-get-routes` landed 2026-09-14, and both its sites are now fixed (above). The DELETE half is still true today — the stops router genuinely has no methods to mismatch against.
+- Gate classification: TRIGGERED DEBT (Gate 3), with one trigger fired and discharged and one outstanding.
+- Current consumer: none — both documents are correct as they stand for the part that remains.
+- Promotion trigger (outstanding): the stops router registering `GET`/`POST` on `/trips/{slug}/stops` at `s-stop-crud`. Do not pre-emptively edit the DELETE illustration before then; editing early makes it describe a codebase that does not exist, which is the mistake Entry 6 exists to record.
 
 ## t-trip-metadata-endpoint
 

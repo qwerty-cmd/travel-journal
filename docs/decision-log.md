@@ -33,6 +33,7 @@ empirically disproves another.
 | 10 | A shallow copy reasoned about as deep — twice in one patch | `main.py`, `test_error_envelope.py` | `qa` disproved `dev`'s stated reason for the scope copy (the `fastapi` key is *always* already present at handler time); `test-writer` disproved the orchestrator's fix for the resulting test gap (shallow snapshot compared the inner dict against itself). Code was right, reason was wrong; test looked like coverage and had none |
 | 11 | HEAD on GET routes: `methods=["GET", "HEAD"]` vs a second registration | `main.py`, `trips.py`, `test_head_method.py` | User chose the explicit method list; `dev` measured that FastAPI emits a duplicate `head:` operation and a duplicate operationId from it, which Kubb turns into a duplicate hook. Shipped as a second, schema-excluded registration of the *same handler* — user's intent kept, literal spelling not. Collapsing the two back into one route leaves **189 of 191 tests green**: only the two OpenAPI guards fail |
 | 12 | Finding triage gate, and who may write the governance files | `docs/finding-triage-gate.md`, `CLAUDE.md`, `.claude/**` | The orchestrator's weaker three-question triage was replaced by the user's gate — Stop Condition names the over-investigation behaviours rather than trusting judgment, QA classification is evidence not authority. Separately: no agent can write `CLAUDE.md` or `.claude/**`, so the **orchestrator** owns those paths; widening `docs` to `.claude/**` was rejected as self-modifying permissions |
+| 13 | The one backlog item the gate promoted — Gate 2 vs "the slug is already in the access log" | `core/errors.py`, `progress.json` | `ba` classified `t-error-log-parameter-redaction` CURRENTLY OBSERVABLE (handler and route both run today; qa *observed* the slug in the rendered traceback). The note's own argument — marginal disclosure is zero, so ORDINARY DEBT — lost: Gate 2 tests whether a runtime path is current, not how severe it is. Orchestrator additionally found the task closes only **one of two** sinks; re-scoped, not re-classified |
 
 ---
 
@@ -1009,3 +1010,103 @@ objection is not "scope creep," it is that the widened agent can then rewrite to
 carry this entry's reasoning to where the mistake would be made (Entry 4's rule): the roster table in
 `CLAUDE.md` must state who owns those paths, and `t-add-endpoint-head-convention` must be reassigned
 rather than left blocked on an agent that structurally cannot execute it.
+
+---
+
+## 13. The one backlog item the gate promoted — Gate 2, against "the slug is already in the access log"
+
+**Who:** `ba` (applying the gate in the retro-triage) vs. the finding's own recorded argument, written
+by `qa` when it filed the item. Resolved in `ba`'s favour, with an addition from the orchestrator that
+the user accepted. **Where:** `backend/app/core/errors.py` (`unhandled_exception_handler`, line 241;
+the `logger.exception` call at 248), task `t-error-log-parameter-redaction`, story
+`s-data-layer-foundation`. Produced by `t-backlog-retro-triage`.
+
+**Context.** `t-backlog-retro-triage` classified all 15 open tasks against
+`docs/finding-triage-gate.md`. Fourteen were uncontested — 3 ORDINARY DEBT, 11 TRIGGERED DEBT. This
+is the fifteenth, and the only one where two readings of the same evidence gave different gates.
+
+### The classification (`ba`, and what carried it)
+
+`unhandled_exception_handler` logs via `logger.exception`, so a `DBAPIError` traceback carries
+`parameters: ('<live-slug>', ...)`. A trip slug is not an identifier in this system — it *is* the
+credential, the whole of the authorization for a link.
+
+Three facts decided it, and the first is the one that matters:
+
+1. **`qa` observed the rendered traceback.** It did not reason from the presence of `logger.exception`
+   to what the output would contain — it read the output. That is the difference between evidence and
+   a plausible inference, and the gate's Evidence Requirement asks for exactly the former.
+2. **Both the handler and a route that reaches it are registered and run today.** This is not a
+   dormant code path awaiting a future endpoint. `GET /api/trips/{slug}` is live, the handler is
+   wired to `Exception`, and any unhandled `DBAPIError` on that path renders the slug.
+3. **Gate 2 asks whether a current runtime path exercises the behaviour — not how bad it is.**
+   Nothing in the gate's text weighs consequence. `CURRENTLY OBSERVABLE → FIX NOW` is satisfied by
+   the existence of the consumer.
+
+### Against it — the note's own argument, which is not weak
+
+The finding as filed argued for ORDINARY DEBT, and stated its own reasoning plainly enough that it
+must be recorded rather than summarised away:
+
+> The slug is already in the uvicorn access log by virtue of being in the URL, so this is a duplicate
+> rather than a new exposure class — but it is the copy most likely to reach a third-party error
+> tracker.
+
+Taken seriously, that is a real argument on two legs. **Marginal disclosure is zero:** the slug is
+already written to disk on every request by the access log, so redacting the traceback removes the
+second copy of something the first copy already exposed. And **the named harm is conditional:**
+"reaching a third-party error tracker" requires a log sink that does not exist in this project — no
+Sentry, no shipper, no aggregator. Under that reading the correct classification is ORDINARY DEBT
+with the promotion trigger "first error tracker or log shipper configured," and the item waits.
+
+### Resolution, and precisely where the losing argument fails
+
+**CURRENTLY OBSERVABLE (Gate 2). FIX NOW.**
+
+The losing argument is not wrong about the facts — it is wrong about which question the gate asks.
+Every one of its claims is a claim about **severity**: how much worse the second copy makes things,
+and how likely the bad outcome is. The gate's first two questions are about **currency**: is a
+requirement violated now, does a path exercise it now. Severity belongs in *ordering* — what gets
+built first once several things are promoted — not in *classification*. Admitting severity into
+classification is what makes a gate erodible, because severity is always arguable and "this one is
+minor" is available for every finding.
+
+Note the shape of the losing move, because it is the inverse of Entry 12's: Entry 12 records the
+instinct to **build** something the gate would file ("it's a small follow-up, just build it now").
+This is the instinct to **file** something the gate would promote, on the same underlying reasoning —
+that smallness is a classification input. It is the same error with the sign flipped, which is why
+both belong in this log rather than only the one that costs work.
+
+### The orchestrator's addition — accepted, and it changes the scope, not the gate
+
+The task as written closes **one of two copies**. Fixing `logger.exception` leaves the slug in the
+uvicorn access log, so the task does not close the exposure its own title names. This was raised by
+the orchestrator and accepted by the user.
+
+**It is re-scoped: cover both sinks, or explicitly decide the access log is acceptable and say why.**
+
+Recorded deliberately as a **change to the task's scope, not to its classification.** The two are
+easy to conflate — "it doesn't fully fix the problem" reads like an argument that the problem is less
+real — and conflating them here would hand the losing argument a second route in. The gate is Gate 2
+either way. What changed is what "done" means for the task.
+
+Note also that the re-scope is what turns the losing argument into useful input rather than a
+discarded one: "the slug is already in the access log" was not a good reason to file the item, but it
+is exactly the right description of the second sink. The argument was mis-aimed, not mistaken.
+
+### Why it matters going forward
+
+**This item was classified FIX NOW and deliberately not fixed in the same patch.** The retro-triage's
+Stop Condition binds its own output, so `t-backlog-retro-triage` recorded the promotion and stopped.
+That is not an exception to the gate and does not reopen Entry 12 — a retro-triage that ended with
+three fixes would have demonstrated the gate does not bind its own author, and the evidence for a
+Gate 2 call should survive being written down and reviewed before anyone edits production code on the
+strength of it.
+
+**Co-location is still owed (Entry 4's rule).** The rejected option would be retried in
+`backend/app/core/errors.py` — a future reader looking at a redaction guard in
+`unhandled_exception_handler` will reasonably think "the slug is in the access log anyway, this is
+pointless" and remove it. That reasoning needs to sit beside the code, and
+`backend/` is outside the `docs` agent's `docs/`-only write scope, so it could not be placed by the
+patch that recorded this entry. **Whoever implements the fix carries it into that file.** It is part
+of the work, not tidy-up.
