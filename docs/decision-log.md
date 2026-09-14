@@ -26,7 +26,7 @@ empirically disproves another.
 | 3 | Slug uniqueness — ON CONFLICT DO UPDATE | `progress.json`, seed script | DO UPDATE on slugs is an authorization leak, not an upsert — let UNIQUE reject and regenerate |
 | 4 | "Add a note" ambiguity | `map.py`, `__init__.py` | Barrel-export instruction was ambiguous; cost a recorded rationale |
 | 5 | Barrel export convention | `models/__init__.py` | One-off barrel re-export rejected — don't invent conventions for a single use |
-| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration had two pending expiries and the first has now FIRED** — `t-head-on-get-routes` landed 2026-09-14, so `/api/health` is GET+HEAD and the entry's "GET-only" wording is false (wording only — POST is in neither method set, so the 405 and the conclusion stand); `s-stop-crud` DELETE example still pending. Both edits owned by `t-stops-405-doc-revisit`: the `GET`-only wording is now fixed (contract re-worded in place, entry footnoted 2026-09-15), the DELETE example is still open — see correction + 2026-09-14 and 2026-09-15 footnotes |
+| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration had two pending expiries and BOTH HAVE NOW FIRED** — (1) `t-head-on-get-routes` landed 2026-09-14, so `/api/health` is GET+HEAD and the entry's "GET-only" wording is false; (2) `t-stops-list-endpoint` landed 2026-09-15 (`3ebded7`), so `DELETE /trips/{slug}/stops` is now **405 with `Allow: GET, HEAD`**, not 404 — verified by `test_spa_delete_on_the_registered_stops_path_is_405`, not predicted. Both were wording only: POST is in neither method set, `qa`'s original 404 reading was correct for the tree it was taken against, and the rule (a 405 needs a *registered* path with a *different* method) does not expire. `t-stops-405-doc-revisit` is **closed** — all three edits landed; see correction + the 2026-09-14 and two 2026-09-15 footnotes |
 | 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both — mutation testing validates the tests you thought to write, never a path you didn't consider. **Both halves now fixed**: the 405-collapse half closed 2026-09-14 by `t-405-router-route-collapse` (qa-verified on real uvicorn, zero surviving mutants). The body's 2026-09-14 correction is the record of what was broken then, not present state — but its "the catch-all stays" reasoning is still live before touching `main.py` |
 | 8 | Cross-trip slug collision | `0001_initial_schema.sql`, `security.py` | Same slug on two trips is fine (random tokens); same slug on one row is not — migration 0002 added CHECK |
 | 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
@@ -277,6 +277,35 @@ merely underspecified.
 > The correction's *other* expiry has **not** fired. `DELETE /trips/{slug}/stops` still returns `404`
 > — the stops router remains an empty `APIRouter` stub — so that illustration stands unedited and
 > `t-stops-405-doc-revisit` stays **open** for it until `s-stop-crud`.
+>
+> **Footnote (2026-09-15, second of the day) — the correction's other expiry has now fired too.**
+> Appended, not merged, for the third time and for the same reason: what `qa` measured, and the
+> codebase it was measured against, must stay readable exactly as written.
+>
+> `t-stops-list-endpoint` registered `GET` on `/trips/{slug}/stops` — plus its schema-excluded `HEAD`
+> sibling (Entry 11) — in `3ebded7`. The stops router is no longer an empty `APIRouter` stub, so the
+> correction's illustration has flipped: **`DELETE /trips/{slug}/stops` now returns `405`, with
+> `Allow: GET, HEAD`.** The set becomes `{"GET", "HEAD", "POST"}` once `t-stops-create-endpoint`
+> lands.
+>
+> **This was verified, not predicted — which is what the 2026-09-14 footnote above demanded.** That
+> footnote warned that a registered stops path could *silently stay* `404` via the
+> `getattr(route, "methods", None)` blindness, and that the two failures are indistinguishable from
+> the outside. `t-405-router-route-collapse` has landed, and the observed value is pinned by a test
+> rather than by inference: `test_spa_delete_on_the_registered_stops_path_is_405` asserts `405` with
+> `Allow` exactly `{"GET", "HEAD"}`, and it passes.
+>
+> **`qa`'s original measurement was correct and is not being retracted.** It read `404` against a
+> codebase where the stops router had no methods registered; what changed is the codebase, not the
+> reading. This is precisely the failure mode the 2026-09-14 footnote anticipated — that a later
+> reader would mistake an accurate reading of a different tree for a mistake — so it is stated here
+> explicitly. **Wording only: every part of this entry's decision is unaffected.** The rule the
+> correction exists to teach — a `405` requires a *registered* path with a *different* method — does
+> not expire; only the illustration did, and it now illustrates the same rule from the other side.
+>
+> `docs/api-contract.md`'s matching paragraph was re-worded **in place** on the same patch, per that
+> file's convention (no append-only errata in a plain contract document). With this, all three edits
+> owned by `t-stops-405-doc-revisit` have landed and the task is **closed**.
 
 **What `ba` did — the part worth recording.** It declined to decide. Its stated reasoning: inventing
 a new `ErrorCode` member is a *contract change*, not an implementation detail, and a scoping agent

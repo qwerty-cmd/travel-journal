@@ -54,7 +54,8 @@
     { "id": "t-ruff-format-gate", "storyId": "s-data-layer-foundation", "title": "Decide whether ruff format joins the validation gate", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
     { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-errors-docstring-tense", "storyId": "s-data-layer-foundation", "title": "errors.py docstring described future security.py behaviour", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "not_started", "agent": "dev", "blockers": [], "gate": "observable" },
+    { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "in_progress", "agent": "dev", "blockers": [], "gate": "observable" },
+    { "id": "t-access-log-slug-exposure", "storyId": "s-data-layer-foundation", "title": "uvicorn access log records the trip slug from the request URL", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
     { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-bike-order-collation", "storyId": "s-data-layer-foundation", "title": "Bike ordering test collation-safety", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
@@ -62,7 +63,7 @@
     { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
 
-    { "id": "t-conflict-code-contract", "storyId": "s-data-layer-foundation", "title": "api-contract.md CONFLICT/409 rule + decision-log Entry 14 + tracker entries", "status": "in_progress", "agent": "docs", "blockers": [] },
+    { "id": "t-conflict-code-contract", "storyId": "s-data-layer-foundation", "title": "api-contract.md CONFLICT/409 rule + decision-log Entry 14 + tracker entries", "status": "done", "agent": "docs", "blockers": [] },
     { "id": "t-conflict-409-test-repoint", "storyId": "s-data-layer-foundation", "title": "Re-point the two 409 placeholder assertions in test_error_envelope.py to 418", "status": "not_started", "agent": "test-writer", "blockers": [] },
     { "id": "t-conflict-code-impl", "storyId": "s-data-layer-foundation", "title": "models/common.py + core/errors.py — CONFLICT member and 409 status mapping", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-conflict-code-tests", "storyId": "s-data-layer-foundation", "title": "Tests for the CONFLICT member, its 409 mapping and the ApiError pairing backstop", "status": "not_started", "agent": "test-writer", "blockers": [] },
@@ -72,8 +73,8 @@
     { "id": "t-agent-defs-triage-gate", "storyId": "s-finding-triage-gate", "title": ".claude/agents/ — qa/dev/ba definitions carry the gate and the evidence template", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-backlog-retro-triage", "storyId": "s-finding-triage-gate", "title": "Retro-classify every open task against the gate (ba analyses, docs writes)", "status": "done", "agent": "ba", "blockers": [] },
 
-    { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "in_progress", "agent": "docs", "blockers": [], "gate": "triggered" },
-    { "id": "t-stops-list-endpoint", "storyId": "s-stop-crud", "title": "GET /api/trips/{slug}/stops — StopOut[] handler + stops repository", "status": "in_progress", "agent": "dev", "blockers": [] },
+    { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "done", "agent": "docs", "blockers": [], "gate": "triggered" },
+    { "id": "t-stops-list-endpoint", "storyId": "s-stop-crud", "title": "GET /api/trips/{slug}/stops — StopOut[] handler + stops repository", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
@@ -82,6 +83,6 @@
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
-  "currentTask": "t-stops-list-endpoint",
-  "lastUpdated": "2026-09-15T18:00:00Z"
+  "currentTask": "t-error-log-parameter-redaction",
+  "lastUpdated": "2026-09-15T21:30:00Z"
 }
