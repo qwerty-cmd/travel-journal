@@ -72,7 +72,19 @@ _settings = get_settings()
 # that loop and dispose of it before the loop closes (`tests/conftest.py` and
 # `app/data/migrate.py` both already do exactly that) — do not share this one.
 # ---------------------------------------------------------------------------
-engine = create_async_engine(normalize_database_url(_settings.database_url), pool_pre_ping=True)
+#
+# `hide_parameters=True`: a trip slug is the credential, and it travels as a
+# bound parameter — without this, `StatementError.__str__` appends
+# `[parameters: ('<live-slug>', ...)]` and the 500 handler's traceback writes it
+# to the log (decision-log Entry 13, `core/errors.py` sink A). Removing it
+# re-opens that leak. The exception class, driver message, `[SQL: ...]` and
+# traceback all still render, so a 500 stays diagnosable.
+# ponytail: engine-wide, so `echo=`/`echo_pool=` debugging loses parameters too;
+# upgrade path is a setting if that ever bites — not a config knob today for a
+# value that never changes.
+engine = create_async_engine(
+    normalize_database_url(_settings.database_url), pool_pre_ping=True, hide_parameters=True
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 

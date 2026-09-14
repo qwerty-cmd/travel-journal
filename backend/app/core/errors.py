@@ -134,6 +134,49 @@ class ApiError(Exception):
         )
 
 
+# ---------------------------------------------------------------------------
+# Why 5xx logging never formats a concrete URL (decision-log Entry 13).
+#
+# A trip slug is not an identifier here — it *is* the credential, the whole of
+# the authorization for a link. `GET /api/trips/{slug}` is live, so a 5xx on it
+# had three places to write that slug down:
+#
+#   A. The traceback. SQLAlchemy's `StatementError.__str__` appends
+#      `[parameters: ('<slug>', ...)]`, which `logger.exception(exc_info=...)`
+#      renders. CLOSED in `app/data/db.py` via `hide_parameters=True`.
+#   B. The handlers' own format arguments. `request.url.path` *is*
+#      `/api/trips/<slug>` — so the slug landed in the ERROR record whatever the
+#      exception type, no database error required. CLOSED here: every 5xx site
+#      goes through `_endpoint()` and logs the matched route template instead.
+#   C. The uvicorn access log, which writes the request line on every request.
+#      ACCEPTED, deliberately, not overlooked: there is no shipper, tracker or
+#      aggregator in this project today; silencing access logs wholesale would
+#      cost status/method/latency for every request to remove a URL that was
+#      already on the wire; and an app module reconfiguring a third-party
+#      logger at import time is the silently-inert shape Entry 7(b) records.
+#      Filed as `t-access-log-slug-exposure`, trigger: **the first error
+#      tracker or log shipper configured**. Fire it then.
+#
+# REJECTED REASONING — do not delete this guard because "the slug is in the
+# access log anyway, so this is pointless." That argument was made, recorded in
+# full and lost (Entry 13): it is a claim about *severity*, and the triage gate
+# asks about *currency*. C being open is the reason B is worth closing, not a
+# reason it isn't — B is the copy that follows an exception into a tracker.
+# Reopening this means showing Entry 13's evidence no longer applies.
+# ---------------------------------------------------------------------------
+def _endpoint(request: Request) -> str:
+    """
+    `"GET /trips/{slug}"` — which endpoint failed, with no concrete URL in it.
+
+    The matched route's template, never `request.url.path`. One helper so all
+    three 5xx call sites share a single guard rather than three that can drift.
+    Falls back when nothing matched (a routing 404 — which never reaches a 5xx
+    log line, but the helper must not depend on that).
+    """
+    template = getattr(request.scope.get("route"), "path", None)
+    return f"{request.method} {template or '<unmatched>'}"
+
+
 def envelope_response(
     status_code: int,
     code: ErrorCode,
@@ -163,10 +206,9 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     """
     if exc.code is ErrorCode.INTERNAL_ERROR:
         logger.error(
-            "ApiError %s INTERNAL_ERROR on %s %s: %s",
+            "ApiError %s INTERNAL_ERROR on %s: %s",
             exc.status_code,
-            request.method,
-            request.url.path,
+            _endpoint(request),
             exc.message,
         )
         return envelope_response(exc.status_code, exc.code, INTERNAL_ERROR_MESSAGE)
@@ -225,10 +267,9 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         # Same reasoning as the unhandled-exception handler: a 5xx detail is not
         # guaranteed to be rider-safe, so it is logged rather than returned.
         logger.error(
-            "HTTPException %s on %s %s: %s",
+            "HTTPException %s on %s: %s",
             exc.status_code,
-            request.method,
-            request.url.path,
+            _endpoint(request),
             exc.detail,
         )
         return envelope_response(exc.status_code, code, INTERNAL_ERROR_MESSAGE, headers)
@@ -245,9 +286,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     `exc` is logged with its traceback and never reaches the body. A DB error's
     text alone can contain the database host and user.
     """
-    logger.exception(
-        "Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc
-    )
+    logger.exception("Unhandled exception on %s", _endpoint(request), exc_info=exc)
     return envelope_response(
         HTTPStatus.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE
     )
