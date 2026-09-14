@@ -394,9 +394,7 @@ def test_direct_construction_rejects_a_contradicting_code(status: int, code: Err
         (409, ErrorCode.INTERNAL_ERROR),  # unnamed status -> INTERNAL_ERROR, per the mapping
     ],
 )
-def test_direct_construction_still_allows_every_contract_pair(
-    status: int, code: ErrorCode
-) -> None:
+def test_direct_construction_still_allows_every_contract_pair(status: int, code: ErrorCode) -> None:
     """
     The backstop rejects contradictions, not legitimate use.
 
@@ -699,12 +697,61 @@ def test_spa_unknown_api_non_get_returns_not_found_envelope(
 
 
 def test_spa_unknown_api_path_under_a_real_prefix_is_not_found(spa_client: TestClient) -> None:
-    """A path shaped like a contract endpoint, but claimed by no route, is still a 404."""
-    response = spa_client.delete("/api/trips/some-slug/stops")
+    """
+    A path shaped like a contract endpoint, but claimed by no route, is still a 404.
+
+    **The path moved on 2026-09-15; the subject did not.** This case used to send
+    `DELETE /api/trips/some-slug/stops`, which was unclaimed only while the stops
+    router was an empty stub. `t-stops-list-endpoint` registered `GET`+`HEAD`
+    there, so that request is now a genuine method mismatch and its correct
+    answer is `405` — asserted in `test_spa_delete_on_the_registered_stops_path_
+    is_405` below, which is where the old request went. Keeping the old path here
+    would have quietly converted this test from "no such path" into "wrong verb",
+    testing the same thing as its neighbour and leaving the 404-under-a-real-
+    prefix case uncovered.
+
+    The replacement is chosen so it cannot expire the same way: the contract
+    lists **eight** endpoints and says "No others", and `/api/trips/{slug}/
+    itinerary` is not one of them, so no future task registers it. A path from
+    the eight (`/bikes`, `.../photos`) would only have reset this same clock.
+    """
+    response = spa_client.delete("/api/trips/some-slug/itinerary")
 
     assert response.status_code == HTTPStatus.NOT_FOUND
     detail = assert_envelope(response)
     assert detail.code is ErrorCode.NOT_FOUND
+    assert "allow" not in response.headers, "a 405 here would claim the path exists"
+
+
+def test_spa_delete_on_the_registered_stops_path_is_405(spa_client: TestClient) -> None:
+    """
+    `DELETE /api/trips/{slug}/stops` — the expiry the contract predicted, now fired.
+
+    `docs/api-contract.md`'s forward-note and decision-log entry 6's footnote both
+    named this exact moment: while the stops router had no methods registered,
+    Starlette found no route at all and `404` was the right answer; with
+    `GET`+`HEAD` registered by `t-stops-list-endpoint` the path exists, `DELETE`
+    mismatches, and `405` / `METHOD_NOT_ALLOWED` is what the contract requires.
+
+    It is also the positive evidence for `t-405-router-route-collapse`: those
+    notes warned that without it this would *silently stay* `404` — the /api
+    catch-all full-matches every verb, so the router's own 405 never fires under
+    /api and the status has to be reconstructed. It was not silent.
+
+    `Allow` is asserted as an exact set for the reason its `/api/health` sibling
+    gives: a substring check survives a hardcoded string, a set that lost `HEAD`
+    and a set that grew a verb the path does not accept. `{"GET", "HEAD"}` is the
+    stops path's real verb set today — `HEAD` from the second, schema-excluded
+    registration of the same handler. When `POST /trips/{slug}/stops` lands this
+    set becomes `{"GET", "HEAD", "POST"}` and this assertion is *supposed* to
+    fail; that is the check doing its job, not a stale test.
+    """
+    response = spa_client.delete("/api/trips/some-slug/stops")
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    detail = assert_envelope(response)
+    assert detail.code is ErrorCode.METHOD_NOT_ALLOWED
+    assert allow_verbs(response) == {"GET", "HEAD"}
 
 
 def test_spa_wrong_method_on_a_real_api_route_is_still_405(spa_client: TestClient) -> None:
