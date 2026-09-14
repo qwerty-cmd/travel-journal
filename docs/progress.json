@@ -59,13 +59,16 @@
     { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-bike-order-collation", "storyId": "s-data-layer-foundation", "title": "Bike ordering test collation-safety", "status": "not_started", "agent": "test-writer", "blockers": [] },
-    { "id": "t-head-on-get-routes", "storyId": "s-data-layer-foundation", "title": "Every GET route also answers HEAD via explicit methods=[\"GET\", \"HEAD\"]", "status": "not_started", "agent": "dev", "blockers": [] },
-    { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route declares [\"GET\", \"HEAD\"]", "status": "not_started", "agent": "docs", "blockers": [] },
+    { "id": "t-head-on-get-routes", "storyId": "s-data-layer-foundation", "title": "Every GET path also answers HEAD, via a second schema-excluded registration of the same handler", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [] },
+    { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "not_started", "agent": "docs", "blockers": ["Assigned agent cannot execute it: target is .claude/skills/add-endpoint/SKILL.md, outside the docs agent's docs/-only write scope. Needs reassignment."] },
 
     { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "not_started", "agent": "docs", "blockers": [] },
 
-    { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] }
+    { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
+
+    { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [] }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-14T21:15:00Z"
+  "lastUpdated": "2026-09-14T23:05:00Z"
 }

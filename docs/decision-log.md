@@ -26,11 +26,12 @@ empirically disproves another.
 | 3 | Slug uniqueness — ON CONFLICT DO UPDATE | `progress.json`, seed script | DO UPDATE on slugs is an authorization leak, not an upsert — let UNIQUE reject and regenerate |
 | 4 | "Add a note" ambiguity | `map.py`, `__init__.py` | Barrel-export instruction was ambiguous; cost a recorded rationale |
 | 5 | Barrel export convention | `models/__init__.py` | One-off barrel re-export rejected — don't invent conventions for a single use |
-| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration now has two pending expiries, neither fired yet** — `t-head-on-get-routes` falsifies its "GET-only" wording, `s-stop-crud` its DELETE example; both tracked in `t-stops-405-doc-revisit` — see correction + 2026-09-14 footnote |
+| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration had two pending expiries and the first has now FIRED** — `t-head-on-get-routes` landed 2026-09-14, so `/api/health` is GET+HEAD and the entry's "GET-only" wording is false (wording only — POST is in neither method set, so the 405 and the conclusion stand); `s-stop-crud` DELETE example still pending. Both edits owned by `t-stops-405-doc-revisit`, now unblocked — see correction + 2026-09-14 footnote |
 | 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both — mutation testing validates the tests you thought to write, never a path you didn't consider. **Both halves now fixed**: the 405-collapse half closed 2026-09-14 by `t-405-router-route-collapse` (qa-verified on real uvicorn, zero surviving mutants). The body's 2026-09-14 correction is the record of what was broken then, not present state — but its "the catch-all stays" reasoning is still live before touching `main.py` |
 | 8 | Cross-trip slug collision | `0001_initial_schema.sql`, `security.py` | Same slug on two trips is fine (random tokens); same slug on one row is not — migration 0002 added CHECK |
 | 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
 | 10 | A shallow copy reasoned about as deep — twice in one patch | `main.py`, `test_error_envelope.py` | `qa` disproved `dev`'s stated reason for the scope copy (the `fastapi` key is *always* already present at handler time); `test-writer` disproved the orchestrator's fix for the resulting test gap (shallow snapshot compared the inner dict against itself). Code was right, reason was wrong; test looked like coverage and had none |
+| 11 | HEAD on GET routes: `methods=["GET", "HEAD"]` vs a second registration | `main.py`, `trips.py`, `test_head_method.py` | User chose the explicit method list; `dev` measured that FastAPI emits a duplicate `head:` operation and a duplicate operationId from it, which Kubb turns into a duplicate hook. Shipped as a second, schema-excluded registration of the *same handler* — user's intent kept, literal spelling not. Collapsing the two back into one route leaves **189 of 191 tests green**: only the two OpenAPI guards fail |
 
 ---
 
@@ -764,3 +765,66 @@ it is recorded in `docs/progress-notes.md` under `t-405-router-route-collapse` t
 deep-copy proposal it would otherwise keep reviving. If that proposal is revived it must be a
 one-level `dict()` copy and never `copy.deepcopy`: the scope holds `_IncludedRouter` instances and
 route contexts FastAPI reads back **by identity**, so a deep copy would clone live routing objects.
+
+---
+
+## 11. A decision the user made could not be implemented as spelled — `methods=["GET", "HEAD"]`
+
+**Who:** `dev` vs. a mechanism **the user chose**, contradicted on measured evidence. Resolved in
+`dev`'s favour on the spelling, in the user's favour on everything the spelling was for.
+**Where:** `backend/app/main.py`, `backend/app/api/routes/trips.py`,
+`backend/tests/test_head_method.py`, task `t-head-on-get-routes`.
+
+**Category note.** Entries 1–10 record agents disagreeing with each other. This one records an agent
+contradicting **the user's own decision**, which is why it is worth more than the two-line diff it
+produced: the finding was not "there is a better way", it was "the way you picked does not exist on
+this FastAPI version". The distinction matters for how it was handled — `dev` did not substitute its
+own preference, it preserved the decision and changed only what the decision was expressed in.
+
+**The decision.** Offered a global HEAD→GET middleware or an explicit `methods=["GET", "HEAD"]` on
+each GET route, the user chose the explicit method list. The middleware was rejected for reasons
+already on file: Entry 7b had rejected routing-duplicating middleware (a drifting second copy of the
+routing table), and stripping the body from a HEAD response is the ASGI server's job, not the
+application's. **That rejection is untouched by this entry. Do not re-propose the middleware.**
+
+**What `dev` measured.** `fastapi.openapi.utils.get_openapi_path` loops `for method in
+route.methods` with **no HEAD exclusion**, while `operation_id` is per-*route*, not per-operation.
+So a single route carrying both verbs emits a second `head:` operation into the OpenAPI document,
+with **both operations sharing `operationId: health_api_health_get`**, plus a `Duplicate Operation
+ID` warning at generation time. The document is what Kubb generates the frontend client from, so the
+literal spelling of the user's choice would have produced a duplicate, identical hook in
+`frontend/src/api/` — a repository away from the change that caused it. Measured on FastAPI 0.141.1.
+
+Per the task's own instruction (Entry 6b — a gap left visible beats a gap papered over), this was a
+stop-and-escalate condition rather than something to improvise around.
+
+**What shipped instead.** A second registration of the **same handler** on the same path:
+`add_api_route(..., methods=["HEAD"], include_in_schema=False)` in `main.py` for `/api/health`, and
+the `router.add_api_route` equivalent in `trips.py` for `GET /trips/{slug}`.
+
+**Why this is not a third option smuggled past the decision.** The path's route set is `GET` +
+`HEAD` — which is exactly what `_methods_allowed_elsewhere` probes and reports in `Allow`, now
+`{"GET", "HEAD"}` on both paths. It is still a **route-level declaration**: no second copy of the
+routing table, nothing inspecting requests ahead of routing, body-stripping still uvicorn's job.
+Because the registration reuses the handler object, the access dependency is not re-declared and
+cannot drift: `qa` confirmed the GET and HEAD routes resolve **identical dependency trees**, that
+`require_trip_access` genuinely runs on HEAD, and that an unknown slug is a `404` rather than a
+`403`, so the slug-space oracle stays closed. **The user's intent survived; only the literal
+spelling did not.**
+
+**Why it matters going forward — the part worth recording.** `qa` ran the collapse as a mutation:
+folding the two registrations back into one `methods=["GET", "HEAD"]` route leaves **189 of the 191
+tests passing**. Every behavioural test stays green, because nothing about request handling changes
+— HEAD is still answered, by the same handler, with the same status and no body. Only the two
+OpenAPI guards in `test_head_method.py` fail
+(`test_openapi_document_declares_no_head_operation` and
+`test_generating_the_openapi_document_emits_no_duplicate_operation_id_warning`).
+
+So the "obvious simplification" — and it *is* obvious; two registrations of one handler reads like
+redundancy — is **invisible to every test that sends a request**, and its damage lands in a
+*generated client*, not in the API. That is why those two guards exist, and why the inline comments
+above both registrations name `get_openapi_path` explicitly rather than saying "don't merge these"
+(Entry 4's rule: the rationale belongs where the mistake would be made). **A reader who deletes
+either guard is removing the only thing standing between that simplification and a duplicate Kubb
+hook.** If you are about to merge the registrations, you are reopening this entry, and the burden is
+to show `get_openapi_path` no longer loops HEAD in — not to re-derive it.
