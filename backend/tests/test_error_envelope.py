@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
@@ -50,6 +50,7 @@ from app.core.errors import (
     unhandled_exception_handler,
     validation_error_handler,
 )
+from app.main import _ALL_METHODS as ALL_API_METHODS
 from app.models.common import ErrorCode, ErrorDetail, ErrorEnvelope
 
 # A string that exists nowhere else in the codebase, so finding it in a response
@@ -763,3 +764,262 @@ def test_real_app_registers_every_handler() -> None:
     assert handlers[RequestValidationError] is validation_error_handler
     assert handlers[StarletteHTTPException] is http_exception_handler
     assert handlers[Exception] is unhandled_exception_handler
+
+
+# --------------------------------------------------------------------------
+# 5b. A 405's `Allow` must name the verbs that path really accepts
+# --------------------------------------------------------------------------
+# The /api catch-all matches every verb, so the router's own 405 never fires
+# under /api: the catch-all full-matches first and every wrong-verb request
+# lands on `unknown_api_path`, which reconstructs the 405 the router would have
+# produced. Two things make that reconstruction easy to get wrong in a way a
+# green suite does not notice.
+#
+# First, *which* routes it can see. FastAPI represents an included router as one
+# lazy entry with `path=None` and `methods=None`, so a scan keyed on
+# `route.methods` finds only `/api/health` — the single route registered
+# directly on `app` — and silently misses all eight contract endpoints. The
+# suite asserted on `/api/health` alone and stayed green for the whole time
+# `POST /api/trips/{slug}` was answering 404 (decision-log entry 7b).
+#
+# Second, *what it puts in `Allow`*. Every route in the real app today is
+# GET-only, so `Allow: GET` is indistinguishable from a hardcoded string. The
+# probe app below is therefore built in production shape — routes behind a real
+# `APIRouter`, one path with two verbs and one path with a verb no production
+# route uses — and it registers the **production** catch-all handler imported
+# from `app.main`. A copy of that handler here would be a second implementation
+# free to drift away from the one that ships, which is the failure this whole
+# section exists to catch.
+
+
+def build_router_probe_app() -> FastAPI:
+    """The production 405 machinery, wired to routes with more than one verb."""
+    import app.main
+
+    probe = FastAPI()
+    register_exception_handlers(probe)
+
+    router = APIRouter(prefix="/api")
+
+    @router.get("/both")
+    async def probe_both_get() -> dict[str, str]:
+        return {"verb": "GET"}
+
+    @router.post("/both")
+    async def probe_both_post() -> dict[str, str]:
+        return {"verb": "POST"}
+
+    @router.patch("/patch-only")
+    async def probe_patch_only() -> dict[str, str]:
+        return {"verb": "PATCH"}
+
+    probe.include_router(router)
+
+    # The shipped route, not a re-implementation of it.
+    probe.api_route(
+        app.main.UNKNOWN_API_PATH,
+        methods=app.main._ALL_METHODS,
+        include_in_schema=False,
+    )(app.main.unknown_api_path)
+
+    return probe
+
+
+@pytest.fixture
+def router_probe_client() -> TestClient:
+    """
+    The probe app above, rebuilt per test.
+
+    Function-scoped deliberately, though nothing here mutates it. `spa_client`
+    reloads `app.main`, so a module-scoped instance would pin whichever
+    `unknown_api_path` object existed when the first test in this section ran —
+    behaviour cannot drift (the pinned function's `__globals__` still resolve
+    live), but `pinned is app.main.unknown_api_path` then reads `False` after a
+    reload, and that is the exact identity check used to confirm this probe wires
+    the production handler rather than a copy. Rebuilding costs microseconds and
+    removes the ordering dependency.
+    """
+    return TestClient(build_router_probe_app())
+
+
+def allow_verbs(response: Any) -> set[str]:
+    """`Allow` as a set — the contract is the verb set, not its order or spacing."""
+    header = response.headers.get("allow", "")
+    return {verb.strip() for verb in header.split(",") if verb.strip()}
+
+
+def test_probe_router_routes_are_reachable(router_probe_client: TestClient) -> None:
+    """
+    Sanity check on the probe: the catch-all must not shadow the real routes.
+
+    Without this, every assertion below could pass against an app whose router
+    never matched anything — "405 for POST /api/patch-only" is also what a
+    completely broken app returns.
+    """
+    assert router_probe_client.get("/api/both").json() == {"verb": "GET"}
+    assert router_probe_client.post("/api/both").json() == {"verb": "POST"}
+    assert router_probe_client.patch("/api/patch-only").json() == {"verb": "PATCH"}
+
+
+def test_allow_names_the_verb_that_path_accepts_and_not_get(
+    router_probe_client: TestClient,
+) -> None:
+    """
+    The one a hardcoded `Allow: GET` cannot survive.
+
+    A PATCH-only path behind an included router: the verb set has to come from
+    the routing table, so PATCH is in it and the two verbs the path does *not*
+    accept are not. `Allow` is a MUST on a 405 (RFC 9110 §15.5.6), and a wrong
+    one is worse than a missing one — it tells the client to retry a verb that
+    will never be accepted.
+    """
+    response = router_probe_client.post("/api/patch-only")
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
+    assert allow_verbs(response) == {"PATCH"}
+
+
+def test_allow_names_every_verb_that_path_accepts(router_probe_client: TestClient) -> None:
+    """
+    ...and when a path is served by two routes, `Allow` carries both.
+
+    One path, two separate registrations. Reporting only the first match found
+    would satisfy the test above and still hand a client an `Allow` that omits a
+    verb it could have used.
+    """
+    response = router_probe_client.delete("/api/both")
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
+    assert allow_verbs(response) == {"GET", "POST"}
+
+
+def test_unknown_probe_path_is_still_a_404_envelope(router_probe_client: TestClient) -> None:
+    """A path no probe route claims stays a 404 — `Allow` is derived, not assumed."""
+    response = router_probe_client.post("/api/nothing-here")
+
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert assert_envelope(response).code is ErrorCode.NOT_FOUND
+    assert "allow" not in response.headers
+
+
+def test_real_app_wrong_method_on_a_router_registered_route_is_405() -> None:
+    """
+    The live defect, on the real app: `POST /api/trips/{slug}` was a 404.
+
+    `/api/trips/{slug}` is registered through `api_router`, which is the entire
+    difference between this test and the `/api/health` one — and the difference
+    the previous implementation could not see.
+    """
+    import app.main
+
+    response = TestClient(app.main.app).post("/api/trips/whatever")
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
+    assert allow_verbs(response) == {"GET"}
+
+
+def test_probing_leaves_the_live_request_scope_unchanged() -> None:
+    """
+    The verb probe must leave the in-flight request exactly as it found it.
+
+    A post-condition, not an interleaving check: a write that is restored before
+    the call returns is invisible here, deliberately so. Nothing between the
+    probe's write and its restore can observe the intermediate state — the loop
+    is synchronous, with no `await` in it — so "identical afterwards" is the
+    whole guarantee that matters.
+
+    Probing means asking each route "would you match this scope under PATCH?",
+    which needs a scope carrying that verb — and `matches()` writes to the scope
+    it is handed as well (`_IncludedRouter.matches` inserts FastAPI's bookkeeping
+    dict and does not remove it). Done to the live scope, both writes outlive the
+    probe: uvicorn reads `scope["method"]` back at *response-send* time, for the
+    access-log line (`h11_impl.py`) and to decide whether a HEAD response may
+    carry a body (`httptools_impl.py`). A request left holding the last verb
+    probed would be logged as a method the client never sent, and would lose its
+    body outright the day `_ALL_METHODS` is reordered to end on HEAD.
+
+    Asserted against a copy of the whole scope, not just `method`: the key
+    `matches()` inserts is exactly the kind of leftover a `method`-only check
+    would miss.
+
+    `scope["fastapi"]` is seeded rather than left absent, because at runtime it
+    is never absent: Starlette's router has already iterated `route.matches()`
+    over this scope before the catch-all handler runs, and
+    `_IncludedRouter.matches` does `scope.setdefault("fastapi", {})`. An empty
+    scope exercises only the key-*missing* path. The sentinel inside it is what
+    the probe's shallow `{**scope, ...}` copy shares with the live scope, so it
+    is the one value a failure to restore would disturb — `before` therefore
+    snapshots that inner dict separately, since a plain `dict(scope)` would alias
+    it and compare it against itself.
+    """
+    import app.main
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/trips/whatever",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [],
+        "app": app.main.app,
+        "router": app.main.app.router,
+        "fastapi": {"sentinel": object()},
+    }
+    before = dict(scope) | {"fastapi": dict(scope["fastapi"])}
+
+    assert app.main._methods_allowed_elsewhere(Request(scope)) == {"GET"}
+    assert scope == before
+
+
+def test_spa_wrong_method_on_a_router_registered_route_is_405(spa_client: TestClient) -> None:
+    """The same request with a built frontend present — the shape QA found it in."""
+    response = spa_client.post("/api/trips/whatever")
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
+    assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
+    assert allow_verbs(response) == {"GET"}
+
+
+def test_spa_health_get_still_succeeds(spa_client: TestClient) -> None:
+    """
+    Regression: reconstructing 405s must not cost the routes that already worked.
+
+    The catch-all sits in front of every /api path, so a mistake in the verb
+    probe shows up here as a working endpoint answering 404 or 405.
+    """
+    response = spa_client.get("/api/health")
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.parametrize("method", ALL_API_METHODS)
+def test_spa_unknown_api_path_is_404_under_every_verb(spa_client: TestClient, method: str) -> None:
+    """
+    A path no route claims is a 404 for *every* verb the catch-all accepts.
+
+    Parametrised over `_ALL_METHODS` itself rather than a hand-picked few: the
+    catch-all's whole purpose is to answer regardless of verb, so a verb missing
+    from this list is a verb nothing covers. `Allow` must be absent — a 405 here
+    would claim the path exists — and the body must never be the SPA shell,
+    which is a `200 text/html` a Kubb client would parse as an envelope.
+
+    HEAD is the one named exception: it carries the headers of the GET response
+    and no body at all (RFC 9110 §9.3.2), so there is nothing to parse. Every
+    other verb is required to carry the envelope, asserted unconditionally —
+    keying the check on "did a body arrive" instead would let a regression that
+    returns an *empty* 404 for, say, TRACE pass as though it were HEAD.
+    """
+    response = spa_client.request(method, "/api/no-such-path")
+
+    assert response.status_code == HTTPStatus.NOT_FOUND, method
+    assert "allow" not in response.headers, method
+    assert "SPA shell" not in response.text, method
+    if method == "HEAD":
+        assert not response.content, "HEAD must not carry a body"
+    else:
+        assert response.content, f"{method} must answer with an envelope body, not an empty one"
+        assert assert_envelope(response).code is ErrorCode.NOT_FOUND, method

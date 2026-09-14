@@ -61,27 +61,93 @@ def _methods_allowed_elsewhere(request: Request) -> set[str]:
     """
     The methods some *real* /api route accepts for this exact path.
 
-    A full match beats an earlier partial one in Starlette's router, so a
-    catch-all that accepts every verb would swallow the 405 a wrong verb on a
-    real endpoint should produce — turning `DELETE /api/trips/{slug}/stops` into
-    a 404. Decision-log entry 6 is explicit that collapsing 405 into 404 is a
-    contract lie, not a cosmetic one: the offline queue reads "this resource
-    doesn't exist" where the truth is "this method never will be accepted". So
-    the partial match the router would have used is reconstructed here.
+    A full match beats an earlier partial one in Starlette's router, so the
+    catch-all above — which accepts every verb — swallows the 405 a wrong verb
+    on a real endpoint should produce, turning `POST /api/trips/{slug}` into a
+    404. **The route this function serves is itself the thing that breaks 405s.**
+    That is worth stating plainly, because the obvious fix on reading the
+    comment above is "then delete the catch-all", and deleting it does make
+    these 405s correct. It is still the wrong trade: without it, once
+    `frontend/dist` exists an unknown `GET /api/*` goes back to `200 text/html`
+    (entry 7b) — a *success* status carrying an HTML document to a Kubb client
+    that will parse it as `ErrorEnvelope`, which is worse than a wrong status
+    code. The narrower construction — excluding /api from the SPA fallback
+    instead of shadowing it — needs either a hand-assigned `Route.path_regex` or
+    middleware that duplicates the routing table, and it would make /api
+    correctness depend on whether `frontend/dist` exists: exactly the
+    environment-conditional coupling entry 7b forbids. So the catch-all stays
+    and the 405 it shadows is reconstructed here instead.
 
-    Only /api routes are considered, and this route is skipped by path: the SPA
-    fallback is GET-only and partial-matches every non-GET request, which would
-    otherwise report `Allow: GET` for a path that does not exist at all.
+    Decision-log entry 6 is explicit that collapsing 405 into 404 is a contract
+    lie, not a cosmetic one: the offline queue reads "this resource doesn't
+    exist" where the truth is "this method never will be accepted".
+
+    **Why `route.matches()` and not `route.methods`** (entry 7b is the whole
+    story): this FastAPI version represents an included router as a single lazy
+    `_IncludedRouter` entry with `path=None`, `methods=None` and no `.routes` —
+    so `getattr(route, "methods", None)` sees nothing for *every* route
+    registered through `api_router`, and the previous version of this function
+    skipped all eight contract endpoints while looking correct against
+    `/api/health` (the one route registered directly on `app`). `methods` is not
+    a *wrong* attribute, it is a public-looking one that is not universally
+    present, and its absence fails silently and toward 404. Walking
+    `_IncludedRouter`'s internals instead would reproduce that failure mode one
+    layer deeper and regress just as silently on the release that renames the
+    wrapper. `matches()` is public and defined on every `BaseRoute`, but it
+    reports only PARTIAL/FULL and never the verb set — and `Allow` is a MUST on
+    a 405 (RFC 9110 §15.5.6) — so the set is derived by probing each candidate
+    verb and keeping the ones that come back FULL.
+
+    Each probe runs against a **copy** of the scope, never the live one, and the
+    copy is doing exactly one job: keeping the probe's `method` overwrite off the
+    live scope. That one job is not optional — uvicorn reads `scope["method"]`
+    back at *response-send* time, both for the access-log line and to decide
+    whether a HEAD response is allowed a body, so a request left holding the last
+    verb probed would log a method it never used — and would lose its body
+    entirely the day `_ALL_METHODS` is reordered to end on HEAD.
+
+    What the copy does **not** protect is `scope["fastapi"]`, FastAPI's own
+    bookkeeping dict. By the time this function runs that key is already present
+    (Starlette's router iterates `route.matches(scope)` over the *live* scope, and
+    `api_router`'s `_IncludedRouter` is registered ahead of the catch-all, so
+    `_IncludedRouter.matches` has already done `scope.setdefault("fastapi", {})`
+    on it), and `{**request.scope, ...}` is a shallow copy that shares that inner
+    dict — QA measured 104 probe writes landing on the live one. They are safe
+    anyway because `_IncludedRouter.matches` brackets each write in `try/finally`
+    and restores the prior value via `_restore_fastapi_scope_key`, and this loop
+    is synchronous: there is no `await` between any write and its restore, so no
+    other task can observe the intermediate state and the dict is byte-identical
+    afterwards. Those two halves do not stand or fall together, and keeping
+    them apart is the point. The FastAPI-*private* `finally` is **covered**:
+    `test_probing_leaves_the_live_request_scope_unchanged` seeds the scope with
+    a real `fastapi` key and snapshots that inner dict separately, so an
+    upgrade that stops restoring the key fails that test rather than quietly
+    outdating this paragraph — confirmed by stubbing
+    `_restore_fastapi_scope_key` to a no-op, which makes the failure name both
+    private writes probing provokes (`included_router`,
+    `effective_route_context`). This loop staying synchronous is **not
+    covered, and that test structurally cannot cover it**: a post-condition
+    assertion cannot see a state that is restored before the call returns. It
+    is a code-review invariant instead — there is no `await` in this function
+    today, and adding one is exactly what would make the intermediate state
+    observable to another task. One half is a regression a test catches for
+    you; the other is a rule you have to hold while editing this loop.
+
+    Filtering is by path, tolerating `path=None` rather than treating it as
+    missing — a route whose path we cannot read is probed, not skipped, because
+    skipping is what the bug was. A *known* non-/api path is skipped: the SPA
+    fallback is `/{full_path:path}` and would FULL-match a GET probe for any
+    path at all, reporting `Allow: GET` for a path that exists under no verb.
     """
     allowed: set[str] = set()
     for route in request.app.routes:
-        path = getattr(route, "path", "")
-        methods = getattr(route, "methods", None)
-        if not methods or path == UNKNOWN_API_PATH or not path.startswith(API_PREFIX):
+        path = getattr(route, "path", None)
+        if path is not None and (path == UNKNOWN_API_PATH or not path.startswith(API_PREFIX)):
             continue
-        match, _ = route.matches(request.scope)
-        if match is Match.PARTIAL:
-            allowed |= set(methods)
+        for method in _ALL_METHODS:
+            match, _ = route.matches({**request.scope, "method": method})
+            if match is Match.FULL:
+                allowed.add(method)
     return allowed
 
 
