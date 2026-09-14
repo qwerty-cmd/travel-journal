@@ -26,7 +26,7 @@ empirically disproves another.
 | 3 | Slug uniqueness — ON CONFLICT DO UPDATE | `progress.json`, seed script | DO UPDATE on slugs is an authorization leak, not an upsert — let UNIQUE reject and regenerate |
 | 4 | "Add a note" ambiguity | `map.py`, `__init__.py` | Barrel-export instruction was ambiguous; cost a recorded rationale |
 | 5 | Barrel export convention | `models/__init__.py` | One-off barrel re-export rejected — don't invent conventions for a single use |
-| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration had two pending expiries and the first has now FIRED** — `t-head-on-get-routes` landed 2026-09-14, so `/api/health` is GET+HEAD and the entry's "GET-only" wording is false (wording only — POST is in neither method set, so the 405 and the conclusion stand); `s-stop-crud` DELETE example still pending. Both edits owned by `t-stops-405-doc-revisit`, now unblocked — see correction + 2026-09-14 footnote |
+| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration had two pending expiries and the first has now FIRED** — `t-head-on-get-routes` landed 2026-09-14, so `/api/health` is GET+HEAD and the entry's "GET-only" wording is false (wording only — POST is in neither method set, so the 405 and the conclusion stand); `s-stop-crud` DELETE example still pending. Both edits owned by `t-stops-405-doc-revisit`: the `GET`-only wording is now fixed (contract re-worded in place, entry footnoted 2026-09-15), the DELETE example is still open — see correction + 2026-09-14 and 2026-09-15 footnotes |
 | 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both — mutation testing validates the tests you thought to write, never a path you didn't consider. **Both halves now fixed**: the 405-collapse half closed 2026-09-14 by `t-405-router-route-collapse` (qa-verified on real uvicorn, zero surviving mutants). The body's 2026-09-14 correction is the record of what was broken then, not present state — but its "the catch-all stays" reasoning is still live before touching `main.py` |
 | 8 | Cross-trip slug collision | `0001_initial_schema.sql`, `security.py` | Same slug on two trips is fine (random tokens); same slug on one row is not — migration 0002 added CHECK |
 | 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
@@ -250,6 +250,31 @@ merely underspecified.
 >   being read at `s-stop-crud` and that task has **not** landed, the right move is to verify the
 >   observed status before writing anything down — the two failures look identical from the outside,
 >   and this entry exists because an unverified illustration was written down once already.
+>
+> **Footnote (2026-09-15) — the `GET`-only half of this entry's `405` illustration has expired.**
+> Appended, not merged into the paragraph above, for the same reason the correction and the first
+> footnote were appended: this entry's convention is that its text stays readable as originally
+> written, with what falsified it recorded underneath and dated.
+>
+> `t-head-on-get-routes` landed **2026-09-14** (Entry 11). `/api/health` is now registered for `GET`
+> and — via a second, schema-excluded registration of the same handler — `HEAD`. The words
+> "`GET`-only" in "The contradiction `ba` found" above are therefore false as of that date. Read the
+> illustration as *a real route that does not accept `POST`*, which is the work it was always doing.
+>
+> **This is wording only. Every part of this entry's decision is unaffected.** `POST` is in neither
+> method set — `GET`-only or `GET`+`HEAD` — so `POST /api/health` still returns `405`, the `405` is
+> still genuinely reachable, and `METHOD_NOT_ALLOWED` is still a necessary member of the five. Nothing
+> here reopens the escalation, the two-codes-not-one call, or the rejected alternatives. If you
+> arrived at this footnote intending to re-derive any of those from the falsified clause: don't — the
+> clause was illustrative, the conclusion never rested on `HEAD`.
+>
+> The same sentence in `docs/api-contract.md` ("Status → code mapping") was re-worded **in place** on
+> the same patch: that file is a plain contract document with no append-only convention, and a
+> contract that carries its own errata inline is harder to read than one that is simply correct.
+>
+> The correction's *other* expiry has **not** fired. `DELETE /trips/{slug}/stops` still returns `404`
+> — the stops router remains an empty `APIRouter` stub — so that illustration stands unedited and
+> `t-stops-405-doc-revisit` stays **open** for it until `s-stop-crud`.
 
 **What `ba` did — the part worth recording.** It declined to decide. Its stated reasoning: inventing
 a new `ErrorCode` member is a *contract change*, not an implementation detail, and a scoping agent

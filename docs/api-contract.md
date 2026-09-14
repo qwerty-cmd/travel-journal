@@ -88,7 +88,7 @@ This is the mapping the global exception handler implements. It is exhaustive by
 | 405 | `METHOD_NOT_ALLOWED` |
 | anything else, including an unhandled 500 | `INTERNAL_ERROR` |
 
-`METHOD_NOT_ALLOWED` and `INTERNAL_ERROR` were added after the original three proved insufficient to keep the "every non-2xx uses this envelope" promise. Both statuses are reachable today: `POST /api/health` hits a real, `GET`-only route and returns a `405`, and an unhandled exception is a `500` by definition. With only three codes, neither had a legal value to report.
+`METHOD_NOT_ALLOWED` and `INTERNAL_ERROR` were added after the original three proved insufficient to keep the "every non-2xx uses this envelope" promise. Both statuses are reachable today: `POST /api/health` hits a real route that accepts `GET` and `HEAD` only, so it returns a `405`, and an unhandled exception is a `500` by definition. With only three codes, neither had a legal value to report.
 
 A `405` requires a **registered path with a different method** — it is not what an unregistered path returns. `DELETE /trips/{slug}/stops` returns `404`, not `405`, because the stops router is still an empty `APIRouter` stub with no methods registered: Starlette finds no matching route at all, so there is nothing for the method to mismatch against. (An earlier revision of this document used that request as the `405` example; `qa` ran it and found `404`. See `docs/decision-log.md` Entry 6.)
 
