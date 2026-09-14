@@ -34,16 +34,23 @@ The server tells the frontend which kind of slug was used via `TripOut.access` (
 
 The client generates the entity's `id` — a UUID4 — at capture time. Not at send time: at the moment the rider taps "Add stop" or takes a photo, which may be hours earlier and entirely offline. That id travels in the create request body.
 
-On the server:
+On the server, a create request's id falls into exactly one of three branches:
 
 - **Unseen id** → create the record, return `201`.
-- **Id that already exists** → return the **existing** record with `200`. Do not create a duplicate. Do not return a conflict error.
+- **Id already exists under this same parent** → a replay. Return the **existing** record with `200`. Do not create a duplicate, and do not return an error.
+- **Id exists under a *different* parent** → `409` / `CONFLICT`. Nothing is created, and nothing about the conflicting record is disclosed.
 
-Applies to all three create endpoints:
+This three-way branch applies identically to all three create endpoints. It is stated once here rather than per endpoint, because it follows from the schema rather than from any one route:
 
-- `POST /trips/{slug}/stops` (`StopCreate.id`)
-- `POST /trips/{slug}/stops/{id}/photos` (`PhotoCreateForm.id`)
-- `POST /trips/{slug}/bikes` (`BikeCreate.id`)
+- `POST /trips/{slug}/stops` (`StopCreate.id`) — parent is the trip
+- `POST /trips/{slug}/stops/{id}/photos` (`PhotoCreateForm.id`) — parent is the stop
+- `POST /trips/{slug}/bikes` (`BikeCreate.id`) — parent is the trip
+
+**Why the third branch exists at all.** Each of `stops`, `photos` and `bikes` has a **global** primary key on `id` plus a *separate* parent foreign key — `stops.trip_id`, `photos.stop_id`, `bikes.trip_id` (`backend/app/data/tables.py`). An id is therefore unique across the whole table, while the parent it belongs to is a different column entirely. So "this id already exists" and "this id already exists *here*" are two different questions, and only the second one means replay.
+
+**The lookup rule.** Replay is matched on the **parent-and-id pair** — `(trip_id, id)` for stops and bikes, `(stop_id, id)` for photos — and **never on `id` alone.** A lookup by `id` alone would happily return another trip's stop through this trip's slug: a cross-trip leak, which spec Section 12 ranks as the top-priority failure class.
+
+**The cross-parent branch is detected by an explicit check, never by letting an `INSERT` fail.** Allowing the primary-key violation to surface from the driver renders `500` / `INTERNAL_ERROR` — and the offline queue branches on `code` to decide retry-vs-never-retry, so it would retry forever a request that can never succeed. The handler looks first and decides which of the three branches applies. The database constraint stays as the backstop it is, not the mechanism.
 
 Why it matters: the failure mode this protects against is not a user double-tapping. It's the connection dropping *after* the server committed the write but *before* the response reached the phone. From the queue's point of view that is indistinguishable from a total failure, so it retries — correctly. Because the id was fixed on the device before the first attempt, the retry carries the same id, and the server recognises it. The queue can therefore retry any create, any number of times, without needing to know whether the earlier attempt actually landed. That is the entire safety argument for retrying writes at all.
 
@@ -66,7 +73,7 @@ Every non-2xx response uses one shape:
 
 `ErrorEnvelope` / `ErrorDetail` / `ErrorCode` — `backend/app/models/common.py`.
 
-`code` is one of exactly five values:
+`code` is one of exactly six values:
 
 | `code` | Meaning |
 |---|---|
@@ -74,6 +81,7 @@ Every non-2xx response uses one shape:
 | `NOT_FOUND` | No trip has this slug at all — or the stop/bike id doesn't exist |
 | `VALIDATION_ERROR` | Request body or form failed schema validation |
 | `METHOD_NOT_ALLOWED` | The path exists but not for this HTTP method — a client mistake, not a server fault |
+| `CONFLICT` | A client-generated id in a create request already exists under a **different** parent record |
 | `INTERNAL_ERROR` | Anything else, including an unhandled server-side exception |
 
 #### Status → code mapping
@@ -86,9 +94,12 @@ This is the mapping the global exception handler implements. It is exhaustive by
 | 404 | `NOT_FOUND` |
 | 422 | `VALIDATION_ERROR` |
 | 405 | `METHOD_NOT_ALLOWED` |
+| 409 | `CONFLICT` |
 | anything else, including an unhandled 500 | `INTERNAL_ERROR` |
 
 `METHOD_NOT_ALLOWED` and `INTERNAL_ERROR` were added after the original three proved insufficient to keep the "every non-2xx uses this envelope" promise. Both statuses are reachable today: `POST /api/health` hits a real route that accepts `GET` and `HEAD` only, so it returns a `405`, and an unhandled exception is a `500` by definition. With only three codes, neither had a legal value to report.
+
+`CONFLICT` was added later still, for the same reason and by the same route. A create whose client-generated id already exists under a *different* parent is **neither a validation failure nor a server fault** — the request is well-formed and the server is healthy — so among the five existing codes it had no legal value either. `ba` escalated rather than inventing one, exactly as it had for the first two; the user ruled. See `docs/decision-log.md` Entry 14 for the four readings that were rejected, including the composite-primary-key option that would have made the branch unreachable.
 
 A `405` requires a **registered path with a different method** — it is not what an unregistered path returns. `DELETE /trips/{slug}/stops` returns `404`, not `405`, because the stops router is still an empty `APIRouter` stub with no methods registered: Starlette finds no matching route at all, so there is nothing for the method to mismatch against. (An earlier revision of this document used that request as the `405` example; `qa` ran it and found `404`. See `docs/decision-log.md` Entry 6.)
 
@@ -100,7 +111,14 @@ A `405` requires a **registered path with a different method** — it is not wha
 > task `t-stops-405-doc-revisit`. The surrounding rule ("a `405` requires a registered path with a
 > different method") does not expire — only the example does.
 
-They are two codes rather than one catch-all because **a `405` is a client error and a `500` is a server fault** — collapsing them would make the envelope inaccurate about which side went wrong. That distinction is not cosmetic: the offline queue decides retry-vs-never-retry programmatically from `code`, and "the server is broken, try later" and "this request can never succeed as written" are opposite answers.
+`METHOD_NOT_ALLOWED` and `INTERNAL_ERROR` are two codes rather than one catch-all because **a `405` is a client error and a `500` is a server fault** — collapsing them would make the envelope inaccurate about which side went wrong. That distinction is not cosmetic: the offline queue decides retry-vs-never-retry programmatically from `code`, and "the server is broken, try later" and "this request can never succeed as written" are opposite answers.
+
+**Which side of that branch each code falls on is contract, not handler preference:**
+
+- **Never retry** — `VALIDATION_ERROR`, `METHOD_NOT_ALLOWED`, `CONFLICT`. The request cannot succeed as written, however long the queue waits. `CONFLICT` belongs here because a client-generated id that already belongs to another parent will still belong to it on the next attempt; retrying is guaranteed to produce the same `409`.
+- **Retry** — `INTERNAL_ERROR`. The opposite answer: the server broke, and a later attempt may work.
+
+**A never-retry outcome is not a silent drop.** The queued item is **dequeued *and* surfaced to the rider.** This is a data-integrity rule, not a UX nicety: the rider tapped "Add stop", believes that stop was captured, and may be hours from anywhere. Dropping it quietly is a data-loss path — and the rider is the only one who can decide what to do with a capture that cannot be sent as it stands.
 
 #### `message` and the `INTERNAL_ERROR` leak boundary
 
@@ -108,13 +126,17 @@ They are two codes rather than one catch-all because **a `405` is a client error
 
 It follows, and the implementation is bound by it, that **the `INTERNAL_ERROR` message is always a fixed generic string.** The originating exception text is logged server-side and never appears in the response body. This is a leak boundary, not politeness: a raw database error can carry the database host, user and query fragments, and the rider-facing error surface is a public one — the slug in the URL is the only access control there is.
 
-The other four codes carry messages written for the situation, because they describe conditions the caller is allowed to know about.
+The other five codes carry messages written for the situation, because they describe conditions the caller is allowed to know about.
+
+**`CONFLICT` carries a second, narrower leak boundary.** Its `message` is rider-facing and returned **verbatim**, like the rest — and it **must contain no value whatsoever from the conflicting record**: not the other trip's slug, id or name, and not the other stop's name, notes, coordinates or timestamp. A `409` already tells the caller that the id exists somewhere; the message must add nothing to that. This is enforced **at the raise site** — the code that raises it does not read the conflicting row in the first place — and not by filtering in the global handler, which only ever sees the string it was handed. The whole point of this branch is that the other trip stays invisible: the unguessable slug is the entire access model, and a conflict on a shared global id namespace is the one place where a request about *this* trip is evaluated against a row belonging to *another*.
 
 One shape for every failure is what lets the frontend have a single error path. Kubb generates the client from the OpenAPI spec, so if half the endpoints failed in one shape and half in another, every call site would need to branch on which — including the offline queue, which spec Section 12 ranks in the top three for testing rigor. Two parsing paths there would mean two places for retry logic to be wrong.
 
 **FastAPI's default 422 does not look like this.** Out of the box, a validation failure returns FastAPI's own `{"detail": [...]}` structure, and a `405` or an unhandled `500` returns `{"detail": "..."}`. All of those have to be overridden by global exception handlers that map onto the envelope above — otherwise they are the responses the generated client can't parse like the others. **Those handlers are being implemented now** (task `t-error-envelope-handlers`; see Outstanding, below). The envelope model exists; the wiring is in progress.
 
 **`405` and `500` are framework-level responses, not endpoint contract.** They are reachable from any path and are therefore deliberately *not* listed in the per-endpoint status codes below. No endpoint declares a 405 or a 500 row. The envelope guarantee still covers them — that guarantee is global, which is precisely why it doesn't belong in a per-endpoint column.
+
+**`409` is the counterpart case: it *is* endpoint contract, and it is listed per-endpoint.** It is raised by our own handler code rather than by the framework, and it is reachable only on the **three create endpoints** — the only places that accept a client-generated id. It therefore appears in the per-endpoint status codes below, on exactly those three rows and nowhere else.
 
 ---
 
@@ -126,10 +148,10 @@ Eight endpoints, matching spec Section 5. No others. There are no update or dele
 |---|---|---|---|---|---|
 | `GET` | `/trips/{slug}` | either | — | `TripOut` | 200, 404 |
 | `GET` | `/trips/{slug}/stops` | either | — | `StopOut[]` | 200, 404 |
-| `POST` | `/trips/{slug}/stops` | rider only | `StopCreate` | `StopOut` | 201 new, 200 replay, 403, 404, 422 |
-| `POST` | `/trips/{slug}/stops/{id}/photos` | rider only | multipart: `PhotoCreateForm` fields + `file` | `PhotoOut` | 201 new, 200 replay, 403, 404, 422 |
+| `POST` | `/trips/{slug}/stops` | rider only | `StopCreate` | `StopOut` | 201 new, 200 replay, 403, 404, 409, 422 |
+| `POST` | `/trips/{slug}/stops/{id}/photos` | rider only | multipart: `PhotoCreateForm` fields + `file` | `PhotoOut` | 201 new, 200 replay, 403, 404, 409, 422 |
 | `GET` | `/trips/{slug}/stops/{id}/photos` | either | — | `PhotoOut[]` | 200, 404 |
-| `POST` | `/trips/{slug}/bikes` | rider only | `BikeCreate` | `BikeOut` | 201 new, 200 replay, 403, 404, 422 |
+| `POST` | `/trips/{slug}/bikes` | rider only | `BikeCreate` | `BikeOut` | 201 new, 200 replay, 403, 404, 409, 422 |
 | `PATCH` | `/trips/{slug}/bikes/{id}` | rider only | `BikePatch` | `BikeOut` | 200, 403, 404, 422 |
 | `GET` | `/trips/{slug}/map` | either | — | `MapFeatureCollection` | 200, 404 |
 
@@ -148,7 +170,7 @@ Models by file:
 
 **`GET /trips/{slug}/stops`** — the full stop list, including `notes` and `locationSource`. The map endpoint deliberately doesn't duplicate those; this is where they come from.
 
-**`POST /trips/{slug}/stops`** — `StopCreate` carries the client-generated id, coordinates, `locationSource`, `arrivedAt` and optional notes. Replay returns the existing stop with `200`.
+**`POST /trips/{slug}/stops`** — `StopCreate` carries the client-generated id, coordinates, `locationSource`, `arrivedAt` and optional notes. The id decides a three-way branch (see Idempotency, above): an **unseen** id creates the stop and returns `201`; an id **already on this trip** is a replay and returns the existing stop with `200`; an id that exists **on a different trip** returns `409` / `CONFLICT` with nothing created and nothing about the other trip disclosed — not in the body, not in the message. The replay lookup is on `(trip_id, id)`, and the cross-trip case is found by checking, not by letting the insert fail.
 
 **`POST /trips/{slug}/stops/{id}/photos`** — multipart. `PhotoCreateForm` describes the form *fields* only; the binary part (`file`) is a separate multipart part and is not a field on the Pydantic model, because Pydantic models don't carry binary parts. `{id}` here is the stop id the photo attaches to. Replay of a known photo id returns the existing photo with `200` rather than storing the bytes twice.
 
@@ -238,5 +260,5 @@ Everything below is known and deliberate, not an oversight:
 1. **No route handler exists.** Not one of the eight endpoints is implemented. The six files in `backend/app/models/` *are* the contract as it stands; Week 2 implements against them. Until handlers exist there is no OpenAPI spec to generate a Kubb client from either.
 2. **The global exception handlers are in progress, not done.** Task `t-error-envelope-handlers` (`backend/app/core/errors.py` + `main.py` wiring) is being implemented now; it is not closed until it passes QA. Until it lands, FastAPI's default `422`, `405` and `500` bodies do not match `ErrorEnvelope` and nothing normalises them, so those are the response shapes that differ from every other failure. `backend/app/models/common.py` defines the shape — including the two codes added for `405`/`500` (see Error envelope, above) — and the wiring renders it.
 3. **Handler-side map behaviour is unenforced by the models.** Sorting stops by `arrivedAt` before building the trail, and omitting the trail below 2 stops, are both route-handler responsibilities. `backend/app/models/map.py` encodes the shape and the ">= 2 positions" constraint; it cannot enforce that positions arrive in the right order.
-4. **Replay detection is a handler responsibility too.** The models carry the client-generated `id`; recognising an already-seen id and returning the stored record with `200` is implemented in the route + `data/` layer, and needs its own tests per spec Section 12's offline-queue priority.
+4. **Replay detection is a handler responsibility too.** The models carry the client-generated `id`; recognising an already-seen id and returning the stored record with `200` is implemented in the route + `data/` layer, and needs its own tests per spec Section 12's offline-queue priority. **The cross-parent branch is part of that same responsibility** — nothing in the models can express it. `id` is a global primary key and the parent is a separate column, so distinguishing "replay" from "this id belongs to another trip" is a `(parent, id)` lookup the handler must perform before inserting; a model can neither see the parent nor stop the wrong lookup being written.
 5. **No trip record is seeded yet.** Story `s-seed-trip-record` still has to put the single trip and its two slugs in Postgres before any of these endpoints can return anything. Slug values live only in the database — none appear in this document, and `{slug}` throughout is a placeholder.

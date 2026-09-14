@@ -34,6 +34,7 @@ empirically disproves another.
 | 11 | HEAD on GET routes: `methods=["GET", "HEAD"]` vs a second registration | `main.py`, `trips.py`, `test_head_method.py` | User chose the explicit method list; `dev` measured that FastAPI emits a duplicate `head:` operation and a duplicate operationId from it, which Kubb turns into a duplicate hook. Shipped as a second, schema-excluded registration of the *same handler* — user's intent kept, literal spelling not. Collapsing the two back into one route leaves **189 of 191 tests green**: only the two OpenAPI guards fail |
 | 12 | Finding triage gate, and who may write the governance files | `docs/finding-triage-gate.md`, `CLAUDE.md`, `.claude/**` | The orchestrator's weaker three-question triage was replaced by the user's gate — Stop Condition names the over-investigation behaviours rather than trusting judgment, QA classification is evidence not authority. Separately: no agent can write `CLAUDE.md` or `.claude/**`, so the **orchestrator** owns those paths; widening `docs` to `.claude/**` was rejected as self-modifying permissions |
 | 13 | The one backlog item the gate promoted — Gate 2 vs "the slug is already in the access log" | `core/errors.py`, `progress.json` | `ba` classified `t-error-log-parameter-redaction` CURRENTLY OBSERVABLE (handler and route both run today; qa *observed* the slug in the rendered traceback). The note's own argument — marginal disclosure is zero, so ORDINARY DEBT — lost: Gate 2 tests whether a runtime path is current, not how severe it is. Orchestrator additionally found the task closes only **one of two** sinks; re-scoped, not re-classified |
+| 14 | A client-generated id that already exists under a *different* trip — the sixth `ErrorCode` | `models/common.py`, `core/errors.py`, `repositories/stops.py`, `api-contract.md` | `ba` escalated a second contract gap rather than inventing a code (Entry 6's rule, applied again); user ruled **`CONFLICT` / `409`**. Replay matches **`(parent, id)`**, never `id` alone, and the cross-parent branch is found **by a check, never a failed INSERT** (that renders `500` and the queue retries forever). Four readings rejected — the composite `(trip_id, id)` **primary key is rejected on cost, not correctness**: it cascades into `photos.stop_id` and the unbuilt photo-upload design. Entry 3 does **not** forbid `ON CONFLICT (id) DO NOTHING` here |
 
 ---
 
@@ -1110,3 +1111,150 @@ pointless" and remove it. That reasoning needs to sit beside the code, and
 `backend/` is outside the `docs` agent's `docs/`-only write scope, so it could not be placed by the
 patch that recorded this entry. **Whoever implements the fix carries it into that file.** It is part
 of the work, not tidy-up.
+
+---
+
+## 14. A client-generated id that already exists under a *different* trip — the sixth `ErrorCode`
+
+**Who:** `ba` vs. the API contract as written. Escalated to the user, who decided. **This is Entry 6
+happening a second time**, on the same contract, by the same route, and `ba` applied Entry 6's own
+rule to get there.
+**Where:** `docs/api-contract.md` §"Idempotency" and §"Error envelope",
+`backend/app/models/common.py`, `backend/app/core/errors.py`,
+`backend/app/data/repositories/stops.py`. Found while scoping `s-stop-crud`'s create endpoint.
+
+**The gap.** The contract's idempotency rule said: *"Id that already exists → return the existing
+record with `200`. Do not create a duplicate. Do not return a conflict error."* That sentence was
+written with one scenario in mind — the offline queue resending a request whose response never
+arrived — and it is correct for that scenario.
+
+But `stops.id` is a **global primary key** with `trip_id` as a *separate* foreign key
+(`backend/app/data/tables.py:72-73`); `photos` (`:101-102`) and `bikes` (`:115-116`) have exactly
+the same shape. So an id is unique across the whole table while the parent it belongs to is a
+different column, and the contract's "id that already exists" silently conflates two different
+facts: *this id exists here* (a replay) and *this id exists somewhere else* (not a replay at all).
+For the second case the contract had **no answer**, while appearing to have one — and the answer it
+appeared to give, `200` with the existing record, is the worst available option, because the
+existing record belongs to a trip the caller has no link to.
+
+**What `ba` did.** It escalated rather than inventing an answer, citing Entry 6: a new `ErrorCode`
+member is a *contract change*, and a scoping agent does not make contract changes by writing them
+into a task description. It did not quietly pick `422`, and it did not scope the create endpoint
+with the ambiguity left in.
+
+**Resolution — the user ruled.** Add a sixth member, **`CONFLICT`, status `409`**. The idempotency
+rule becomes a three-way branch, stated once for all three create endpoints:
+
+- id unseen → `201`, record created;
+- id already exists **under this same parent** → `200` replay with the stored record;
+- id exists **under a different parent** → `409` / `CONFLICT`, nothing created.
+
+Two mechanics were fixed at the same time, because the branch is only safe with both:
+
+1. **Replay is matched on `(trip_id, id)`** — `(stop_id, id)` for photos — never on `id` alone.
+2. **The cross-parent case is detected by an explicit check, never by letting the `INSERT` fail.**
+
+### The four rejected readings
+
+**1. Look up by `id` alone.** The most natural reading of the sentence as written, and the reason
+the gap is dangerous rather than merely incomplete. It returns another trip's stop *through this
+trip's slug* — a cross-trip leak, spec §12's top-priority failure class. The slug is the entire
+access model; a lookup that ignores the parent hands out a row the caller's slug does not authorise.
+Rejected outright, on correctness.
+
+**2. Look up by `(trip_id, id)` and let the `INSERT` fail.** Correct lookup, wrong failure
+mechanism. The driver's primary-key violation is an unhandled exception, which renders
+`500` / `INTERNAL_ERROR`. The offline queue branches on `code`: `INTERNAL_ERROR` means "the server
+broke, retry later", so the queue would **retry forever a request that can never succeed** — the id
+belongs to another trip on this attempt and on every future one. Entry 6 calls this class of thing a
+contract lie: a status that misreports which side is broken does not stay cosmetic, because
+something downstream is making a decision from it.
+
+**3. Reuse `VALIDATION_ERROR` (422).** The strongest of the rejected options, and the one that
+*almost* works: the queue treats `422` as never-retry, which is the correct retry behaviour here.
+It lost on honesty. The request is well-formed — every field validates, the types are right, the
+body is exactly what the schema asks for. Labelling it a validation failure tells the rider and the
+client that they sent something malformed when they did not. This project has been burned
+repeatedly by statuses that misreport what happened (Entry 6's `405`-as-`404`, Entry 7's collapsed
+405); getting the right retry behaviour from a wrong label is a coincidence, not a design, and it
+breaks the moment anything branches on `code` for a reason other than retry.
+
+**4. A composite `(trip_id, id)` primary key.** ***Record this one most carefully — it is the option
+a future reader will rediscover, and it is not wrong.***
+
+The argument for it is genuinely good. Make the primary key the pair, and the same `id` under two
+different trips becomes **legal**. There is then no collision, no third branch, no sixth error code
+and no check to forget: the `409` becomes *unreachable by construction*, which is a stronger
+guarantee than any handler discipline. And the migration is **free today** — `stops`, `photos` and
+`bikes` are all empty, so there is no data to rewrite and no backfill to get wrong. Compared against
+"add a code, then rely on every future create handler remembering to check", it is the structurally
+safer design.
+
+**It was rejected on cost, not on correctness.** The change does not stop at `stops`.
+`photos.stop_id` is a foreign key to `stops.id` (`tables.py:102`), so widening `stops`' primary key
+to `(trip_id, id)` forces `photos` to carry `trip_id` as well and reference the pair — which drags
+in the photo-upload design that **has not been built yet** (`s-photo-upload-onedrive-sync`:
+multipart upload, object keys, the OneDrive sync's own identifiers). The choice was between a
+schema change whose blast radius reaches into an unbuilt feature, and a contract change confined to
+one enum member, one status mapping and one repository check. The user took the second.
+
+**What this means if you are reopening it:** the burden is not to show the composite key is *good* —
+that was granted. It is to show the photos cascade is now cheap, which means `s-photo-upload-onedrive-sync`
+has landed and its key design is settled, or that it has not started and can absorb the change in its
+own design. Between those two states, the answer stays no.
+
+### Entry 3 does not forbid `ON CONFLICT (id) DO NOTHING` here
+
+Recorded pre-emptively, because a reader who greps this log for `ON CONFLICT` will land on Entry 3
+and reasonably conclude the construct is banned project-wide. **It is not, and Entry 3 does not
+reach this case.**
+
+Entry 3 rejected `INSERT ... ON CONFLICT (slug) DO UPDATE` on the **trips** table. Its objection was
+specific and it does not transfer on any of its three legs: it was about `DO UPDATE` (which silently
+*overwrites*), on a **slug** column (which is a credential, so overwriting one re-points a live
+link — an authorization leak), where a collision is a **bug signal** from a broken RNG rather than a
+routine condition. Here the statement is `DO NOTHING`, the column is a client-generated `id` on
+`stops`, nothing is overwritten, no credential is involved, and a collision is an ordinary condition
+the offline queue is *expected* to produce. Entry 3's actual rule — "fail, don't reconcile, when the
+colliding column is a credential" — is untouched.
+
+What still rules `ON CONFLICT` out as the *primary* mechanism here is rejected reading 2, not Entry
+3: whatever the statement, the cross-parent case must be decided by a check whose outcome the
+handler can see, because `DO NOTHING` returning zero rows cannot by itself distinguish "same parent,
+replay, return the stored row" from "different parent, `409`".
+
+### Why it matters going forward
+
+**(a) Entry 6's rule held under repetition, which is the only real test of it.** The first
+escalation could have been a one-off. This one came from the same agent, on the same contract,
+against a deadline with `dev` already working in `backend/` — and `ba` still declined to decide,
+and still refused to quietly reuse an existing code to make the gap disappear. The rule is: a
+scoping agent that finds the contract inconsistent **stops and escalates**, it does not choose.
+
+**(b) The build-order gate is what made this cheap.** The contract change was written and reviewed
+*before* `dev` opened `common.py` for the create endpoint. Had the gap been found during
+implementation, the sixth code would have arrived as an improvised handler decision inside an
+endpoint patch, with no record of why `422` was not used.
+
+**(c) "Do not return a conflict error" was a true sentence that became false.** Nothing about it was
+careless when written — it was written about the replay scenario, and it is still right about that
+scenario. It went wrong by being stated more broadly than the case it was reasoned about. Worth
+noticing as a failure mode of contract prose in general: the sentence did not need to be *wrong* to
+be dangerous, it only needed to be *unqualified*.
+
+**Co-location owed (Entry 4's rule).** Three sites, all outside the `docs` agent's `docs/`-only
+scope, so none could be placed by the patch that recorded this entry:
+
+- `backend/app/models/common.py` — beside the new `CONFLICT` member: why it is not `VALIDATION_ERROR`
+  (reading 3), and that it is never-retry for the queue.
+- `backend/app/core/errors.py` — beside `_STATUS_TO_CODE`/`ApiError`: note that `409` is endpoint
+  contract rather than framework-level. Adding the mapping row also makes `ApiError(409, CONFLICT, …)`
+  constructible, which is the intended effect. `__init__`'s status/code backstop is a **`ValueError`,
+  deliberately not an `assert`** — `assert` is stripped under `python -O`, which would silently
+  disable the check in exactly the optimised build where a contradictory body goes unnoticed. (Entry
+  7's body describes it as "an `__init__` assertion"; the code and the `t-error-envelope-handlers`
+  note are the accurate record. Do not propagate the looser wording.)
+- `backend/app/data/repositories/stops.py` — beside the create path: the `(trip_id, id)` lookup and
+  why the cross-parent branch must not be a caught `IntegrityError`. **This is the file where
+  readings 1 and 2 would actually be retried**, by someone simplifying a two-step check into one
+  insert.

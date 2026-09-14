@@ -15,7 +15,7 @@
 
     { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
-    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "not_started" },
+    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "in_progress" },
     { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "not_started" },
     { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "not_started" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "not_started" },
@@ -54,8 +54,6 @@
     { "id": "t-ruff-format-gate", "storyId": "s-data-layer-foundation", "title": "Decide whether ruff format joins the validation gate", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
     { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-errors-docstring-tense", "storyId": "s-data-layer-foundation", "title": "errors.py docstring described future security.py behaviour", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-route-dependency-audit", "storyId": "s-data-layer-foundation", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
-    { "id": "t-trip-context-slug-exposure", "storyId": "s-data-layer-foundation", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "not_started", "agent": "dev", "blockers": [], "gate": "observable" },
     { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
@@ -64,17 +62,26 @@
     { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
 
+    { "id": "t-conflict-code-contract", "storyId": "s-data-layer-foundation", "title": "api-contract.md CONFLICT/409 rule + decision-log Entry 14 + tracker entries", "status": "in_progress", "agent": "docs", "blockers": [] },
+    { "id": "t-conflict-409-test-repoint", "storyId": "s-data-layer-foundation", "title": "Re-point the two 409 placeholder assertions in test_error_envelope.py to 418", "status": "not_started", "agent": "test-writer", "blockers": [] },
+    { "id": "t-conflict-code-impl", "storyId": "s-data-layer-foundation", "title": "models/common.py + core/errors.py — CONFLICT member and 409 status mapping", "status": "not_started", "agent": "dev", "blockers": [] },
+    { "id": "t-conflict-code-tests", "storyId": "s-data-layer-foundation", "title": "Tests for the CONFLICT member, its 409 mapping and the ApiError pairing backstop", "status": "not_started", "agent": "test-writer", "blockers": [] },
+
     { "id": "t-finding-triage-gate-doc", "storyId": "s-finding-triage-gate", "title": "docs/finding-triage-gate.md + decision-log Entry 12 + tracker entries", "status": "done", "agent": "docs", "blockers": [] },
     { "id": "t-claude-md-triage-gate", "storyId": "s-finding-triage-gate", "title": "CLAUDE.md — cite the triage gate and record governance-file ownership", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-agent-defs-triage-gate", "storyId": "s-finding-triage-gate", "title": ".claude/agents/ — qa/dev/ba definitions carry the gate and the evidence template", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-backlog-retro-triage", "storyId": "s-finding-triage-gate", "title": "Retro-classify every open task against the gate (ba analyses, docs writes)", "status": "done", "agent": "ba", "blockers": [] },
 
-    { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "not_started", "agent": "docs", "blockers": [], "gate": "triggered" },
+    { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "in_progress", "agent": "docs", "blockers": [], "gate": "triggered" },
+    { "id": "t-stops-list-endpoint", "storyId": "s-stop-crud", "title": "GET /api/trips/{slug}/stops — StopOut[] handler + stops repository", "status": "in_progress", "agent": "dev", "blockers": [] },
+    { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "not_started", "agent": "dev", "blockers": [] },
+    { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
+    { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
 
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
-  "currentTask": null,
-  "lastUpdated": "2026-09-15T16:30:00Z"
+  "currentTask": "t-stops-list-endpoint",
+  "lastUpdated": "2026-09-15T18:00:00Z"
 }
