@@ -17,9 +17,30 @@ register_exception_handlers(app)
 app.include_router(api_router)
 
 
-@app.get("/api/health")
+@app.get(
+    "/api/health",
+    description="Intended as the liveness probe for the container host — nothing is wired "
+    "to it yet (no `HEALTHCHECK`, no `docker compose` healthcheck on the `api` service). "
+    "Answers `200` with a fixed `status: ok` body as soon as the ASGI app is accepting "
+    "requests; it touches neither Postgres nor object storage, so it reports that the "
+    "process is up, not that the trip data is reachable.",
+)
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# HEAD is GET without a body (RFC 9110 §9.3.2): a server that registers GET is
+# expected to answer HEAD on the same path, and stripping the body is the ASGI
+# server's job, not ours. It is a **second registration of the same handler**
+# rather than `methods=["GET", "HEAD"]` on the one above, because
+# `fastapi.openapi.utils.get_openapi_path` loops `for method in route.methods`
+# with no HEAD exclusion while `operation_id` is per-*route*: one route carrying
+# both verbs emits a duplicate `head:` operation into the OpenAPI document — and
+# a "Duplicate Operation ID" warning — which Kubb would generate a second,
+# identical frontend hook from. `include_in_schema=False` is what keeps the
+# document to the one operation the contract describes. (Measured on FastAPI
+# 0.141.1.)
+app.add_api_route("/api/health", health, methods=["HEAD"], include_in_schema=False)
 
 
 # --------------------------------------------------------------------------

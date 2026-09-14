@@ -716,13 +716,21 @@ def test_spa_wrong_method_on_a_real_api_route_is_still_405(spa_client: TestClien
     wrong-verb request on a real endpoint into a 404. Decision-log entry 6 is
     explicit that collapsing 405 into 404 is a contract lie the offline queue
     acts on, so the 405 (with `Allow`) has to be reconstructed deliberately.
+
+    `Allow` is asserted as an exact verb set, not as "GET appears somewhere in
+    the header". A substring check passes against `Allow: GET` and equally
+    against a hardcoded one, against a set that lost HEAD, and against one that
+    grew a verb this path does not accept — and it survived the GET -> HEAD
+    change without anyone editing it, which is how you find out a check is not
+    watching. `HEAD` is in the set because `/api/health` carries a second,
+    schema-excluded HEAD registration of the same handler.
     """
     response = spa_client.post("/api/health")
 
     assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     detail = assert_envelope(response)
     assert detail.code is ErrorCode.METHOD_NOT_ALLOWED
-    assert "GET" in response.headers.get("allow", "")
+    assert allow_verbs(response) == {"GET", "HEAD"}
 
 
 def test_unknown_api_catch_all_is_absent_from_the_openapi_spec(spa_client: TestClient) -> None:
@@ -793,7 +801,33 @@ def test_real_app_registers_every_handler() -> None:
 
 
 def build_router_probe_app() -> FastAPI:
-    """The production 405 machinery, wired to routes with more than one verb."""
+    """
+    The production 405 machinery, wired to routes with more than one verb.
+
+    **The probe's GET routes deliberately carry no HEAD sibling**, so "production
+    shape" is now approximate: since `t-head-on-get-routes`, every real GET path
+    is served by a second, schema-excluded HEAD registration, and `@router.get`
+    here is not. The divergence is recorded rather than closed, because copying
+    the pattern in would cost an assertion and buy nothing:
+
+    - What this probe exists to prove is that the verb set comes from the routing
+      table instead of a hardcoded `Allow: GET` — hence a PATCH-only path and a
+      path served by two routes. A HEAD sibling would be a *third* instance of
+      "one path, two routes", which `/api/both`'s GET+POST pair already covers,
+      while turning the sharp `{"GET", "POST"}` assertion into
+      `{"GET", "POST", "HEAD"}` — a set in which the interesting verbs are
+      harder to read and a spurious HEAD is impossible to spot.
+    - The HEAD shape is not left uncovered by that choice: it is asserted
+      against the **real app**, in `test_real_app_wrong_method_on_a_router_
+      registered_route_is_405` and its `spa_client` twin, both of which now
+      expect `{"GET", "HEAD"}`. Production shape asserted on production is
+      better evidence than production shape imitated here.
+
+    So this probe covers the verb-*derivation* logic, and the real-app tests
+    cover the registrations. If a future change makes HEAD behave differently
+    from any other verb in `_ALL_METHODS`, it is the real-app tests that must
+    grow, not this fixture.
+    """
     import app.main
 
     probe = FastAPI()
@@ -911,6 +945,12 @@ def test_real_app_wrong_method_on_a_router_registered_route_is_405() -> None:
     `/api/trips/{slug}` is registered through `api_router`, which is the entire
     difference between this test and the `/api/health` one — and the difference
     the previous implementation could not see.
+
+    `HEAD` joined the expected set with `t-head-on-get-routes`: the path is
+    served by two routes now, the documented GET one and a schema-excluded HEAD
+    registration of the same handler, and `Allow` names every verb the *path*
+    accepts. Its presence here is therefore also a live check that the verb
+    probe reads both routes rather than stopping at the first match.
     """
     import app.main
 
@@ -918,7 +958,7 @@ def test_real_app_wrong_method_on_a_router_registered_route_is_405() -> None:
 
     assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
-    assert allow_verbs(response) == {"GET"}
+    assert allow_verbs(response) == {"GET", "HEAD"}
 
 
 def test_probing_leaves_the_live_request_scope_unchanged() -> None:
@@ -970,7 +1010,7 @@ def test_probing_leaves_the_live_request_scope_unchanged() -> None:
     }
     before = dict(scope) | {"fastapi": dict(scope["fastapi"])}
 
-    assert app.main._methods_allowed_elsewhere(Request(scope)) == {"GET"}
+    assert app.main._methods_allowed_elsewhere(Request(scope)) == {"GET", "HEAD"}
     assert scope == before
 
 
@@ -980,7 +1020,7 @@ def test_spa_wrong_method_on_a_router_registered_route_is_405(spa_client: TestCl
 
     assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED
-    assert allow_verbs(response) == {"GET"}
+    assert allow_verbs(response) == {"GET", "HEAD"}
 
 
 def test_spa_health_get_still_succeeds(spa_client: TestClient) -> None:

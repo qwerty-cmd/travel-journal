@@ -97,3 +97,18 @@ async def get_trip(
         bikes=await list_by_trip(session, context.trip.id),
         access=context.access,
     )
+
+
+# HEAD is GET without a body (RFC 9110 §9.3.2), so the same handler serves it:
+# `require_trip_access` still runs, which is the point — an unknown slug is still
+# a 404 and a viewer slug is still a success, and the ASGI server drops the body.
+#
+# A **second registration** rather than `methods=["GET", "HEAD"]` on the route
+# above: `fastapi.openapi.utils.get_openapi_path` loops `for method in
+# route.methods` with no HEAD exclusion while `operation_id` is per-*route*, so
+# one route carrying both verbs emits a duplicate `head:` operation into the
+# OpenAPI document — plus a "Duplicate Operation ID" warning — and Kubb would
+# generate a second, identical `useGetTrip` hook from it. `include_in_schema=False`
+# keeps the document to the one operation `docs/api-contract.md` describes.
+# (Measured on FastAPI 0.141.1.)
+router.add_api_route("/{slug}", get_trip, methods=["HEAD"], include_in_schema=False)
