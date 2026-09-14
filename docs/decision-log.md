@@ -32,6 +32,7 @@ empirically disproves another.
 | 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
 | 10 | A shallow copy reasoned about as deep — twice in one patch | `main.py`, `test_error_envelope.py` | `qa` disproved `dev`'s stated reason for the scope copy (the `fastapi` key is *always* already present at handler time); `test-writer` disproved the orchestrator's fix for the resulting test gap (shallow snapshot compared the inner dict against itself). Code was right, reason was wrong; test looked like coverage and had none |
 | 11 | HEAD on GET routes: `methods=["GET", "HEAD"]` vs a second registration | `main.py`, `trips.py`, `test_head_method.py` | User chose the explicit method list; `dev` measured that FastAPI emits a duplicate `head:` operation and a duplicate operationId from it, which Kubb turns into a duplicate hook. Shipped as a second, schema-excluded registration of the *same handler* — user's intent kept, literal spelling not. Collapsing the two back into one route leaves **189 of 191 tests green**: only the two OpenAPI guards fail |
+| 12 | Finding triage gate, and who may write the governance files | `docs/finding-triage-gate.md`, `CLAUDE.md`, `.claude/**` | The orchestrator's weaker three-question triage was replaced by the user's gate — Stop Condition names the over-investigation behaviours rather than trusting judgment, QA classification is evidence not authority. Separately: no agent can write `CLAUDE.md` or `.claude/**`, so the **orchestrator** owns those paths; widening `docs` to `.claude/**` was rejected as self-modifying permissions |
 
 ---
 
@@ -828,3 +829,158 @@ above both registrations name `get_openapi_path` explicitly rather than saying "
 either guard is removing the only thing standing between that simplification and a duplicate Kubb
 hook.** If you are about to merge the registrations, you are reopening this entry, and the burden is
 to show `get_openapi_path` no longer loops HEAD in — not to re-derive it.
+
+---
+
+## 12. A discovered issue is not automatically work — the triage gate, and who is allowed to write the files that carry it
+
+**Who:** the user vs. the orchestrator, on two connected points in the same sitting. Resolved in the
+user's favour on both. **Where:** `docs/finding-triage-gate.md` (new, canonical), and — via tasks
+`t-claude-md-triage-gate` and `t-agent-defs-triage-gate` — `CLAUDE.md` and `.claude/agents/`.
+Story `s-finding-triage-gate`.
+
+**Category note.** Like Entry 11, this records the user contradicting an agent rather than agents
+contradicting each other — but it is a *process* call, not a code one, which is why it has no file in
+`backend/` to co-locate against. Its co-location targets are the governance files themselves, and
+that is exactly what made point (b) necessary.
+
+### (a) The triage rule — a weaker version was proposed and replaced
+
+**The orchestrator's position.** Faced with a backlog growing faster than the feature work, the
+orchestrator proposed a three-question triage, stated here in its own terms rather than as a straw
+man, because it is a reasonable rule and that is the point:
+
+1. Is something spec Section 12 ranks top priority — access control, data integrity, the offline
+   queue — *currently* wrong?
+2. Does a client that exists today observe the behaviour?
+3. Otherwise it is debt.
+
+Plus a hard stop: a finding discovered while doing task X does not become task Y in the same sitting.
+
+That rule is not wrong. Everything in it survives into the final version. It was replaced because of
+what it left to judgment.
+
+**What the user's version adds, and why each addition is load-bearing:**
+
+- **A Stop Condition that names the specific behaviours** constituting over-investigation — do not
+  modify production code, add speculative tests, refactor surrounding code, redesign the affected
+  behaviour, investigate hypothetical consumers, or explore unrelated edge cases. The orchestrator's
+  version said "don't turn it into task Y" and trusted judgment for the rest. Judgment is precisely
+  what fails here: nobody ever decides to over-investigate. They decide to "just check one thing,"
+  six times. An enumerated prohibition can be noticed being violated; a disposition cannot.
+- **QA classification as evidence, not authority, with an explicit disagreement protocol**
+  (`QA classification:` / `Implementation classification:` / `Reason for disagreement:` /
+  `Evidence:`). Without the protocol there are only two available failure modes, and this log
+  already contains both: QA's word taken as final, or QA's word silently re-triaged by whoever
+  disagreed. Entry 7 exists because `qa` was right and `dev`'s conclusion was wrong; Entry 11 exists
+  because `dev` was right and contradicted a decision from above. Both directions happen. The
+  protocol makes the disagreement a visible artifact instead of a fork in someone's private
+  reasoning.
+- **Gate 1 broadened past spec Section 12's three categories** to *any* explicit specification
+  requirement, invariant, security/access-control rule, data-integrity requirement, or existing
+  behavioural contract. The narrow version would have mis-classified real defects this project
+  already hit: Entry 7's `INTERNAL_ERROR` leak is a contract guarantee, not one of the three
+  categories; Entry 6's `405`-collapsed-to-`404` is a contract lie whose damage only *reaches* the
+  offline queue. A gate whose first question can be answered "not one of the three, so it's debt"
+  about a live contract violation is a gate that files real breakage.
+- **The four `≠` distinctions stated as rules** — `Could happen ≠ Does happen`,
+  `Could break ≠ Is broken`, `Could consume ≠ Currently consumes`, `Future risk ≠ Current defect`.
+  They were implicit in the three questions. Implicit is not enough, because the slide from "could"
+  to "does" happens inside a sentence, usually in the sentence justifying the work. Written down,
+  they are something a reviewer can point at.
+
+**The losing reasoning is the valuable part, and it is not the three questions.** It is the instinct
+the three questions were too weak to stop, and it must be recorded verbatim because it is the
+default an orchestrator reaches for *every single time*:
+
+> "It's a small follow-up, just build it now."
+
+Every instance of it is locally reasonable. The finding is real; the fix is small; the context is
+already loaded; dispatching a separate task later costs more than doing it now. None of that is
+false. The failure is only visible in aggregate, which is why it must be written down rather than
+re-decided case by case — **without the rejected version on file, the gate erodes one
+reasonable-looking exception at a time**, and each exception is defensible in isolation while the sum
+of them is the backlog.
+
+**The evidence that decided it, measured against `docs/progress.json` as it stood:**
+
+- **13 of the 15 open tasks sat in `s-data-layer-foundation`** — a story whose own note describes it
+  as a "shared prerequisite" for the endpoint stories — while **four `m2-core-api` endpoint stories
+  (`s-stop-crud`, `s-photo-upload-onedrive-sync`, `s-bike-management`, `s-map-geojson-endpoint`)
+  were still `not_started`**. The foundation story was not being finished; it was accumulating
+  everything noticed while passing by.
+- **`t-head-on-get-routes` consumed a full `dev` → `test-writer` → `qa` → `docs` cycle for behaviour
+  no client exercises.** It is good work — Entry 11 records a genuine FastAPI finding that came out
+  of it — and there is no frontend yet, no client sending HEAD to anything, and no contract
+  requirement that was being violated. Under the gate it is Gate 3 at best: file it with the trigger
+  "when a client issues HEAD," and build a stops endpoint instead. It also spawned two further tasks
+  (`t-head-route-kwarg-divergence`, `t-add-endpoint-head-convention`), which is the shape of the
+  problem in miniature — an ungated finding is not one task, it is a tree.
+
+**Resolution.** The user's text is canonical and lands verbatim at `docs/finding-triage-gate.md`.
+It is fixed text: agents transcribe and cite it, they do not redraft it.
+
+**Why it matters going forward.** When you are about to argue that a specific finding is an
+exception, you are reopening this entry, and per this file's rule the burden is on you to show the
+evidence above no longer applies — not to re-derive it. The specific counter you will want to make
+("but this one really is small") is the one that was rejected; smallness was never the disputed
+claim. The disputed claim is that smallness is a reason to skip the gate.
+
+### (b) Governance-file ownership — no agent could write the files that carry the rules
+
+**The problem, which is structural rather than a disagreement about taste.** The roster has no agent
+that can write `CLAUDE.md`, `.claude/agents/` or `.claude/skills/`. `docs` is `docs/`-only. `dev`
+writes application code. `devops` is `Dockerfile`, `docker-compose.yml` and `infra/`. `ba` is
+read-only. So the files that define how every agent behaves are writable by nobody in the system that
+follows them.
+
+**This was not theoretical — it blocked three separate pieces of work:**
+
+1. Restoring the agent definitions.
+2. `t-add-endpoint-head-convention` — a **one-line** edit to `.claude/skills/add-endpoint/SKILL.md`,
+   recorded with `agent: "docs"`, which `docs` correctly refused as outside its write scope and
+   flagged back rather than attempting (see its note in `progress-notes.md`). The task has sat
+   blocked since, with the blocker text "Needs reassignment" and nobody who could be reassigned to.
+3. This gate — a rule about how agents work, which by construction has to reach `CLAUDE.md` and the
+   agent definitions to have any effect.
+
+**Resolution.** The **orchestrator is the recorded owner** of `CLAUDE.md`, `.claude/agents/` and
+`.claude/skills/`.
+
+**Rejected: widen the `docs` agent's write scope to `.claude/**`.** This is the smallest-looking
+change — `docs` already writes prose, and agent definitions are largely prose. It was rejected
+because of the part that is not prose: an agent definition file contains that agent's own `tools:`
+grant and its peers'. Letting `docs` write `.claude/agents/` means an agent can edit the file that
+constrains it, and the files that constrain the agents reviewing it. That is **self-modifying
+permissions**, and it is a category difference from writing documentation, not a difference of
+degree — the failure mode is not a bad sentence, it is a constraint that quietly stops existing with
+no diff anyone thought to review as a permissions change.
+
+**Rejected: a dedicated `governance` agent.** It answers the scope objection by giving the job to
+something whose *purpose* is those files. Rejected on two counts. It is a whole agent definition —
+prompt, tool grants, a row in the roster, a thing every future agent reads past — for a handful of
+edits a month. And it hits the same objection one step removed: a `governance` agent can write
+`.claude/agents/`, therefore it can write **its own** definition and every other agent's `tools:`
+grant. The self-modification is not removed, only given a more official-sounding name.
+
+**What survives the change, and it is the part that matters.** The pipeline's real guarantee is not
+"a subagent's hands were on the keyboard." It is that **`ba` scopes the work as a task and the user
+reviews the resulting patch**. Both hold here: `s-finding-triage-gate` is scoped as four sequenced
+tasks, each produces one reviewable patch, and the user reviews each before the next starts. Only the
+*writing actor* changes. The orchestrator is also the one party the roster was never designed to
+constrain via tool grants, because it is the party dispatching them — so recording ownership there
+adds no permission that did not already exist; it names one that was unallocated.
+
+**And this shape is already a carve-out in `CLAUDE.md`.** Session 0 is documented as the sole
+exception to the pipeline, on the grounds that its output *is* the agent definitions, so nothing
+existed yet to dispatch to. That reason has expired — the agents exist now. It is replaced here by a
+durable one: agent definitions and the rules they follow are the one category of file where
+delegating the write would mean delegating the permission boundary itself. Session 0's exception was
+about bootstrapping; this one is about not handing an agent the pen that writes its own limits.
+
+**Why it matters going forward.** If you are looking at `CLAUDE.md` or a file under `.claude/` and
+reaching for the obvious fix — widen `docs` by one glob — that is the rejected option, and the
+objection is not "scope creep," it is that the widened agent can then rewrite tool grants. Two tasks
+carry this entry's reasoning to where the mistake would be made (Entry 4's rule): the roster table in
+`CLAUDE.md` must state who owns those paths, and `t-add-endpoint-head-convention` must be reassigned
+rather than left blocked on an agent that structurally cannot execute it.

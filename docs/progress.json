@@ -11,6 +11,7 @@
     { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon, R2, Graph, Container Apps, budget alert", "status": "not_started" },
     { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record (script built, human must run it)", "status": "in_progress" },
     { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1)", "status": "done" },
+    { "id": "s-finding-triage-gate", "milestoneId": "m1-foundations", "title": "Finding triage gate — classify discovered issues before implementing them", "status": "in_progress" },
 
     { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
@@ -63,12 +64,17 @@
     { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [] },
     { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "not_started", "agent": "docs", "blockers": ["Assigned agent cannot execute it: target is .claude/skills/add-endpoint/SKILL.md, outside the docs agent's docs/-only write scope. Needs reassignment."] },
 
+    { "id": "t-finding-triage-gate-doc", "storyId": "s-finding-triage-gate", "title": "docs/finding-triage-gate.md + decision-log Entry 12 + tracker entries", "status": "in_progress", "agent": "docs", "blockers": [] },
+    { "id": "t-claude-md-triage-gate", "storyId": "s-finding-triage-gate", "title": "CLAUDE.md — cite the triage gate and record governance-file ownership", "status": "not_started", "agent": "orchestrator", "blockers": [] },
+    { "id": "t-agent-defs-triage-gate", "storyId": "s-finding-triage-gate", "title": ".claude/agents/ — qa/dev/ba definitions carry the gate and the evidence template", "status": "not_started", "agent": "orchestrator", "blockers": [] },
+    { "id": "t-backlog-retro-triage", "storyId": "s-finding-triage-gate", "title": "Retro-classify every open task against the gate (ba analyses, docs writes)", "status": "not_started", "agent": "ba", "blockers": [] },
+
     { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "not_started", "agent": "docs", "blockers": [] },
 
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [] }
   ],
-  "currentTask": null,
-  "lastUpdated": "2026-09-14T23:05:00Z"
+  "currentTask": "t-finding-triage-gate-doc",
+  "lastUpdated": "2026-09-15T10:00:00Z"
 }
