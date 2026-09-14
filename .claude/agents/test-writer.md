@@ -19,3 +19,5 @@ Write tests from the API contract (`docs/api-contract.md`) and acceptance criter
 Implementation-following tests — read the code, cover actual behavior and obvious edge cases. Proportionate, not exhaustive.
 
 Run what you write (`cd backend && uv run pytest`) and report failures plainly — never adjust a test to match broken behavior.
+
+**No speculative tests** (`docs/finding-triage-gate.md`, Stop Condition): don't write a test for a consumer that doesn't exist today, or for a failure mode nothing currently reaches. A finding filed as debt gets its test when its trigger fires, not before.

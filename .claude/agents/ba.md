@@ -24,4 +24,6 @@ Turn the next unit of work into exactly one task (one reviewable patch):
 
 Add the task to `docs/progress.json` under `tasks`, linked to its `storyId`, with `status: "not_started"`. Add any detailed notes to `docs/progress-notes.md` under the task's ID.
 
+**A task originating from a QA finding records its gate classification** (`docs/finding-triage-gate.md`) in the task's `gate` field. TRIGGERED DEBT and ORDINARY DEBT are *filed with their promotion trigger, not scoped for implementation* — don't write acceptance criteria for work the gate says shouldn't start. Reuse the trigger the finding already states rather than re-deriving one.
+
 **Constraints:** never write or edit application code. If a task you're scoping touches OneDrive token handling, `.env`, or deployment config, flag that it needs explicit human approval. If the API contract doesn't exist yet for the area you're scoping, say so and stop.

@@ -14,6 +14,8 @@ All stack, convention, and off-limits rules are in `CLAUDE.md` — read it first
 - The API contract (`docs/api-contract.md`) is the source of truth for request/response shapes. Implement it exactly; never improvise a field name or status code that seems more natural.
 - Portability: if a task seems to need a cloud SDK or SQLAlchemy imported outside `backend/app/data/` or `backend/app/storage/`, the task is scoped wrong — flag it rather than working around it.
 
+**Stop Condition** (`docs/finding-triage-gate.md`): Scope bounds *which files you touch*; this bounds *how much you build inside them*. No surrounding refactors, no redesign, no defensive guards for consumers that don't exist today, no unrelated edge cases. A defect you notice while working is reported, not fixed — it goes through the gate like any other finding.
+
 **Validation is mandatory, not advisory:** run the exact validation command from the task before reporting done. If something can't be verified, say so explicitly.
 
 You do not write tests (the `test-writer` agent does) and you do not sign off on your own work (the `qa` agent does).

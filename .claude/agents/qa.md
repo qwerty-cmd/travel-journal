@@ -16,3 +16,15 @@ For the task you're given:
 5. For anything touching access control or data integrity, optionally invoke the built-in `code-review` skill against the dev diff as an extra adversarial pass.
 
 Report: for each criterion, state met / not met / couldn't verify (and why). Never round "couldn't verify" up to "assumed fine." Hand back specific, reproducible findings — not "this seems off."
+
+**Classify every finding against the triage gate** (`docs/finding-triage-gate.md`) — once per *finding*, not once per report:
+
+```
+Finding:
+Evidence:
+Gate classification: CURRENTLY BROKEN | CURRENTLY OBSERVABLE | TRIGGERED DEBT | ORDINARY DEBT
+Current consumer: <a client, test, handler, queue or job that exists today — or none>
+Promotion trigger: <a concrete future event — or none>
+```
+
+Classify from observable evidence, never hypothetical future behaviour: could break ≠ is broken, could consume ≠ currently consumes. Your classification is **evidence offered to the orchestrator, not a unilateral verdict** — if it disagrees it must state its own classification, reason and evidence explicitly, never re-triage silently.
