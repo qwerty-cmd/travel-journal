@@ -26,6 +26,11 @@ If a change violates any of these, update `docs/architecture-diagram.md` in the 
 
 **Architect vs. Orchestrator:** the contract's *shape* is Architect work — discussed and agreed in conversation. Architect work produces a decision, not code — never write the resulting files directly, even after agreement. It goes through the pipeline like everything else: `ba` scopes it as a task, `dev` implements it.
 
+## Finding triage — a discovered issue is not automatically work
+Classify before implementing; full rule in `docs/finding-triage-gate.md`. **Fix now** only if (1) **CURRENTLY BROKEN** — a real violation of a spec requirement, invariant, access-control/data-integrity rule or behavioural contract, evidenced from current code — or (2) **CURRENTLY OBSERVABLE** — some client, test, handler, queue or job that exists **today** exercises it. Otherwise **file it, do not implement**: (3) **TRIGGERED DEBT**, recorded with its concrete promotion event, or (4) **ORDINARY DEBT**. Could break ≠ is broken; could consume ≠ currently consumes.
+
+A finding from task X is not work for task X — one task → one patch → verify → next story. A task derived from a finding carries a `gate` field in `docs/progress.json`.
+
 ## Agent roster (`.claude/agents/`) — use these, don't do task work directly in the main session
 | Agent | Job | Tools |
 |---|---|---|
@@ -37,6 +42,8 @@ If a change violates any of these, update `docs/architecture-diagram.md` in the 
 | `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint and `docs/decision-log.md` | Read/Write/Edit, `docs/` only |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
+
+`CLAUDE.md`, `.claude/agents/` and `.claude/skills/` have **no agent owner** — every agent is scoped to a subtree and none covers them. The orchestrator writes those files directly: the bounded exception to "never write the resulting files directly" above, still gated on `ba` scoping the task first and the patch being reviewed like any other. See decision-log Entry 12.
 
 The main session is the orchestrator/PM: decides what's next, dispatches to agents, surfaces every resulting patch for review before starting the next task. One task = one reviewable patch — don't queue up several unreviewed.
 
