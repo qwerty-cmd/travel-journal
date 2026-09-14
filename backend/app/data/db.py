@@ -5,7 +5,9 @@
 # and in prod (Neon) — nothing here is provider-specific.
 
 from collections.abc import AsyncIterator
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
@@ -77,3 +79,21 @@ async_session = async_sessionmaker(engine, expire_on_commit=False)
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with async_session() as session:
         yield session
+
+
+# What this buys, stated honestly: it hides the *import*, not the coupling. The
+# value a handler receives is still a SQLAlchemy `AsyncSession` and it is still
+# handed straight to a repository — this is not a portability improvement, and
+# swapping the database would touch exactly as much code with it as without it.
+#
+# What it does buy is greppability — one place wires the session callable, so no
+# route can quietly depend on a different one — and it makes this module's own
+# header true: that header says route handlers never depend on SQLAlchemy
+# directly, and until this alias existed `api/routes/trips.py` disproved it by
+# importing `AsyncSession` for its dependency annotation.
+#
+# Only for FastAPI dependency injection. `Depends(...)` means nothing outside a
+# request, so a plain function parameter (`_resolve_trip`, and every repository
+# function) keeps its bare `AsyncSession` annotation and stays callable from a
+# background job or a seed script.
+SessionDep = Annotated[AsyncSession, Depends(get_session)]

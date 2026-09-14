@@ -47,11 +47,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Path
+from fastapi import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
-from app.data.db import get_session
+from app.data.db import SessionDep
 from app.data.repositories.trips import TripRecord, get_by_slug
 from app.models.trip import Access
 
@@ -149,7 +149,7 @@ async def require_trip_access(
             "trip was shared with. Read endpoints accept either one."
         ),
     ],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: SessionDep,
 ) -> TripContext:
     """
     Read-endpoint guard: resolve ``{slug}`` to a trip, either slug accepted.
@@ -173,7 +173,7 @@ async def require_rider_access(
             "viewer slug with a 403, and an unknown slug with a 404."
         ),
     ],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: SessionDep,
 ) -> TripContext:
     """
     Write-endpoint guard: resolve ``{slug}`` and require that it is the rider's.

@@ -13,15 +13,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-# `AsyncSession` is imported for the dependency annotation only — the same way
-# `app/core/security.py` declares it. No statement is built and no column is
-# named in this module: the session is taken here purely so it can be handed to
-# `data/repositories/`, which is the only layer allowed to know the schema
-# (spec Section 4, "Portability principle").
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.security import TripContext, require_trip_access
-from app.data.db import get_session
+from app.data.db import SessionDep
 from app.data.repositories.bikes import list_by_trip
 from app.models.common import ErrorEnvelope
 from app.models.trip import TripOut
@@ -71,7 +64,7 @@ rider-only writes behind the `bikes` list returned here.
 )
 async def get_trip(
     context: Annotated[TripContext, Depends(require_trip_access)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: SessionDep,
 ) -> TripOut:
     """
     The trip behind this slug, with its bikes and the caller's access level.
