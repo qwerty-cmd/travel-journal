@@ -26,10 +26,11 @@ empirically disproves another.
 | 3 | Slug uniqueness — ON CONFLICT DO UPDATE | `progress.json`, seed script | DO UPDATE on slugs is an authorization leak, not an upsert — let UNIQUE reject and regenerate |
 | 4 | "Add a note" ambiguity | `map.py`, `__init__.py` | Barrel-export instruction was ambiguous; cost a recorded rationale |
 | 5 | Barrel export convention | `models/__init__.py` | One-off barrel re-export rejected — don't invent conventions for a single use |
-| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration expires when `s-stop-crud` lands** — see correction + 2026-09-14 footnote (`t-stops-405-doc-revisit`) |
-| 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both. **Half the fix is still broken and open** — 405 collapses to 404 on every router-registered route; read the 2026-09-14 correction before touching `main.py` (`t-405-router-route-collapse`) |
+| 6 | ErrorCode missing 405/500 members | `common.py`, `errors.py`, `main.py` | ba escalated rather than inventing codes; user added INTERNAL_ERROR + METHOD_NOT_ALLOWED. **Decision settled; its 405 illustration now has two pending expiries, neither fired yet** — `t-head-on-get-routes` falsifies its "GET-only" wording, `s-stop-crud` its DELETE example; both tracked in `t-stops-405-doc-revisit` — see correction + 2026-09-14 footnote |
+| 7 | Error handler mutation coverage | `errors.py`, `main.py`, `test_error_envelope.py` | qa found INTERNAL_ERROR leaked message + SPA catch-all swallowed /api 404s; green suite missed both — mutation testing validates the tests you thought to write, never a path you didn't consider. **Both halves now fixed**: the 405-collapse half closed 2026-09-14 by `t-405-router-route-collapse` (qa-verified on real uvicorn, zero surviving mutants). The body's 2026-09-14 correction is the record of what was broken then, not present state — but its "the catch-all stays" reasoning is still live before touching `main.py` |
 | 8 | Cross-trip slug collision | `0001_initial_schema.sql`, `security.py` | Same slug on two trips is fine (random tokens); same slug on one row is not — migration 0002 added CHECK |
 | 9 | Seed script print-before-commit | `seed_trip.py` | Print slugs after commit, not before — interrupted print + committed row = unrecoverable slug loss |
+| 10 | A shallow copy reasoned about as deep — twice in one patch | `main.py`, `test_error_envelope.py` | `qa` disproved `dev`'s stated reason for the scope copy (the `fastapi` key is *always* already present at handler time); `test-writer` disproved the orchestrator's fix for the resulting test gap (shallow snapshot compared the inner dict against itself). Code was right, reason was wrong; test looked like coverage and had none |
 
 ---
 
@@ -675,3 +676,91 @@ cannot answer about paths you did not think of — here the set of paths was enu
 step: it prints permanent, unrotatable credentials, and no agent should run it because that puts
 live slugs into an agent transcript (the module's own rule 1 — no logs, no files — exists for the
 same reason and would be defeated by it). The story closes when the trip actually exists.
+
+---
+
+## 10. A shallow copy reasoned about as if it were deep — in the implementation's justification, then in the test meant to check it
+
+**Who:** `qa` vs `dev` (a), then `test-writer` vs the orchestrator (b). Both resolved against the
+party that proposed the reasoning; neither changed the shipped behaviour.
+**Where:** `backend/app/main.py` (`_methods_allowed_elsewhere`),
+`backend/tests/test_error_envelope.py`, task `t-405-router-route-collapse`.
+
+**Why these are one entry and not two.** They are the same mistake in two places. A shallow copy was
+reasoned about as though it were deep — once in the justification for the production code, once in
+the test written to cover the gap that justification left. Filing them separately would hide the
+thing worth noticing: the patch contained the error, the review of the patch reproduced it, and only
+the second catch was made before it landed. This file already carries Entry 2, a test that could not
+fail. This is that failure mode caught **twice in a single patch**.
+
+### (a) `qa` disproved `dev`'s stated reason for copying the request scope
+
+**`dev`'s position.** The probe loop calls `route.matches()` against `{**request.scope, "method": verb}`
+rather than the live scope. `dev`'s docstring justified the copy on the grounds that
+`_IncludedRouter.matches` inserts FastAPI's bookkeeping `"fastapi"` key into whatever scope it is
+handed **and does not take it out again** — so probing the live scope would leave that key behind as
+a side effect of answering a 405.
+
+**What `qa` measured.** That claim is testable at the only moment that matters — when the handler
+actually runs — so `qa` measured it on the live app rather than in a constructed scope. The
+`"fastapi"` key is **always already present** by then. Starlette's router calls
+`scope.setdefault("fastapi", {})` on the **live** scope during routing, before the handler is
+reached. So `{**request.scope, ...}` is a *shallow* copy that **shares that inner dict** with the
+live scope: `inner_dict_same_object = True`, with 104 probe writes observed landing on the live
+object.
+
+The code was correct. The reason was wrong — and wrong **precisely in the case that occurs at
+runtime**, rather than the one a unit test constructs. A test that builds a scope by hand without
+the key exercises `dev`'s stated mechanism; no real request ever does.
+
+**The true reason the copy is needed**, which is what must survive in the docstring:
+
+- `_IncludedRouter.matches` brackets each bookkeeping write in `try`/`finally`, and the probe loop is
+  synchronous, so the intermediate state is never observable by another task. The key is not the
+  problem.
+- The copy's one real job is keeping the probe's **`method` overwrite** off the live scope. **uvicorn
+  reads `scope["method"]` back at response-send time** — for the access log, and to decide whether a
+  response may legally carry a body. A probe that left `method` as the last verb tried would
+  mis-log the request and could strip or admit a body against the real method.
+
+### (b) `test-writer` disproved the orchestrator's fix for the resulting test gap
+
+**The orchestrator's position.** Given (a), the test scope should be seeded with a real `"fastapi"`
+key so the suite exercises the key-*present* path that production actually takes.
+
+**Why that alone would have produced a test with no coverage.** `test-writer` caught it before it
+landed. The test snapshots with `before = dict(scope)` — a **shallow** snapshot. Seed a `"fastapi"`
+key and `before["fastapi"] is scope["fastapi"]`, so the final `scope == before` equality compares the
+inner dict **against itself**. It cannot observe a probe write to that dict no matter what the code
+under test does. The proposed change would have *looked* like new coverage of the newly-understood
+path and provided none.
+
+**Resolution.** `test-writer` added a second, inner snapshot. Measured with the restore disabled:
+shallow snapshot → `scope == before` is `True` (blind); corrected → `False` (catches). Verified
+against the real test by monkeypatching `fastapi.routing._restore_fastapi_scope_key` to a no-op —
+i.e. the test was proven able to fail before being trusted, per Entry 2.
+
+**Why it matters going forward.**
+
+**(a) A justification is a factual claim and can be checked independently of the code it justifies.**
+`dev`'s code passed every test and shipped unchanged; only its stated reason was false. That is not
+harmless — the docstring is what a future reader consults before deciding the copy is redundant, and
+a reader who tests `dev`'s stated mechanism will find it does not occur, conclude the copy is
+unnecessary, and remove it. The false reason is more dangerous than no reason. **When code is
+correct for a reason other than the one written beside it, fix the reason.** The corrected rationale
+belongs in `_methods_allowed_elsewhere`'s docstring, per Entry 4 — beside the code, not only here.
+
+**(b) `dict(...)` and `{**...}` are one level deep, and this is the second time in one patch that
+was forgotten.** Any snapshot-and-compare test over a nested structure is vacuous at every level
+below the first. The rule that generalises: **when a test asserts "X was not mutated," confirm the
+snapshot is independent of X at the depth the mutation would occur** — and prove it by disabling the
+restore, which is exactly what turned a `True` into a `False` here.
+
+**(c) The uncovered half is uncoverable, and that is a finding, not a gap to fill.** The "no other
+task observes the intermediate state" property rests on the loop being synchronous. No
+post-condition test can check it: a state restored before the call returns is invisible to an
+assertion made after it. It is a code-review invariant — there is no `await` in that function — and
+it is recorded in `docs/progress-notes.md` under `t-405-router-route-collapse` together with the
+deep-copy proposal it would otherwise keep reviving. If that proposal is revived it must be a
+one-level `dict()` copy and never `copy.deepcopy`: the scope holds `_IncludedRouter` instances and
+route contexts FastAPI reads back **by identity**, so a deep copy would clone live routing objects.

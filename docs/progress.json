@@ -56,14 +56,16 @@
     { "id": "t-route-dependency-audit", "storyId": "s-data-layer-foundation", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [] },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-data-layer-foundation", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [] },
     { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "not_started", "agent": "dev", "blockers": [] },
-    { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "in_progress", "agent": "dev", "blockers": [] },
+    { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-bike-order-collation", "storyId": "s-data-layer-foundation", "title": "Bike ordering test collation-safety", "status": "not_started", "agent": "test-writer", "blockers": [] },
+    { "id": "t-head-on-get-routes", "storyId": "s-data-layer-foundation", "title": "Every GET route also answers HEAD via explicit methods=[\"GET\", \"HEAD\"]", "status": "not_started", "agent": "dev", "blockers": [] },
+    { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route declares [\"GET\", \"HEAD\"]", "status": "not_started", "agent": "docs", "blockers": [] },
 
     { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "not_started", "agent": "docs", "blockers": [] },
 
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] }
   ],
-  "currentTask": "t-405-router-route-collapse",
-  "lastUpdated": "2026-09-14T19:30:00Z"
+  "currentTask": null,
+  "lastUpdated": "2026-09-14T21:15:00Z"
 }
