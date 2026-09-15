@@ -52,6 +52,7 @@ from app.core.errors import (
     INTERNAL_ERROR_MESSAGE,
     ApiError,
     api_error_handler,
+    code_for_status,
     http_exception_handler,
     register_exception_handlers,
     unhandled_exception_handler,
@@ -395,6 +396,7 @@ def test_api_error_non_internal_message_still_reaches_the_rider(client: TestClie
         (ApiError.forbidden, HTTPStatus.FORBIDDEN, ErrorCode.FORBIDDEN),
         (ApiError.not_found, HTTPStatus.NOT_FOUND, ErrorCode.NOT_FOUND),
         (ApiError.validation, HTTPStatus.UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR),
+        (ApiError.conflict, HTTPStatus.CONFLICT, ErrorCode.CONFLICT),
         (ApiError.internal, HTTPStatus.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR),
     ],
 )
@@ -416,6 +418,13 @@ def test_classmethod_pairs_status_with_the_contract_code(
         (422, ErrorCode.NOT_FOUND),
         (500, ErrorCode.VALIDATION_ERROR),
         (200, ErrorCode.NOT_FOUND),
+        # ...and the same two directions for the sixth code (decision-log entry
+        # 14). A create handler is the one place a 404 and a 409 sit next to each
+        # other — "no such trip" and "that id belongs to another trip" are both
+        # reachable from the same request — so this is the transposition most
+        # likely to be typed.
+        (409, ErrorCode.NOT_FOUND),
+        (404, ErrorCode.CONFLICT),
     ],
 )
 def test_direct_construction_rejects_a_contradicting_code(status: int, code: ErrorCode) -> None:
@@ -431,6 +440,7 @@ def test_direct_construction_rejects_a_contradicting_code(status: int, code: Err
         (404, ErrorCode.NOT_FOUND),
         (405, ErrorCode.METHOD_NOT_ALLOWED),
         (422, ErrorCode.VALIDATION_ERROR),
+        (409, ErrorCode.CONFLICT),
         (500, ErrorCode.INTERNAL_ERROR),
         # An unnamed status -> INTERNAL_ERROR, per the mapping. `418` and not
         # `409`: this case needs a status the contract will *keep* saying nothing
@@ -455,6 +465,114 @@ def test_direct_construction_still_allows_every_contract_pair(status: int, code:
 
 
 # --------------------------------------------------------------------------
+# 2c. CONFLICT — the sixth code
+# --------------------------------------------------------------------------
+# Decision-log entry 14: a create request whose client-generated id already
+# exists under a *different* parent is neither malformed nor a server fault, so
+# it had no legal code among the first five. `409` previously fell through to
+# `INTERNAL_ERROR` — which the offline queue reads as "the server broke, retry
+# later", and so would have retried forever a request that can never succeed.
+# The mapping row is what makes the code reachable, and the never-retry
+# classification is what makes it correct.
+#
+# Nothing raises a 409 yet — `t-stops-create-endpoint` is the first raise site,
+# and the message leak boundary (no value from the conflicting record) is tested
+# there, at the raise site, because it is enforced there. What is testable today
+# is the envelope machinery: the constructor, the mapping, and the backstop.
+
+
+def test_conflict_classmethod_status() -> None:
+    """`ApiError.conflict` is a 409..."""
+    error = ApiError.conflict("That id already belongs to another trip.")
+
+    assert error.status_code == HTTPStatus.CONFLICT
+
+
+def test_conflict_classmethod_code() -> None:
+    """...carrying CONFLICT, asserted apart from the status (see section 2's note)."""
+    error = ApiError.conflict("That id already belongs to another trip.")
+
+    assert error.code is ErrorCode.CONFLICT
+
+
+def test_conflict_message_is_verbatim_on_the_wire(client: TestClient) -> None:
+    """
+    A CONFLICT message reaches the rider exactly as the raise site wrote it.
+
+    CONFLICT is not INTERNAL_ERROR: the handler must not substitute the generic
+    string for it. The raise site is the only place that knows how to say "that
+    id is taken" without naming the trip that took it, so the handler passing the
+    string through unchanged is what that boundary depends on.
+    """
+    message = "That stop id already exists on a different trip."
+    response = client.get(
+        "/probe/api-error",
+        params={"status": 409, "code": "CONFLICT", "message": message},
+    )
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    detail = assert_envelope(response)
+    assert detail.code is ErrorCode.CONFLICT
+    assert detail.message == message
+    assert detail.message != INTERNAL_ERROR_MESSAGE
+
+
+def test_code_for_status_maps_409_to_conflict() -> None:
+    """
+    409 lands on CONFLICT in the mapping itself, not only through a handler.
+
+    Asserted directly because this is the single row that changed behaviour: with
+    it absent, 409 falls through to INTERNAL_ERROR, and every other assertion in
+    this section is downstream of it.
+    """
+    assert code_for_status(409) is ErrorCode.CONFLICT
+    assert code_for_status(409) is not ErrorCode.INTERNAL_ERROR
+
+
+def test_conflict_pairing_backstop_raises_value_error_not_assertion_error() -> None:
+    """
+    The transposed-pair backstop is a `ValueError`, deliberately not an `assert`.
+
+    `assert` is stripped under `python -O`, which would silently disable the
+    check in exactly the optimised build where a contradictory body goes
+    unnoticed on the wire. `pytest.raises(ValueError)` alone already fails an
+    `AssertionError`; the type is pinned exactly here as well so the intent is
+    written down and not merely implied by the class chosen.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        ApiError(status_code=409, code=ErrorCode.NOT_FOUND, message="nope")
+
+    assert type(exc_info.value) is ValueError
+    assert not isinstance(exc_info.value, AssertionError)
+
+
+def test_error_code_is_exactly_the_contract_list() -> None:
+    """
+    The enum matches the contract's table — six members, these names, these values.
+
+    A ratchet, in the shape of the convention ratchets in
+    ``test_trip_metadata_endpoint.py`` and ``test_stops_list_endpoint.py``: the
+    value is not in catching today's members, it is in failing at the moment a
+    seventh is added, next to the prose that has to be updated with it. Adding a
+    code is a contract change (decision-log entries 6 and 14) — twice now it has
+    been escalated rather than invented, and twice the count in the surrounding
+    prose went stale because nothing forced the author back to it.
+
+    Values as well as names: the value is the JSON string the offline queue
+    branches on, so renaming ``CONFLICT`` to ``"conflict"`` would be a silent
+    wire-format change that a names-only check would wave through.
+    """
+    assert {member.name: member.value for member in ErrorCode} == {
+        "FORBIDDEN": "FORBIDDEN",
+        "NOT_FOUND": "NOT_FOUND",
+        "VALIDATION_ERROR": "VALIDATION_ERROR",
+        "METHOD_NOT_ALLOWED": "METHOD_NOT_ALLOWED",
+        "CONFLICT": "CONFLICT",
+        "INTERNAL_ERROR": "INTERNAL_ERROR",
+    }
+
+
+# --------------------------------------------------------------------------
 # 3. StarletteHTTPException -> the status/code mapping
 # --------------------------------------------------------------------------
 
@@ -466,6 +584,7 @@ def test_direct_construction_still_allows_every_contract_pair(status: int, code:
         (404, ErrorCode.NOT_FOUND),
         (405, ErrorCode.METHOD_NOT_ALLOWED),
         (422, ErrorCode.VALIDATION_ERROR),
+        (409, ErrorCode.CONFLICT),
         (418, ErrorCode.INTERNAL_ERROR),  # unnamed status -> INTERNAL_ERROR; see above for 418
         (500, ErrorCode.INTERNAL_ERROR),
     ],
