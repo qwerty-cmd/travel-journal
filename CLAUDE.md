@@ -39,7 +39,7 @@ A finding from task X is not work for task X — one task → one patch → veri
 | `test-writer` | Writes tests — contract-first for access control/data integrity/offline queue, implementation-following elsewhere | Read/Edit/Write/Bash |
 | `qa` | Independently verifies acceptance criteria; no edit access, reports back rather than fixing | Read/Bash/Grep |
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
-| `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint and `docs/decision-log.md` | Read/Write/Edit, `docs/` only |
+| `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint and `docs/decision-log.md` | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
