@@ -50,7 +50,7 @@
     { "id": "t-slug-access-dependency", "storyId": "s-data-layer-foundation", "title": "app/core/security.py + repos/trips.py — slug-resolution access control", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-pytest-pythonpath", "storyId": "s-data-layer-foundation", "title": "Move conftest.py sys.path bootstrap to pyproject.toml pythonpath", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
     { "id": "t-schema-type-drift-check", "storyId": "s-data-layer-foundation", "title": "Tighten test_columns_match_metadata python_type comparison", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
-    { "id": "t-tests-readme-stale", "storyId": "s-data-layer-foundation", "title": "backend/tests/README.md documents nonexistent subdirectories", "status": "not_started", "agent": "docs", "blockers": [], "gate": "ordinary" },
+    { "id": "t-tests-readme-stale", "storyId": "s-data-layer-foundation", "title": "backend/tests/README.md documents an integration/ subdirectory that does not exist yet", "status": "not_started", "agent": "docs", "blockers": [], "gate": "ordinary" },
     { "id": "t-openapi-error-responses", "storyId": "s-data-layer-foundation", "title": "Declare ErrorEnvelope in OpenAPI responses= on every route", "status": "not_started", "agent": "ba", "blockers": [], "gate": "triggered" },
     { "id": "t-ruff-format-gate", "storyId": "s-data-layer-foundation", "title": "Decide whether ruff format joins the validation gate", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
     { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
@@ -79,8 +79,8 @@
     { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "done", "agent": "docs", "blockers": [], "gate": "triggered" },
     { "id": "t-stops-list-endpoint", "storyId": "s-stop-crud", "title": "GET /api/trips/{slug}/stops — StopOut[] handler + stops repository", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-arrivedat-tz-contract", "storyId": "s-stop-crud", "title": "api-contract.md arrivedAt timezone-awareness section + decision-log Entry 15", "status": "done", "agent": "docs", "blockers": [] },
-    { "id": "t-stopcreate-field-contract", "storyId": "s-stop-crud", "title": "models/stop.py — StopCreate.arrivedAt becomes AwareDatetime and all five fields get description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
-    { "id": "t-stopcreate-tz-tests", "storyId": "s-stop-crud", "title": "Contract-first tests for StopCreate.arrivedAt timezone-awareness and the five field descriptions", "status": "not_started", "agent": "test-writer", "blockers": ["t-stopcreate-field-contract"], "gate": "triggered" },
+    { "id": "t-stopcreate-field-contract", "storyId": "s-stop-crud", "title": "models/stop.py — StopCreate.arrivedAt becomes AwareDatetime and all seven fields get description=", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-stopcreate-tz-tests", "storyId": "s-stop-crud", "title": "Contract-first tests for StopCreate.arrivedAt timezone-awareness and the seven field descriptions", "status": "done", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
@@ -101,5 +101,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-16T00:00:01Z"
+  "lastUpdated": "2026-09-16T00:00:02Z"
 }
