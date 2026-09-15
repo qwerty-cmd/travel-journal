@@ -20,14 +20,18 @@ Two deliberate choices:
    it, and hang routes off it that exist only in this file. Nothing in ``app/``
    is added for testing. The real app is checked separately, at the bottom, for
    registration only.
-2. **No database, no Docker.** Everything here is in-process. If this module
-   ever starts needing the ``postgres`` container, the exception layer has grown
-   a dependency it should not have.
+2. **No database, no Docker** — with one deliberate exception, in section 4a.
+   Everything else here is in-process, and if *that* changes, the exception
+   layer has grown a dependency it should not have. Section 4a needs a genuine
+   SQLAlchemy ``StatementError`` carrying a bound parameter, which only a real
+   driver round trip produces; the reasoning is written out there.
 """
 
 from __future__ import annotations
 
 import importlib
+import logging
+import traceback
 from collections.abc import Iterator
 from http import HTTPStatus
 from pathlib import Path
@@ -37,7 +41,10 @@ import pytest
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError, StatementError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.config import get_settings
@@ -61,6 +68,22 @@ LEAK_CANARY = "SECRET-DB-HOST-12345"
 # Used for the `ApiError.internal` leak check, which is the path that goes live
 # the moment application code raises a 500 of its own rather than crashing.
 DB_ERROR_TEXT = f'FATAL: password authentication failed for user "postgres" host={LEAK_CANARY}'
+
+# A 5xx `HTTPException` detail: diagnostic, and deliberately carrying no slug of
+# its own. Section 4a's http_exception case has to be able to blame the URL and
+# nothing else for a slug appearing in the log line.
+HTTP_DETAIL_TEXT = "upstream tile service returned 503 after 30s"
+
+# A stand-in trip slug, for section 4a. Shaped like a real one (URL-safe token,
+# no characters the client would percent-encode) so it travels through the path
+# exactly as an issued slug does, and unique enough that finding it in a log
+# record can only mean it came from this request.
+SLUG_CANARY = "SLUG-CANARY-Kt7xQ2wvB9-do-not-log"
+
+# The probe path whose template differs from the URL a client sends — which is
+# the whole of what section 4a asserts. `{slug}` is the template; the concrete
+# path carries `SLUG_CANARY` in its place.
+SLUG_PATH = "/trips/{slug}"
 
 
 class ProbeBody(BaseModel):
@@ -105,6 +128,24 @@ def build_probe_app() -> FastAPI:
 
     @app.get("/probe/boom")
     async def probe_boom() -> None:
+        raise RuntimeError(f"connection to host={LEAK_CANARY} user=postgres failed")
+
+    # Section 4a. One path with a `{slug}` template, three verbs, one per 5xx
+    # logging site — so each handler is exercised against a request whose URL
+    # contains a credential and whose route template does not. Same path on
+    # purpose: the log line has to name the method as well, and three identical
+    # templates make a handler that logged the wrong one obvious.
+
+    @app.get(SLUG_PATH)
+    async def probe_slug_api_error(slug: str) -> None:
+        raise ApiError.internal(DB_ERROR_TEXT)
+
+    @app.post(SLUG_PATH)
+    async def probe_slug_http_exception(slug: str) -> None:
+        raise StarletteHTTPException(status_code=500, detail=HTTP_DETAIL_TEXT)
+
+    @app.delete(SLUG_PATH)
+    async def probe_slug_boom(slug: str) -> None:
         raise RuntimeError(f"connection to host={LEAK_CANARY} user=postgres failed")
 
     @app.get("/probe/get-only")
@@ -581,6 +622,233 @@ def test_unhandled_exception_is_logged_server_side(
     assert any(
         LEAK_CANARY in record.getMessage() + str(record.exc_info) for record in caplog.records
     )
+
+
+# --------------------------------------------------------------------------
+# 4a. A trip slug is the credential — it must not reach a 5xx log line
+# --------------------------------------------------------------------------
+# There are no accounts here: a trip slug *is* the authorization for a link
+# (spec Section 4, decision-log Entry 13). A 5xx on `GET /api/trips/{slug}` had
+# three places to write one down, and this section binds the two that were
+# closed:
+#
+#   A. The traceback. SQLAlchemy renders `[parameters: ('<slug>', ...)]` into
+#      `StatementError.__str__`, and `logger.exception(exc_info=...)` emits it.
+#      Closed by `hide_parameters=True` on the engine in `app/data/db.py`.
+#   B. The handlers' own format arguments — `request.url.path` *is*
+#      `/api/trips/<slug>`. Closed by `_endpoint()` in `app/core/errors.py`,
+#      which logs the matched route template. All three 5xx sites use it, so all
+#      three are asserted below: enumerating the places a rule is enforced is
+#      Entry 7(a)'s rule, and mutating one of them proves nothing about the
+#      other two.
+#
+# Sink C, the uvicorn access log, is deliberately accepted and out of scope
+# (`app/core/errors.py` says why, and names the task that reopens it). Nothing
+# here asserts against `uvicorn.access` — a test there would bind a behaviour
+# this project chose not to guarantee.
+#
+# **Every negative assertion below is paired with a positive on the same
+# record.** "The canary is not in the log" passes for at least four reasons that
+# have nothing to do with redaction: the handler logged nothing, the probe never
+# fired, `caplog` was pointed at the wrong logger, or `caplog` captured nothing
+# at all. `sole_error_record` closes all four — it fails unless exactly one
+# ERROR record from `app.core.errors` was captured — and each test then asserts
+# what the record *does* say (the route template, the handler that wrote it, the
+# diagnostic detail) before asserting what it does not.
+
+
+def sole_error_record(caplog: pytest.LogCaptureFixture) -> logging.LogRecord:
+    """
+    The one ERROR record `app.core.errors` emitted, or a failure saying so.
+
+    The anti-vacuity guard for every assertion in this section. Asserting
+    *exactly* one rather than "at least one" is deliberate: a handler that
+    logged the endpoint safely and then logged the raw URL again on a second
+    line would satisfy "some record has no slug in it".
+    """
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "app.core.errors" and record.levelno >= logging.ERROR
+    ]
+    assert len(records) == 1, (
+        f"expected exactly one ERROR record from app.core.errors, got {len(records)}: "
+        f"{[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+    return records[0]
+
+
+def rendered(record: logging.LogRecord) -> str:
+    """
+    Everything a log handler would write for this record — message *and* traceback.
+
+    `logger.exception` puts the interesting text in `exc_info`, not in the
+    format string, so a check against `getMessage()` alone would miss sink A
+    entirely and pass while the parameters were still being printed.
+    """
+    text_parts = [record.getMessage()]
+    if record.exc_info:
+        text_parts.extend(traceback.format_exception(*record.exc_info))
+    return "".join(text_parts)
+
+
+async def test_a_bound_slug_is_not_rendered_into_the_500_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    Sink A, against a **real** `StatementError` with the slug bound into it.
+
+    This is the one test in the module that touches Postgres, and it has to.
+    `hide_parameters=True` is a property of the engine `app/data/db.py` builds,
+    and the `[parameters: ...]` rendering is SQLAlchemy's — neither is
+    observable without a genuine driver error carrying genuine bound parameters.
+    A `RuntimeError` probe would be **vacuous by construction**: it has no bound
+    parameters, so a redaction assertion against it cannot fail (decision-log
+    Entry 7's `/api/health` failure mode in a new costume).
+
+    The statement names a table that does not exist, so the failure is a plain
+    `42P01` from the driver: it needs no migrations, reads nothing and writes
+    nothing, and leaves no row behind.
+
+    The engine is the **production** one, disposed again in this test's own
+    event loop — `app/data/db.py`'s engine is the object under test, so an
+    engine built here would only assert that this test passed the flag it just
+    chose. Disposing in `finally` is what keeps its warning satisfied: no
+    connection created on this loop survives into the next test's.
+
+    Criterion 2 — diagnosability — is asserted first and is the larger half of
+    this test. A 500 that cannot be diagnosed is not an acceptable price for
+    redaction: the exception class, the driver's own message, the `[SQL: ...]`
+    statement and the traceback must all still be there.
+    """
+    from app.data import db
+
+    raised: list[StatementError] = []
+    missing_table = "no_such_table_slug_redaction_probe"
+
+    probe = FastAPI()
+    register_exception_handlers(probe)
+
+    @probe.get(SLUG_PATH)
+    async def probe_slug_db_failure(slug: str) -> None:
+        async with db.engine.connect() as conn:
+            try:
+                await conn.execute(
+                    text(f"SELECT 1 FROM {missing_table} WHERE rider_slug = :slug"),
+                    {"slug": slug},
+                )
+            except SQLAlchemyError as exc:
+                # Kept so the test can prove the slug really was bound into the
+                # failing statement. Without it, "no slug in the log" would also
+                # be true of an error that never carried one.
+                assert isinstance(exc, StatementError)
+                raised.append(exc)
+                raise
+
+    transport = ASGITransport(app=probe, raise_app_exceptions=False)
+    try:
+        with caplog.at_level("ERROR", logger="app.core.errors"):
+            async with AsyncClient(transport=transport, base_url="http://probe") as probe_client:
+                response = await probe_client.get(SLUG_PATH.format(slug=SLUG_CANARY))
+    finally:
+        await db.engine.dispose()
+
+    # The probe fired, and the rider got the contract's answer.
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    assert assert_envelope(response).code is ErrorCode.INTERNAL_ERROR
+
+    # The error genuinely carried the slug as a bound parameter. This is the
+    # assertion that makes the redaction check below non-vacuous.
+    assert len(raised) == 1
+    assert SLUG_CANARY in str(raised[0].params)
+
+    record = sole_error_record(caplog)
+    log_text = rendered(record)
+
+    # Criterion 2: still diagnosable. Class, driver message, SQL, traceback.
+    assert type(raised[0]).__name__ in log_text
+    assert missing_table in log_text
+    assert "[SQL:" in log_text
+    assert "Traceback (most recent call last)" in log_text
+    assert "Unhandled exception on" in log_text
+
+    # Criterion 1: and the credential is not in it.
+    assert "[parameters:" not in log_text
+    assert SLUG_CANARY not in log_text
+
+
+def test_api_error_500_log_names_the_route_not_the_slug(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Sink B on `api_error_handler` — the INTERNAL_ERROR branch.
+
+    Same arrangement as `test_api_error_internal_is_logged_server_side`, which
+    asserts the positive half (the withheld message is kept): the two halves
+    belong on one record, because "the diagnostic survived" and "the credential
+    did not" are the two things that can only both be true if the handler
+    formats an endpoint rather than a URL.
+    """
+    with caplog.at_level("ERROR", logger="app.core.errors"):
+        response = client.get(SLUG_PATH.format(slug=SLUG_CANARY))
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    record = sole_error_record(caplog)
+    log_text = rendered(record)
+
+    assert f"GET {SLUG_PATH}" in log_text
+    assert "ApiError" in log_text
+    assert LEAK_CANARY in log_text  # the withheld diagnostic is still logged
+
+    assert SLUG_CANARY not in log_text
+
+
+def test_http_exception_500_log_names_the_route_not_the_slug(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Sink B on `http_exception_handler` — the branch that maps a 5xx to INTERNAL_ERROR.
+
+    The verb is `POST` on the same template, so the assertion also fails a
+    handler that logged a hardcoded or borrowed method.
+    """
+    with caplog.at_level("ERROR", logger="app.core.errors"):
+        response = client.post(SLUG_PATH.format(slug=SLUG_CANARY))
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    record = sole_error_record(caplog)
+    log_text = rendered(record)
+
+    assert f"POST {SLUG_PATH}" in log_text
+    assert "HTTPException" in log_text
+    assert HTTP_DETAIL_TEXT in log_text  # the withheld detail is still logged
+
+    assert SLUG_CANARY not in log_text
+
+
+def test_unhandled_exception_log_names_the_route_not_the_slug(
+    quiet_client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Sink B on `unhandled_exception_handler`, independently of sink A.
+
+    The exception here is a `RuntimeError` — no bound parameters, nothing for
+    `hide_parameters` to hide — which is exactly why it belongs *only* to sink
+    B: the slug reaches this log line through `request.url.path`, whatever the
+    exception type, and no database error is required to put it there.
+    """
+    with caplog.at_level("ERROR", logger="app.core.errors"):
+        response = quiet_client.delete(SLUG_PATH.format(slug=SLUG_CANARY))
+
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+    record = sole_error_record(caplog)
+    log_text = rendered(record)
+
+    assert f"DELETE {SLUG_PATH}" in log_text
+    assert "RuntimeError" in log_text
+    assert LEAK_CANARY in log_text  # the exception itself is still kept
+
+    assert SLUG_CANARY not in log_text
 
 
 # --------------------------------------------------------------------------
