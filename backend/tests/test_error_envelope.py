@@ -391,7 +391,13 @@ def test_direct_construction_rejects_a_contradicting_code(status: int, code: Err
         (405, ErrorCode.METHOD_NOT_ALLOWED),
         (422, ErrorCode.VALIDATION_ERROR),
         (500, ErrorCode.INTERNAL_ERROR),
-        (409, ErrorCode.INTERNAL_ERROR),  # unnamed status -> INTERNAL_ERROR, per the mapping
+        # An unnamed status -> INTERNAL_ERROR, per the mapping. `418` and not
+        # `409`: this case needs a status the contract will *keep* saying nothing
+        # about, and `409`/`CONFLICT` is entering `_STATUS_TO_CODE` (decision-log
+        # entry 14), which would turn this row red for a reason that has nothing
+        # to do with what it asserts. `418` is a registered HTTP status no
+        # endpoint in this contract can ever return.
+        (418, ErrorCode.INTERNAL_ERROR),
     ],
 )
 def test_direct_construction_still_allows_every_contract_pair(status: int, code: ErrorCode) -> None:
@@ -419,7 +425,7 @@ def test_direct_construction_still_allows_every_contract_pair(status: int, code:
         (404, ErrorCode.NOT_FOUND),
         (405, ErrorCode.METHOD_NOT_ALLOWED),
         (422, ErrorCode.VALIDATION_ERROR),
-        (409, ErrorCode.INTERNAL_ERROR),
+        (418, ErrorCode.INTERNAL_ERROR),  # unnamed status -> INTERNAL_ERROR; see above for 418
         (500, ErrorCode.INTERNAL_ERROR),
     ],
 )
