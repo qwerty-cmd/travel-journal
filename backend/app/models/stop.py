@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 
 class LocationSource(StrEnum):
@@ -17,15 +17,40 @@ class StopCreate(BaseModel):
         "(possibly offline). Replaying the same id returns the existing stop (200) "
         "instead of creating a duplicate — see docs/api-contract.md 'Idempotency'."
     )
-    name: str
-    lat: float
-    lng: float
+    name: str = Field(description="What the rider called this stop, e.g. 'Daly Waters Pub'.")
+    lat: float = Field(
+        description="Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in "
+        "the map endpoint are ordered [lng, lat] — the reverse of this pair."
+    )
+    lng: float = Field(
+        description="Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in "
+        "the map endpoint are ordered [lng, lat] — the reverse of this pair."
+    )
     locationSource: LocationSource = Field(
         description="How lat/lng were obtained — an automatic GPS fix, or a manual "
         "map tap (spec Section 6, 'Add stop' fallback when GPS is denied/unavailable)."
     )
-    arrivedAt: datetime
-    notes: str | None = None
+    # `AwareDatetime` and a bare `datetime` emit the *same* JSON Schema —
+    # {"type": "string", "format": "date-time"}. So diffing the OpenAPI document makes the
+    # aware type look like it buys nothing. True, and beside the point: the difference is at
+    # parse time, not in the document. `AwareDatetime` rejects a naive value; a bare
+    # `datetime` accepts it and hands it to a `timestamptz` column, where the session
+    # `TimeZone` decides what hour it meant. A stop filed at the wrong hour is the failure,
+    # and it is invisible in the schema. Do not relax this to `datetime`.
+    # See docs/api-contract.md, "`StopCreate.arrivedAt` must be timezone-aware".
+    arrivedAt: AwareDatetime = Field(
+        description="When the rider arrived, as a timezone-aware ISO 8601 instant. Captured "
+        "on the device, which may have been offline, so it is the arrival time and not the "
+        "time the server received the stop. The UTC offset is **required** — a naive value "
+        "(no offset) is rejected with 422 / VALIDATION_ERROR rather than assumed to be UTC "
+        "or server-local, because a rider crossing timezones has no offset worth guessing. "
+        "The generated client cannot catch this; only the server rejects it."
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Whatever the rider wants to write about this stop. Optional — omit the "
+        "field entirely or send **null**; both mean 'no notes' and are stored as SQL NULL.",
+    )
 
 
 class StopOut(BaseModel):
