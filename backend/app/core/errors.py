@@ -18,8 +18,9 @@ NOT_FOUND through it). The other three handlers exist to normalise failures that
 originate in the framework rather than in our code.
 
 **Raise it through the classmethod constructors** — `ApiError.forbidden(...)`,
-`ApiError.not_found(...)`, `ApiError.validation(...)`, `ApiError.internal(...)` —
-never by passing a status and a code as separate arguments. The contract's
+`ApiError.not_found(...)`, `ApiError.conflict(...)`, `ApiError.validation(...)`,
+`ApiError.internal(...)` — never by passing a status and a code as separate
+arguments. The contract's
 top-priority distinction is 403-vs-404 (spec Section 12, decision-log entry 6),
 and a two-argument call site makes the transposed pair `(404, FORBIDDEN)`
 representable: a body that violates the contract, produced by a typo, that no
@@ -51,11 +52,24 @@ INTERNAL_ERROR_MESSAGE = "Something went wrong on our end. Please try again."
 
 # Status -> contract code. Only the statuses the contract's eight endpoints
 # actually return get a specific code; everything else (including a 500) is an
-# INTERNAL_ERROR, because the contract defines exactly five codes and inventing a
-# sixth at runtime would produce a body the generated client cannot type.
+# INTERNAL_ERROR, because the contract defines exactly six codes and inventing a
+# seventh at runtime would produce a body the generated client cannot type.
+#
+# `409` is the one row here that is *endpoint* contract rather than framework
+# level (decision-log Entry 14). `405` and `500` are produced by Starlette's
+# routing and by anything that escapes a route — on any path, for reasons no
+# endpoint declares — which is why they are deliberately not listed per-endpoint.
+# A `409` is raised by our own handler code and is reachable only on the three
+# create endpoints that accept a client-generated id, so the contract lists it on
+# exactly those three rows and nowhere else.
+#
+# Adding this row is also what makes `ApiError(409, CONFLICT, ...)` constructible
+# — `__init__` checks the pair against `code_for_status` — and that is the
+# intended effect, not a side one.
 _STATUS_TO_CODE: dict[int, ErrorCode] = {
     HTTPStatus.FORBIDDEN: ErrorCode.FORBIDDEN,
     HTTPStatus.NOT_FOUND: ErrorCode.NOT_FOUND,
+    HTTPStatus.CONFLICT: ErrorCode.CONFLICT,
     HTTPStatus.METHOD_NOT_ALLOWED: ErrorCode.METHOD_NOT_ALLOWED,
     HTTPStatus.UNPROCESSABLE_ENTITY: ErrorCode.VALIDATION_ERROR,
 }
@@ -89,7 +103,7 @@ class ApiError(Exception):
                 f"ApiError status {status_code} must carry {expected}, not {code}. "
                 f"The contract maps status to code (see code_for_status); a pair that "
                 f"disagrees would put a contract-violating body on the wire. Use "
-                f"ApiError.forbidden/.not_found/.validation/.internal instead."
+                f"ApiError.forbidden/.not_found/.conflict/.validation/.internal instead."
             )
         super().__init__(message)
         self.status_code = status_code
@@ -105,6 +119,20 @@ class ApiError(Exception):
     def not_found(cls, message: str) -> ApiError:
         """404 — no such trip/stop/bike/path. `message` is shown to the rider."""
         return cls(HTTPStatus.NOT_FOUND, ErrorCode.NOT_FOUND, message)
+
+    @classmethod
+    def conflict(cls, message: str) -> ApiError:
+        """
+        409 — a client-generated id that already exists under a *different* parent.
+
+        `message` is returned verbatim, and must contain **no value from the
+        conflicting record**: not the other trip's slug, id or name, not the
+        other stop's fields. A 409 already tells the caller the id exists
+        somewhere; the message adds nothing to that. That boundary is held at the
+        raise site, which does not read the conflicting row in the first place —
+        this constructor only ever sees the string it is handed.
+        """
+        return cls(HTTPStatus.CONFLICT, ErrorCode.CONFLICT, message)
 
     @classmethod
     def validation(cls, message: str) -> ApiError:

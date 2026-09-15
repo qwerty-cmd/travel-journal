@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 class ErrorCode(StrEnum):
     """
-    The complete set of error codes the API can return — five, no more.
+    The complete set of error codes the API can return — six, no more.
 
     A client (notably the offline queue, which decides retry-vs-never-retry from
     the body alone) can exhaustively match on these. Adding a code is a contract
@@ -23,6 +23,18 @@ class ErrorCode(StrEnum):
     FORBIDDEN = "FORBIDDEN"  # viewer slug used on a write endpoint
     NOT_FOUND = "NOT_FOUND"  # slug/trip/stop/bike doesn't exist
     VALIDATION_ERROR = "VALIDATION_ERROR"  # request body failed schema validation
+    # A create whose client-generated id already exists under a *different*
+    # parent — another trip's stop, not a replay of this one (decision-log
+    # Entry 14). Deliberately NOT VALIDATION_ERROR, which was the strongest
+    # rejected option: the request is well-formed, every field validates and the
+    # server is healthy, so labelling it a validation failure tells the rider and
+    # the client they sent something malformed when they did not. Getting the
+    # right retry behaviour out of a wrong label is a coincidence that breaks the
+    # moment anything branches on `code` for a reason other than retry.
+    # Never-retry for the offline queue: an id that belongs to another trip on
+    # this attempt still belongs to it on every later one, so retrying is
+    # guaranteed to produce the same 409.
+    CONFLICT = "CONFLICT"
     # A 405 is a client mistake (wrong verb on a real path), not a server fault —
     # kept distinct from INTERNAL_ERROR so the queue can tell "never retry this
     # request as written" from "the server broke, retrying may work".
