@@ -35,6 +35,7 @@ empirically disproves another.
 | 12 | Finding triage gate, and who may write the governance files | `docs/finding-triage-gate.md`, `CLAUDE.md`, `.claude/**` | The orchestrator's weaker three-question triage was replaced by the user's gate — Stop Condition names the over-investigation behaviours rather than trusting judgment, QA classification is evidence not authority. Separately: no agent can write `CLAUDE.md` or `.claude/**`, so the **orchestrator** owns those paths; widening `docs` to `.claude/**` was rejected as self-modifying permissions |
 | 13 | The one backlog item the gate promoted — Gate 2 vs "the slug is already in the access log" | `core/errors.py`, `progress.json` | `ba` classified `t-error-log-parameter-redaction` CURRENTLY OBSERVABLE (handler and route both run today; qa *observed* the slug in the rendered traceback). The note's own argument — marginal disclosure is zero, so ORDINARY DEBT — lost: Gate 2 tests whether a runtime path is current, not how severe it is. Orchestrator additionally found the task closes only **one of two** sinks; re-scoped, not re-classified |
 | 14 | A client-generated id that already exists under a *different* trip — the sixth `ErrorCode` | `models/common.py`, `core/errors.py`, `repositories/stops.py`, `api-contract.md` | `ba` escalated a second contract gap rather than inventing a code (Entry 6's rule, applied again); user ruled **`CONFLICT` / `409`**. Replay matches **`(parent, id)`**, never `id` alone, and the cross-parent branch is found **by a check, never a failed INSERT** (that renders `500` and the queue retries forever). Four readings rejected — the composite `(trip_id, id)` **primary key is rejected on cost, not correctness**: it cascades into `photos.stop_id` and the unbuilt photo-upload design. Entry 3 does **not** forbid `ON CONFLICT (id) DO NOTHING` here |
+| 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. `PhotoCreateForm.takenAt` is explicitly **left open** (`t-takenat-tz-question`): EXIF `DateTimeOriginal` is naive by design |
 
 ---
 
@@ -1287,3 +1288,124 @@ scope, so none could be placed by the patch that recorded this entry:
   why the cross-parent branch must not be a caught `IntegrityError`. **This is the file where
   readings 1 and 2 would actually be retried**, by someone simplifying a two-step check into one
   insert.
+
+---
+
+## 15. `StopCreate.arrivedAt` must be timezone-aware — the description that was told not to make a claim
+
+**Who:** an earlier scoping pass vs. the user, acting as Architect. The user ruled.
+**Where:** `docs/api-contract.md` §"`StopCreate.arrivedAt` must be timezone-aware",
+`backend/app/models/stop.py`, `backend/tests/test_stops_list_endpoint.py`.
+Task `t-arrivedat-tz-contract` — this entry and the contract section are the **build-order gate**:
+the model change that enforces the rule could not start until they landed.
+
+**The ruling.** `StopCreate.arrivedAt` is a **timezone-aware** instant. A naive datetime — one with
+no UTC offset — is **rejected** with `422` / `VALIDATION_ERROR`. It is not defaulted to UTC, not
+assumed to be the server's local time, and not assumed to be some fixed "trip offset".
+
+**The reasoning on record.** `arrivedAt` is captured **on the device**, potentially hours offline,
+while the rider crosses timezone boundaries, and synced later. A naive value therefore has no
+correct offset to assume — the server's offset is wrong (the request may arrive days later from
+somewhere else), UTC is a guess, and a fixed trip offset is wrong the moment the rider crosses a
+border. Accepting one would silently place the stop at the **wrong hour in the timeline**, with
+nothing to flag it: wrong pin label, wrong position in the chronological trail, success status,
+no error anywhere.
+
+### The position this replaced
+
+A previous scoping pass argued the **opposite direction**, and argued it well: the field description
+must **not** claim timezone-awareness *precisely because nothing enforced it*.
+
+State that fairly, because it is the part that evaporates. Its logic: a Pydantic `description=` is
+not a comment. It feeds the OpenAPI document, which feeds Kubb's generated client and every agent's
+context (CLAUDE.md, "Conventions"). A description asserting a guarantee the code does not implement
+is therefore a **contract lie** of exactly the class this log already records twice — Entry 6's
+`405`-reported-as-`404` and Entry 7's collapsed handler — where something downstream makes a
+decision from a statement that is not true. Given a field typed bare `datetime`, which accepts naive
+values silently, the honest description is one that does not promise an offset. On its own terms
+that argument is correct, and it was correct when it was made.
+
+**Its evidence is still visible in the tree.** `StopCreate.arrivedAt` is a bare `datetime` with **no
+`description=` at all**, while `StopOut.arrivedAt` — where the value genuinely is tz-aware, having
+come back out of a `timestamptz` column — *does* say "a timezone-aware ISO 8601 instant". That
+asymmetry between the input and output models is not an oversight. It is the earlier call,
+implemented exactly as reasoned.
+
+### Why it lost
+
+**Not empirically.** Nothing was measured that contradicted it; no test disproved it. It lost on a
+judgment about which side of the gap to close, and that is worth saying plainly rather than dressing
+up as a discovered fact.
+
+The gap it identified is real: the description claimed more than the type enforced. There are two
+ways to close that, and the earlier pass took the weaker one.
+
+1. **Withdraw the claim** — correct *only* when the guarantee is genuinely unavailable.
+2. **Enforce the claim** — available here for the cost of one field type.
+
+The guarantee was one `AwareDatetime` away, so (1) was never forced. And the two errors cost
+different amounts: a description that under-claims costs some clarity in the generated types, while
+an unenforced naive value costs the stop's place in the timeline — permanently, silently, with no
+surface anywhere that it happened. When one side of a gap is cheap to close and the other is
+lossy to leave open, "stop claiming it" is the wrong repair.
+
+### The half of the losing argument that survives, and must not be forgotten
+
+Enforcement does **not** fully close the honesty gap, because **JSON Schema has no vocabulary for
+timezone-awareness.** `AwareDatetime` and a hand-written field validator emit the *identical*
+schema: `{"type": "string", "format": "date-time"}`. There is no keyword meaning "offset required".
+
+So Kubb types this **`arrivedAt: string`**, and the generated client cannot catch a naive value —
+no type error, no client-side validation failure, nothing at the call site. The constraint is
+**server-enforced only**. The earlier pass's central worry — a stated guarantee that nothing
+checks — therefore still applies to the *frontend half* of the system. What the ruling achieves is a
+move from "nobody enforces this" to "only the server enforces this". That is the best available
+outcome, not a complete one, and the contract section says so rather than implying the generated
+client helps.
+
+### The consequence that makes this worth an entry at all
+
+`VALIDATION_ERROR` is a **never-retry** code, and a never-retry outcome is **dequeued permanently
+and surfaced to the rider** (see the contract's "Error envelope"). Chain those:
+
+> A frontend bug that sends a naive `arrivedAt` does not retry the stop. It **loses** it.
+
+That is the **accepted trade**, taken deliberately: a surfaced error is recoverable because the
+rider is told and can act on it; a stop silently filed at the wrong hour is not, because nothing
+ever flags it. But it puts real weight on the frontend sending an offset, and it makes this the
+create field where a client-side mistake is most expensive — while being the field the generated
+client is least able to protect.
+
+### What did not change
+
+- **The endpoint table is untouched.** A naive value fails Pydantic schema validation *before the
+  handler runs*, exactly like a missing `lat` — so it is the **same `422`** already listed on the
+  `POST /trips/{slug}/stops` row. No second `422` row, no new code, no new status. All three create
+  rows stay byte-identical. Recorded here because "add the 422 for the timezone case" is a
+  helpful-looking edit a later reader will otherwise make.
+- **`StopOut.arrivedAt`'s description.** Its "timezone-aware ISO 8601 instant" wording is now true on
+  input as well as output; it was already pinned by `test_arrived_at_is_timezone_aware` in
+  `backend/tests/test_stops_list_endpoint.py`.
+
+### Explicitly not settled: `PhotoCreateForm.takenAt`
+
+`takenAt` is structurally the same field — bare `datetime`, `timestamptz` column, captured on-device
+and possibly offline — and the obvious move is to apply this ruling to it verbatim. **This entry does
+not do that, and must not be cited as having done it.**
+
+Photos carry a constraint stops do not: the natural source of `takenAt` is EXIF `DateTimeOriginal`,
+which is **naive by design** — the offset lives in a separate `OffsetTimeOriginal` tag that is
+frequently absent on imported, exported or edited images. So "reject naive" may be materially harder
+for the frontend to satisfy here, and the answer may have to be that the **frontend supplies the
+device offset at capture** rather than trusting EXIF to carry one. Decided when the photo endpoints
+are scoped (`s-photo-upload-onedrive-sync`). Filed as `t-takenat-tz-question`.
+
+**Co-location owed (Entry 4's rule).** One site, outside the `docs` agent's `docs/`-only scope, so
+it could not be placed by the patch that recorded this entry:
+
+- `backend/app/models/stop.py`, beside `StopCreate.arrivedAt` — why the type enforces awareness,
+  that JSON Schema cannot express it so the generated client will not catch it, and that the
+  resulting `422` is never-retry and therefore loses the stop. **This is the file where the rejected
+  option would actually be retried**: by someone relaxing the aware type back to bare `datetime` on
+  the reasoning that the emitted schema is byte-identical either way. That reasoning is *true* — and
+  it is exactly the point being missed, because the schema was never what was doing the enforcing.

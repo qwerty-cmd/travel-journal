@@ -38,6 +38,10 @@ Constraint verified by QA: the SQLAlchemy engine in app/data/db.py is created at
 
 Lands the user-authored Finding Triage Gate and makes it reach the agents that have to apply it. Canonical rule text is docs/finding-triage-gate.md — USER-AUTHORED AND FIXED, transcribe and cite it, never redraft, condense or reorder it. The contested call that produced it is decision-log Entry 12, both halves: (a) the orchestrator's weaker three-question triage was replaced, and (b) no agent in the roster can write CLAUDE.md or .claude/**, so the orchestrator is the recorded owner of those paths. FOUR TASKS, STRICTLY A->B->C->D, one reviewable patch each: t-finding-triage-gate-doc (docs) -> t-claude-md-triage-gate (orchestrator) -> t-agent-defs-triage-gate (orchestrator) -> t-backlog-retro-triage (ba analyses, docs writes). The ordering is not cosmetic: B and C cite the file A creates, and D applies the gate that B and C put into force — running D early classifies findings against a rule the agents have not been told about. Tasks B and C are orchestrator-executed BY DECISION, not by oversight (Entry 12b); do not "fix" their agent field to docs, which is the exact reassignment that blocked t-add-endpoint-head-convention.
 
+## s-agent-tool-boundaries
+
+Covers the gap between what an agent definition PROMISES and what its tool grant ENFORCES. Three tasks: `t-qa-mutation-scratch-tree` (done — the prose rule in `qa.md`), `t-qa-mutation-hook` (the structural version of that same rule, TRIGGERED), `t-docs-agent-unscoped-grant` (the same class of gap through a different channel, ORDINARY). STATUS REVERTED `done` -> `in_progress` 2026-09-16: the story was closed when it had one task and that task landed, and it has since gained two open ones. `in_progress` rather than `not_started` because a story here means "some of its tasks have landed and some have not" — the same reading `s-data-layer-foundation`, `s-stop-crud` and `s-seed-trip-record` carry; `not_started` would contradict a `done` task sitting under it. The general shape: `qa` is described everywhere as having no edit access, but its grant is Read/Bash/Grep — and Bash writes files. The prose guarantee was real, and was being honoured; nothing structural was holding it up. This story is for the cases where that distinction has been noticed and written down, rather than left as an assumption about how agents will behave.
+
 ## s-deploy-cutover
 
 Deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list.
@@ -197,6 +201,8 @@ SINK 3 SPLIT OUT AS ITS OWN TASK, DELIBERATELY. The uvicorn access log is not ap
 
 IMPLEMENTATION LANDED, TASK STAYS `in_progress` (2026-09-15, commit `bd25cbb`). `dev`'s implementation is in, and `dev` stated plainly that **the green suite is a regression gate and not proof** — it shows nothing that used to work is broken, not that the slug is absent from the three sinks. The binding tests are being written now by `test-writer`. **This task closes when those tests land AND `qa` signs off**, not on the commit. Recording the distinction because a landed commit plus a green suite is exactly the shape that gets a task marked `done` by inspection — and Entry 7(b) is the standing record of a green suite missing a path nobody thought to write a test for.
 
+CLOSED 2026-09-16 (commit `5b80bfb`, "bind the slug redaction on the 5xx log sinks"). The closing condition stated immediately above is the one that was met — binding tests plus `qa` sign-off, not the earlier implementation commit `bd25cbb` on its own. Covers sinks 1 and 2 only: the `logger.exception` traceback's bound SQL parameters, and the 5xx handlers' own format arguments via `request.url.path`. SINK 3 REMAINS OPEN as `t-access-log-slug-exposure` (`devops`, `gate: triggered`) — this task closing does not mean the slug has left every log. The CO-LOCATION OWED item above (Entry 13's rationale beside `unhandled_exception_handler` in `backend/app/core/errors.py`) was part of this task's definition of done and lives in a file the `docs` agent cannot write; confirm it rode along in the patch rather than assuming it did.
+
 ## t-405-router-route-collapse
 
 LIVE CONTRACT VIOLATION found by QA on real uvicorn. _methods_allowed_elsewhere in main.py scans app.routes and skips anything where not getattr(route,'methods',None). This FastAPI version represents an included router as one lazy _IncludedRouter entry with path=None and methods=None and no .routes attribute, so every route registered through api_router is invisible to the scan — all eight contract endpoints. Only /api/health, registered directly on app, is visible, which is why the guard appeared to work. POST /api/trips/whatever returns 404; POST /api/health correctly returns 405 with Allow: GET. QA confirmed the /api/{rest:path} catch-all is the cause, not Starlette: remove it and the same requests return 405 correctly, because _IncludedRouter.matches() does return Match.PARTIAL for POST and Match.FULL for GET — the information is there, just unreachable via getattr. Entry 6 calls this collapse a contract lie the offline queue acts on (it branches retry-vs-never-retry on code); Allow on a 405 is an RFC 9110 MUST. Green suite is Entry 7b again: test_spa_wrong_method_on_a_real_api_route_is_still_405 (test_error_envelope.py ~709) asserts against /api/health only. Gets worse at s-stop-crud, where DELETE on a registered stops path must be 405 and will silently stay 404. ba is scoping the fix, including whether to detect via public route.matches() rather than private _IncludedRouter internals, and whether the catch-all should exist at all. ba decisions: (1) FIX BY route.matches() PROBING, not by traversing _IncludedRouter. getattr(route,'methods',None) is not a wrong attribute — it is a public-looking one that is not universally present, and its absence fails SILENTLY and toward 404, the direction the contract calls a lie. Traversing private internals reproduces that exact failure mode one layer deeper and would regress silently on the upgrade that renames the lazy wrapper. matches() returns PARTIAL/FULL but NOT the verb set, and Allow is an RFC 9110 15.5.6 MUST, so the set is derived by probing each candidate verb against a COPY of the scope and collecting FULL matches. Note getattr(route,'path',...) can be None, not merely missing. (2) THE CATCH-ALL STAYS. Removing it fixes 405s and reinstates 200 text/html for unknown GET /api/* once frontend/dist exists — a success status carrying HTML to a Kubb client that will parse it as ErrorEnvelope, worse than a wrong code. The narrower construction (exclude /api from the SPA fallback rather than shadow it) needs a hand-assigned Route.path_regex or routing-duplicating middleware — private internals or a drifting second copy of the routing table — and it makes /api correctness depend on whether frontend/dist exists, the environment-conditional coupling Entry 7b forbids. The task requires this be written into _methods_allowed_elsewhere's docstring, because a future reader WILL re-derive 'just delete it': the current comment says why the route exists but not that the route is also what breaks 405s. (3) AC4 is the criterion that matters most: every route registered today is GET-only, so a hardcoded Allow: GET would satisfy a naive assertion. The probe app must be built in production shape with a GET+POST path and a PATCH-only path, and must register the PRODUCTION catch-all rather than a copy. ba also proposed this fix under a new id t-api-405-method-detection; NOT added — same bug, and two ids for one bug is worse than either. The decisions above are that scope.
@@ -307,6 +313,12 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 UNBLOCKED 2026-09-15 (`t-backlog-retro-triage`). `agent` changed `"docs"` -> `"orchestrator"` and the blocker emptied. Nothing about the task's content changed — the correction recorded above still stands in full. What unblocked it is `CLAUDE.md`'s governance-ownership rule (landed by `t-claude-md-triage-gate`, decision-log Entry 12b): `.claude/skills/` has no agent owner and the orchestrator writes it, so the "Needs reassignment" blocker now has somewhere to point. The docs agent's refusal to edit outside `docs/` was correct and is not being reversed here; the owner was missing, not the permission.
 
+DONE ALL ALONG — TRACKER CORRECTED 2026-09-16, NO NEW WORK. The status field read `not_started` while the work sat in the tree. `.claude/skills/add-endpoint/SKILL.md` step 4 carries the convention as a sub-bullet under the route-handler step: a `GET` route gets a second registration of the *same handler* via `add_api_route(..., methods=["HEAD"], include_in_schema=False)`, explicitly NOT `methods=["GET", "HEAD"]` on one route, with the `get_openapi_path`-loops-over-`route.methods` / per-route-`operation_id` reasoning for why `include_in_schema=False` is the part doing the work, the note that reusing the handler object is what keeps the access dependency in sync across the pair, and a citation of decision-log Entry 11. So the CONTENT correction recorded above was honoured — the skill teaches the spelling that shipped, not the one Entry 11 rejected.
+
+The promotion trigger fired as predicted: `t-stops-list-endpoint` landed at `3ebded7` and does carry a HEAD sibling registration, so the recipe was right *before* `dev` followed it rather than corrected afterwards.
+
+WHAT THIS ENTRY IS ACTUALLY RECORDING is the bookkeeping failure, not the convention. A task whose output lives outside every agent's writable subtree is exactly the one that gets done in passing by the orchestrator and never checked off — and this task had already been reassigned `docs` -> `orchestrator` for that same structural reason. The reassignment fixed who could do it; nothing fixed who would mark it done.
+
 ## t-finding-triage-gate-doc
 
 TASK A of four. Scope: docs/ ONLY — docs/finding-triage-gate.md (new, the verbatim rule), docs/decision-log.md (Entry 12 plus its index row), and these tracker entries. The rule text is USER-AUTHORED AND FIXED: transcribed, not edited. If this task appears to need CLAUDE.md or .claude/**, it does not — those are tasks B and C, and the reason they are separate is Entry 12b, not convenience. Entry 12 records BOTH contested points in one entry because the second is why the first could not simply be written into CLAUDE.md.
@@ -393,6 +405,8 @@ COMPLETED 2026-09-15 (commit `a58bec2`). `docs/api-contract.md` carries the `CON
 
 RUNS BEFORE THE IMPLEMENTATION, AND THAT ORDER IS THE WHOLE POINT. Two shipped assertions use 409 as a stand-in for "a status the contract does not name", expecting it to fall through to INTERNAL_ERROR: `backend/tests/test_error_envelope.py:394` (`test_direct_construction_still_allows_every_contract_pair`) and `:424` (`test_http_exception_maps_to_contract_code`). Both go red the moment 409 enters `_STATUS_TO_CODE`. Re-pointing them to 418 is green BEFORE the impl (418 is unnamed today) and green AFTER (418 is still unnamed), so the tree works at every step — CLAUDE.md's commit rule. Doing it in the same patch as the impl, or after it, means a commit that leaves a red suite. The tests are not wrong and are not being deleted: what they assert — an unnamed status falls through to INTERNAL_ERROR — stays true and stays covered; only the example changes.
 
+COMPLETED 2026-09-16 (commit `f2f12ce`), and it landed FIRST of the four as required. The commit precedes `7ca82ab` (the impl), so the mandated ordering held in the history and no commit in the sequence left a red suite.
+
 ## t-conflict-code-impl
 
 `backend/app/models/common.py` + `backend/app/core/errors.py` ONLY. Add `CONFLICT = "CONFLICT"` to `ErrorCode`, add `HTTPStatus.CONFLICT: ErrorCode.CONFLICT` to `_STATUS_TO_CODE`, and fix the two prose claims that count to five: the `ErrorCode` docstring ("five, no more") and the `_STATUS_TO_CODE` comment ("the contract defines exactly five codes"). No repository or route work — `POST /stops` is `t-stops-create-endpoint`.
@@ -401,9 +415,13 @@ Adding the mapping row is also what makes `ApiError(409, CONFLICT, ...)` constru
 
 CO-LOCATION IS PART OF THE WORK, NOT TIDY-UP (Entry 4's rule). Entry 14's rationale must reach three files the `docs` agent cannot write: beside the new member in `common.py` (why not VALIDATION_ERROR; never-retry for the queue), beside `_STATUS_TO_CODE` in `errors.py` (409 is endpoint contract, not framework-level like 405/500), and — when the create endpoint lands — beside the create path in `repositories/stops.py`, which is THE file where the rejected readings would actually be retried by someone collapsing a two-step check into one insert.
 
+COMPLETED 2026-09-16 (commit `7ca82ab`), after the test re-point as sequenced. From this commit on a `409` renders a `CONFLICT` envelope instead of falling through to `INTERNAL_ERROR`. That is also what produced `t-bare-409-envelope-bypass`: the mapping is keyed on status, so a bare `HTTPException(409)` now receives the code without passing through `ApiError.conflict` — the envelope is well-formed and the leak boundary was never consulted. That is a consequence of the design, not a defect in this patch; the mapping row is the contract.
+
 ## t-conflict-code-tests
 
 Covers the sixth member and its mapping: 409 -> CONFLICT through `code_for_status`, through a raised `StarletteHTTPException`, and through `ApiError`; the transposed-pair backstop still raising `ValueError` for a 409 carrying any other code; and the exhaustiveness assertion updated to six. Per Entries 2 and 7a each new assertion must be shown to FAIL against a mutant — a mapping test that passes with the row deleted is the vacuous-guard failure mode. The message leak boundary (a CONFLICT message containing no value from the conflicting record) is enforced at the raise site, so it is tested with the create endpoint under `t-stops-create-endpoint`, not here — there is no raise site in this patch.
+
+COMPLETED 2026-09-16 (commit `13540ac`), closing the four-task sequence in the order it was specified: contract `a58bec2` -> test re-point `f2f12ce` -> impl `7ca82ab` -> tests `13540ac`. The message leak boundary is still untested, by design and not by omission — it is enforced at a raise site that does not exist yet. `qa` raised two findings on this task, both filed rather than fixed: `t-bare-409-envelope-bypass` and `t-errors-docstring-dangling-line`.
 
 ## t-stops-list-endpoint
 
@@ -414,3 +432,116 @@ COMPLETED 2026-09-15 (commit `3ebded7`), 28 tests, suite green at 219. The predi
 ## t-stops-create-endpoint
 
 POST /api/trips/{slug}/stops — rider slug only. NO LONGER BLOCKED: the cross-parent id question that `ba` escalated is ruled (decision-log Entry 14, contract §Idempotency). Three-way branch on the client-generated id: unseen -> 201; exists under THIS trip -> 200 replay with the stored row; exists under a DIFFERENT trip -> 409 CONFLICT, nothing created. Replay lookup is on `(trip_id, id)`, never `id` alone (that returns another trip's stop through this trip's slug). The cross-trip branch is found BY A CHECK, never by letting the INSERT fail — a driver PK violation renders 500 INTERNAL_ERROR and the offline queue retries that forever. The 409 message must carry no value from the conflicting record (not the other trip's slug/id/name, not the other stop's name/notes/coordinates/timestamp), enforced at the raise site. This is the FIRST WIRED WRITE ENDPOINT, so it is the promotion trigger for `t-route-dependency-audit` and `t-trip-context-slug-exposure` — both must land with it.
+
+SEQUENCING ADDED 2026-09-16: `t-stopcreate-field-contract` lands BEFORE this task. It changes `StopCreate` — the request model this endpoint binds — so taking it afterwards means shipping the endpoint against a model whose `arrivedAt` accepts a naive datetime and whose five fields carry no `description=`, then immediately reopening the same file. `t-stopcreate-tz-tests` follows the contract task; it may land either side of this one.
+
+## t-arrivedat-tz-contract
+
+Contract half of the `arrivedAt` timezone-awareness question — the `api-contract.md` section plus decision-log Entry 15. No code, same shape as `t-conflict-code-contract`, and the same build-order gate: the contract is written and reviewed before `dev` opens `backend/app/models/stop.py`. WRITTEN AND AGREED, COMMIT PENDING at the time of this entry (2026-09-16) — it is `done` in the sense that the text exists and is settled, alongside the other uncommitted doc work in this pass. The ENFORCEMENT half is `t-stopcreate-field-contract`; this task deliberately touches no model.
+
+## t-stopcreate-field-contract
+
+MERGED FROM TWO PREVIOUSLY SEPARATE PIECES, DELIBERATELY. (1) `StopCreate.arrivedAt` becomes `AwareDatetime`. (2) The five bare fields — `name`, `lat`, `lng`, `arrivedAt`, `notes` — get real `description=` values. Same file, same class, and for `arrivedAt` the same field. The stronger reason is that the old description criterion INVERTS: it used to be that the description must NOT claim timezone-awareness, because the type did not enforce it; it now must STATE it. Landing the claim and its enforcement in separate diffs guarantees one commit where the prose and the type disagree, in whichever order they arrive. One diff.
+
+`lat` and `lng` need the GeoJSON `[lng, lat]` reversal warning that `StopOut` already carries — the wire order on this model is not the GeoJSON order the map endpoint emits. Copy the existing wording rather than re-deriving it; two spellings of one warning is Entry 5's failure mode.
+
+`StopOut` IS UNCHANGED BY THIS TASK. Its fields are already described, and its `arrivedAt` is a response field rather than a parse boundary.
+
+CO-LOCATION OWED IN `backend/app/models/stop.py` (Entry 4's rule; outside the `docs` agent's tree, so whoever implements carries it). The rationale that must live beside the field: the emitted JSON Schema is IDENTICAL whether `arrivedAt` is `AwareDatetime` or a bare `datetime`, so a future reader diffing the OpenAPI document will conclude the aware type buys nothing and relax it. That reading is TRUE AND BESIDE THE POINT. The difference is at parse time, not in the document — `AwareDatetime` rejects a naive value, a bare `datetime` accepts it and hands it to a `timestamptz` column, where the session `TimeZone` decides what hour it meant. A stop filed at the wrong hour is the failure, and it is invisible in the schema. That is precisely why the note belongs in the file and not only here.
+
+## t-stopcreate-tz-tests
+
+Test half of `t-stopcreate-field-contract`, blocked on it. CONTRACT-FIRST rather than implementation-following, because a stop recorded at the wrong hour is a data-integrity failure — spec Section 12's top priority tier. The assertions come from the contract text (`t-arrivedat-tz-contract`), not from whatever `stop.py` ends up doing. Per Entries 2 and 7a every assertion must be shown to fail against a mutant, and the mutation that matters is named in the co-location note above: relaxing `AwareDatetime` back to a bare `datetime` must turn a test red. If it does not, the guard is vacuous against the exact change someone will one day make for a real and plausible-sounding reason.
+
+## t-takenat-tz-question
+
+FILED, NOT SCOPED — no acceptance criteria, per the gate's rule for an open question. Created urgently for a bookkeeping reason rather than an implementation one: `docs/api-contract.md` and `docs/decision-log.md` both already cite this id, so until the entry existed those were dangling references.
+
+- Finding: `PhotoCreateForm.takenAt` accepts naive datetimes and carries no `description=`, while the `photos.taken_at` column is `timestamptz`.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: NONE. No route imports `PhotoCreateForm` — the model exists and nothing binds it.
+- Promotion trigger: when `POST /trips/{slug}/stops/{id}/photos` is scoped under `s-photo-upload-onedrive-sync`.
+
+WHY THIS MAY NOT GET THE SAME ANSWER AS `arrivedAt` — the reason it is filed separately instead of folded into Entry 15. `arrivedAt` is supplied by the app at capture, so "reject naive" is a satisfiable rule. `takenAt` comes from EXIF, where `DateTimeOriginal` IS NAIVE BY DESIGN: the UTC offset lives in a separate `OffsetTimeOriginal` tag that is frequently absent on imported, edited or re-encoded images. So "reject naive" may be unsatisfiable for a large share of real photos — the offset genuinely is not in the file — and the answer may instead be that the FRONTEND SUPPLIES THE DEVICE OFFSET AT CAPTURE, with the contract saying so. Do not close this by pointing at Entry 15 and copying the `arrivedAt` ruling across; the input is a different kind of input.
+
+## t-photoout-field-descriptions
+
+TRIGGERED DEBT, filed not scoped. 4 of `PhotoOut`'s 6 fields carry no `description=`, against CLAUDE.md's rule that every Pydantic field gets a real one — the descriptions feed the OpenAPI document, which feeds Kubb's generated frontend types and every agent's context.
+- Current consumer: none. No route publishes `PhotoOut` into OpenAPI yet.
+- Promotion trigger: the first route that publishes the model into the OpenAPI document — the photo endpoints under `s-photo-upload-onedrive-sync`. Nothing is wrong until the model is published; an undescribed field in an unpublished model reaches no client.
+
+NOT FILED, AND DELIBERATELY SO: `TripOut`, `BikeOut` and `StopOut` are complete and already guarded by ratchet tests. Do not open tasks for them — a task to fix something already fixed and pinned reads to the next person as if the ratchet is not trusted.
+
+## t-photocreateform-field-descriptions
+
+TRIGGERED DEBT, filed not scoped. 1 of `PhotoCreateForm`'s 3 fields carries no `description=`. Same model as `t-takenat-tz-question` but a different concern: that task is about what the field ACCEPTS, this one about what the document SAYS. They will likely be taken in one patch when the photo endpoints land, but the tz question is a contract ruling that must be made first and this one is not blocked on it.
+- Current consumer: none — no route imports `PhotoCreateForm`.
+- Promotion trigger: `POST /trips/{slug}/stops/{id}/photos` publishing the model into OpenAPI.
+
+## t-bikecreate-field-descriptions
+
+TRIGGERED DEBT, filed not scoped. 3 of `BikeCreate`'s 6 fields carry no `description=`.
+- Current consumer: none — no route publishes the model.
+- Promotion trigger: `POST /trips/{slug}/bikes` under `s-bike-management`.
+- `t-trip-metadata-endpoint` closed `BikeOut`'s descriptions and explicitly left `BikeCreate`/`BikePatch` with this story; that was the right call then and this entry is the follow-through, not a reopening.
+
+## t-bikepatch-field-descriptions
+
+TRIGGERED DEBT, filed not scoped. NONE of `BikePatch`'s 5 fields carries a `description=` — the worst-covered model in the contract.
+- Current consumer: none — no route publishes the model.
+- Promotion trigger: `PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`.
+- Worth a sentence when it is taken: on a PATCH model the description is where the partial-update semantics get stated (omitted means unchanged), which is exactly the thing a generated client cannot infer from the type.
+
+## t-bare-409-envelope-bypass
+
+`qa` finding from `t-conflict-code-tests`. Since `7ca82ab` the `409` row in `_STATUS_TO_CODE` is keyed on status, so a bare `HTTPException(409)` renders a well-formed `CONFLICT` envelope with `message: "Conflict"` — Starlette's default phrase — without ever passing through `ApiError.conflict`. THE LEAK BOUNDARY LIVES AT THE CLASSMETHOD: the contract's rule that a conflict message carries no value from the conflicting record is enforced where the message is built, and a bare raise skips it. The envelope looks correct, which is the whole difficulty.
+- Gate classification: TRIGGERED DEBT (Gate 3).
+- Current consumer: none. Nothing raises a 409 today, and the only `HTTPException` raise site anywhere in `backend/app/` is the 405 at `main.py:189`.
+- Promotion trigger: the first 409 raised anywhere other than `ApiError.conflict`.
+- DO NOT "FIX" THIS BY REMOVING THE MAPPING ROW. The row is the contract (Entry 14) and it is also what makes `ApiError(409, CONFLICT, ...)` constructible at all — `__init__` checks the pair against `code_for_status`. Whatever this becomes, it is a guard at the raise site, not a retreat from the mapping.
+
+## t-errors-docstring-dangling-line
+
+Cosmetic. The constructor-list reflow left a dangling line in `backend/app/core/errors.py`'s module docstring.
+- Gate classification: ORDINARY DEBT (Gate 4). A docstring has no runtime path — nothing imports, executes or serves it, so no behaviour depends on it.
+- Current consumer: none. Promotion trigger: none.
+- Fold it into the next edit that touches that docstring rather than spending a patch on it. Note `t-errors-docstring-tense` was a DIFFERENT defect in the same docstring — it described future `security.py` behaviour as present — and is closed; this one is purely a stray line left by formatting.
+
+## t-qa-mutation-scratch-tree
+
+THE TRIGGER, STATED PRECISELY BECAUSE IT IS EASY TO MISREAD: an orchestrator-instructed mutation experiment on `backend/app/data/db.py`. `qa` mutated the file as dispatched, restored it correctly, and reported plainly what it had done. THE RULE EXISTS BECAUSE THE GUARANTEE WAS HELD BY DISPATCH WORDING RATHER THAN BY ANYTHING STRUCTURAL — NOT BECAUSE AN AGENT MISBEHAVED. Nobody is being corrected here; the process is. Anyone reading this later should not infer a trust problem with the `qa` agent, because there was not one.
+
+- Gate classification: CURRENTLY OBSERVABLE (Gate 2). The mutation happened, in the real working tree, on a real file. `qa` is described throughout the roster as having no edit access, but its grant is Read/Bash/Grep and Bash writes files — so the only thing standing between "no edit access" and an edited file was how the dispatch happened to be worded.
+- Resolution: `.claude/agents/qa.md` now says mutation experiments run in a scratch tree — a `git archive HEAD` copy or equivalent — never in the working tree. Written, uncommitted at the time of this entry.
+
+DROPPING BASH FROM THE GRANT WAS CONSIDERED AND REJECTED. It is the one construction that would make the guarantee structural rather than textual, and it is unaffordable: `qa`'s entire job is independent verification, which means running `pytest`, standing up real uvicorn, and running every other validation command. An agent that cannot execute anything cannot verify anything — it would be reduced to reading the same code `dev` read and agreeing with it, which is the exact failure mode a separate `qa` agent exists to prevent. So the boundary stays textual on purpose, and this story exists because a textual boundary is worth writing down rather than assuming.
+
+THE HOOK — the third option, neither prose nor removing Bash — was deliberately left OUT of this patch and filed as `t-qa-mutation-hook`. It lives in settings, not in `qa.md`, so it is a different file and a different patch; this task shipped the prose rule only.
+
+## t-qa-mutation-hook
+
+The structural version of the rule `t-qa-mutation-scratch-tree` shipped as prose. `.claude/agents/qa.md` now forbids mutating the live working tree (committed `0b5bcde`), but that guarantee is words — a `PreToolUse` hook matching write-shaped Bash commands against the project path would make it ENFORCED rather than REQUESTED. It is not an edit to `qa.md`: hooks live in settings, which is why it was left out of that patch rather than overlooked.
+
+GATE TRIAGE 2026-09-16 — `gate: triggered`.
+- Finding: the no-live-tree-mutation guarantee for `qa` is carried entirely by prose in `qa.md`. `qa`'s grant is Read/Bash/Grep, and Bash writes files.
+- Evidence: the prose rule IS the control today and it has not yet failed. It was followed correctly on its first outing — the `qa` run verifying `t-conflict-code-impl` used detached worktrees and scratch copies, removed them, and reported a clean `git status --porcelain`.
+- Gate classification: TRIGGERED DEBT (Gate 3). The control exists and is working; replacing a working control is not a fix.
+- Current consumer: none — no run has breached the prose rule.
+- Promotion trigger: the first time a `git status --porcelain` check after a `qa` dispatch comes back non-empty, OR a QA report admits a live-tree mutation. **ONE such failure is sufficient — do not wait for a second, and do not treat the first as an anomaly worth re-testing.** Prose either holds or it doesn't; a single breach is the whole evidence this classification was waiting on.
+
+WHY PROSE WAS TRIED FIRST, WHICH IS THE PART WORTH KEEPING. The rule permits an experiment that is genuinely valuable: deliberately breaking a fix to prove a test catches its absence. That is mutation testing, and Entry 7 is the record of it catching two real defects a green suite missed — it is not a practice to design a control against. A hook that is too blunt blocks the legitimate case along with the illegitimate one, and a `qa` agent that cannot mutate anything anywhere cannot do the thing it is most valuable for. So the hook has to distinguish "writes inside the project directory" from "writes in a scratch tree" — and that distinction is easy to state in prose and hard to match on a command line (a path can be relative, constructed in a variable, reached after a `cd`, or written by a tool invoked with its own `-C`/`--work-tree`). THAT is the reason the cheaper control went first: the expensive one is not merely more work, it is harder to make CORRECT, and an incorrect version fails closed against the useful case. Not reluctance, and not "prose is good enough" — a judgment that the precise control is the harder one to build.
+
+## t-docs-agent-unscoped-grant
+
+The `docs` agent is described everywhere as `docs/`-only, but its grant is Edit/Write with no path scoping — the same class of prose-only boundary as `t-qa-mutation-scratch-tree`, through a different channel. `qa`'s gap is "no edit access, but Bash writes files"; this one is "edit access, but nothing bounds where."
+
+THE DOCUMENTATION HALF IS ALREADY CLOSED, THE GRANT HALF IS NOT. `CLAUDE.md`'s roster row was corrected in `0b5bcde` to match `docs.md` and spec Section 11, so there is no longer a contradiction between the three places that describe this agent's scope — they now agree that it is `docs/` plus doc comments co-located with code. What remains is only that the tool grant does not encode that agreement.
+
+GATE TRIAGE 2026-09-16 — `gate: ordinary`.
+- Finding: `docs`'s Edit/Write grant is not scoped to `docs/`; the boundary is prose in three now-consistent places.
+- Evidence: no `docs` run has written outside `docs/`. The boundary has held every time it has been exercised, and the documentation contradiction that might have caused a good-faith breach is resolved.
+- Gate classification: ORDINARY DEBT (Gate 4). `Could break ≠ is broken`.
+- Current consumer: none.
+- **Promotion trigger: none, deliberately.** Not "the first out-of-scope write" — unlike `t-qa-mutation-hook`, where a live-tree mutation is detectable by a `git status --porcelain` check that is already part of the dispatch loop, nothing currently watches `docs`'s writes, so a trigger phrased as "the first breach" names an event no one would observe. Inventing an unobservable trigger to make the item look actionable is worse than recording none: it reads as coverage the backlog does not have. If this is ever promoted it will be by a decision to scope agent grants generally, not by this item firing.
+
+RELATED, NOT DUPLICATE: decision-log Entry 12 records that widening `docs` to `.claude/**` was REJECTED as self-modifying permissions. That is the opposite direction — Entry 12 refused to make this grant wider; this item observes it is not explicitly narrow. Do not read Entry 12 as having settled the scoping question, and do not reopen its ruling on the way to closing this one.

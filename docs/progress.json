@@ -12,6 +12,7 @@
     { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record (script built, human must run it)", "status": "in_progress" },
     { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1)", "status": "done" },
     { "id": "s-finding-triage-gate", "milestoneId": "m1-foundations", "title": "Finding triage gate — classify discovered issues before implementing them", "status": "done" },
+    { "id": "s-agent-tool-boundaries", "milestoneId": "m1-foundations", "title": "Agent tool boundaries — prose guarantees the tool grant doesn't enforce", "status": "in_progress" },
 
     { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
@@ -54,19 +55,21 @@
     { "id": "t-ruff-format-gate", "storyId": "s-data-layer-foundation", "title": "Decide whether ruff format joins the validation gate", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
     { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-errors-docstring-tense", "storyId": "s-data-layer-foundation", "title": "errors.py docstring described future security.py behaviour", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "in_progress", "agent": "dev", "blockers": [], "gate": "observable" },
+    { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "done", "agent": "dev", "blockers": [], "gate": "observable" },
     { "id": "t-access-log-slug-exposure", "storyId": "s-data-layer-foundation", "title": "uvicorn access log records the trip slug from the request URL", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
     { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-bike-order-collation", "storyId": "s-data-layer-foundation", "title": "Bike ordering test collation-safety", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-head-on-get-routes", "storyId": "s-data-layer-foundation", "title": "Every GET path also answers HEAD, via a second schema-excluded registration of the same handler", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
-    { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
+    { "id": "t-add-endpoint-head-convention", "storyId": "s-data-layer-foundation", "title": "add-endpoint SKILL.md step 4 — a GET route gets a HEAD sibling registration", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
 
     { "id": "t-conflict-code-contract", "storyId": "s-data-layer-foundation", "title": "api-contract.md CONFLICT/409 rule + decision-log Entry 14 + tracker entries", "status": "done", "agent": "docs", "blockers": [] },
-    { "id": "t-conflict-409-test-repoint", "storyId": "s-data-layer-foundation", "title": "Re-point the two 409 placeholder assertions in test_error_envelope.py to 418", "status": "not_started", "agent": "test-writer", "blockers": [] },
-    { "id": "t-conflict-code-impl", "storyId": "s-data-layer-foundation", "title": "models/common.py + core/errors.py — CONFLICT member and 409 status mapping", "status": "not_started", "agent": "dev", "blockers": [] },
-    { "id": "t-conflict-code-tests", "storyId": "s-data-layer-foundation", "title": "Tests for the CONFLICT member, its 409 mapping and the ApiError pairing backstop", "status": "not_started", "agent": "test-writer", "blockers": [] },
+    { "id": "t-conflict-409-test-repoint", "storyId": "s-data-layer-foundation", "title": "Re-point the two 409 placeholder assertions in test_error_envelope.py to 418", "status": "done", "agent": "test-writer", "blockers": [] },
+    { "id": "t-conflict-code-impl", "storyId": "s-data-layer-foundation", "title": "models/common.py + core/errors.py — CONFLICT member and 409 status mapping", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-conflict-code-tests", "storyId": "s-data-layer-foundation", "title": "Tests for the CONFLICT member, its 409 mapping and the ApiError pairing backstop", "status": "done", "agent": "test-writer", "blockers": [] },
+    { "id": "t-bare-409-envelope-bypass", "storyId": "s-data-layer-foundation", "title": "A bare HTTPException(409) now renders a CONFLICT envelope, bypassing ApiError.conflict and its leak boundary", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-errors-docstring-dangling-line", "storyId": "s-data-layer-foundation", "title": "errors.py module docstring carries a dangling line left by the constructor-list reflow", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-finding-triage-gate-doc", "storyId": "s-finding-triage-gate", "title": "docs/finding-triage-gate.md + decision-log Entry 12 + tracker entries", "status": "done", "agent": "docs", "blockers": [] },
     { "id": "t-claude-md-triage-gate", "storyId": "s-finding-triage-gate", "title": "CLAUDE.md — cite the triage gate and record governance-file ownership", "status": "done", "agent": "orchestrator", "blockers": [] },
@@ -75,14 +78,28 @@
 
     { "id": "t-stops-405-doc-revisit", "storyId": "s-stop-crud", "title": "Revisit DELETE /stops 404-vs-405 claim once stops router registers", "status": "done", "agent": "docs", "blockers": [], "gate": "triggered" },
     { "id": "t-stops-list-endpoint", "storyId": "s-stop-crud", "title": "GET /api/trips/{slug}/stops — StopOut[] handler + stops repository", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-arrivedat-tz-contract", "storyId": "s-stop-crud", "title": "api-contract.md arrivedAt timezone-awareness section + decision-log Entry 15", "status": "done", "agent": "docs", "blockers": [] },
+    { "id": "t-stopcreate-field-contract", "storyId": "s-stop-crud", "title": "models/stop.py — StopCreate.arrivedAt becomes AwareDatetime and all five fields get description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-stopcreate-tz-tests", "storyId": "s-stop-crud", "title": "Contract-first tests for StopCreate.arrivedAt timezone-awareness and the five field descriptions", "status": "not_started", "agent": "test-writer", "blockers": ["t-stopcreate-field-contract"], "gate": "triggered" },
     { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "not_started", "agent": "dev", "blockers": [] },
     { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
 
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
 
+    { "id": "t-takenat-tz-question", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoCreateForm.takenAt accepts naive datetimes against a timestamptz column — open question, filed not scoped", "status": "not_started", "agent": "ba", "blockers": [], "gate": "triggered" },
+    { "id": "t-photoout-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoOut — 4 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-photocreateform-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoCreateForm — 1 of 3 fields carries no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+
+    { "id": "t-bikecreate-field-descriptions", "storyId": "s-bike-management", "title": "BikeCreate — 3 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-bikepatch-field-descriptions", "storyId": "s-bike-management", "title": "BikePatch — none of its 5 fields carries a description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+
+    { "id": "t-qa-mutation-scratch-tree", "storyId": "s-agent-tool-boundaries", "title": ".claude/agents/qa.md — mutation experiments run in a scratch tree, never the working tree", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "observable" },
+    { "id": "t-qa-mutation-hook", "storyId": "s-agent-tool-boundaries", "title": "PreToolUse hook matching write-shaped Bash commands against the project path — enforce qa.md's scratch-tree rule structurally", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
+    { "id": "t-docs-agent-unscoped-grant", "storyId": "s-agent-tool-boundaries", "title": "docs agent's Edit/Write grant is not scoped to docs/ — the docs/-only boundary is prose", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "ordinary" },
+
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
-  "currentTask": "t-error-log-parameter-redaction",
-  "lastUpdated": "2026-09-15T21:30:00Z"
+  "currentTask": null,
+  "lastUpdated": "2026-09-16T00:00:01Z"
 }
