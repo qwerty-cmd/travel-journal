@@ -36,6 +36,14 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.tables import stops
+from app.models.map import (
+    LineStringGeometry,
+    MapFeatureCollection,
+    PointGeometry,
+    StopFeature,
+    StopFeatureProperties,
+    TrailFeature,
+)
 from app.models.stop import StopCreate, StopOut
 
 
@@ -219,3 +227,50 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
         ),
         True,
     )
+
+
+async def map_features(session: AsyncSession, trip_id: str) -> MapFeatureCollection:
+    """
+    The GeoJSON FeatureCollection for ``GET /trips/{slug}/map``.
+
+    Fetches only the columns the map needs (no ``notes``, no
+    ``location_source``), ordered by ``arrived_at`` — that ordering is
+    **load-bearing** here, unlike ``list_by_trip``, because the trail's
+    coordinate list must be chronological.
+
+    Building the response models here rather than in the route keeps the
+    handler a one-liner and keeps every column name in ``data/``.
+    """
+    statement = (
+        select(
+            stops.c.id,
+            stops.c.name,
+            stops.c.lat,
+            stops.c.lng,
+            stops.c.arrived_at,
+        )
+        .where(stops.c.trip_id == trip_id)
+        .order_by(stops.c.arrived_at, stops.c.id)
+    )
+
+    rows = (await session.execute(statement)).all()
+
+    features: list[StopFeature | TrailFeature] = [
+        StopFeature(
+            id=row.id,
+            geometry=PointGeometry(coordinates=[row.lng, row.lat]),
+            properties=StopFeatureProperties(name=row.name, arrivedAt=row.arrived_at),
+        )
+        for row in rows
+    ]
+
+    if len(rows) >= 2:
+        features.append(
+            TrailFeature(
+                geometry=LineStringGeometry(
+                    coordinates=[[row.lng, row.lat] for row in rows]
+                ),
+            )
+        )
+
+    return MapFeatureCollection(features=features)
