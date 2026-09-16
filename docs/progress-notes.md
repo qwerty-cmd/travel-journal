@@ -650,13 +650,32 @@ TRIGGERED DEBT, filed not scoped. 3 of `BikeCreate`'s 6 fields carry no `descrip
 - Promotion trigger: `POST /trips/{slug}/bikes` under `s-bike-management`.
 - `t-trip-metadata-endpoint` closed `BikeOut`'s descriptions and explicitly left `BikeCreate`/`BikePatch` with this story; that was the right call then and this entry is the follow-through, not a reopening.
 
+CLOSEOUT 2026-09-17. **`t-bikepatch-field-descriptions` WAS ABSORBED INTO THIS TASK** — one patch, one review, both models. Both ids stay in the tracker and both read `done`; the patch row's title records the absorption and points here. Two ids for one patch is the failure already recorded as `t-405-router-route-collapse`, and one id silently vanishing is worse, so neither was deleted and no merged id was minted.
+
+`backend/app/models/bike.py` ONLY. All 6 `BikeCreate` fields and all 5 `BikePatch` fields now carry a `description=`. `BikeOut` deliberately untouched — it is already complete and already has its own ratchet in `test_trip_metadata_endpoint.py`; a second copy here would be two places to update.
+
+Suite 464 → **474**, all passing. The +10 are ratchet tests in the new `backend/tests/unit/test_bike_model.py`. **No existing test needed editing** — the patch is description-only and zero-behaviour-change; no shape, status code or handler moved.
+
+THE SUBSTANCE, which is the part worth keeping: each `BikePatch` description states that **omitting the field leaves the stored value alone, and that omitting is not the same as sending the field explicitly as null**. `specs` goes one further — to clear it you send an **empty string**, "that is how 'nothing written yet' is spelled, never null". `docs/api-contract.md:185` is the reason this had to be said in prose: a generated client sees `str | None` and can infer none of it, so the description is the only carrier. That is why a per-field assertion on the wording exists rather than a bare presence check.
+
+RATCHET DESIGN, recorded so nobody weakens it later:
+- It sweeps `model_fields` rather than a list of field names, so the **next** undescribed field added to either model fails too.
+- It enforces a **25-character floor**, so a stub like `description="make"` cannot satisfy a bare presence check.
+- It asserts against the **served `app.openapi()` document**, not `model_json_schema()` — for `str | None` the property is an `anyOf`, and a description nested inside one of the branches would never reach Kubb. The document is the only thing Kubb reads, so it is the only thing worth asserting on.
+- It separately asserts both models are present in `components.schemas`, so a dropped schema raises **as itself** instead of surfacing as a `KeyError` that reads like a missing description.
+
+**QA DID NOT INDEPENDENTLY VERIFY THIS TASK.** `dev` and its chained `test-writer` finished, then a session rate limit killed the pipeline before `qa` and `docs` ran. The orchestrator verified the six acceptance criteria directly in `qa`'s place: `BikeCreate` 6 properties, `BikePatch` 5, `BikeOut` 6, every one carrying a non-empty `description` in the served document; full suite 474 passed. It was accepted on the reasoning that the ratchet's assertions are direct and unmediated — string length, substring presence, a dict lookup on the served document — with no enumeration step that could silently pass vacuously. **State it plainly: that is a weaker check than an adversarial `qa` pass**, and this record says so rather than implying a clean signoff. If something here later turns out wrong, the missing adversarial pass is the first place to look.
+
+No API contract change — no endpoint or shape moved, so `docs/api-contract.md` was not touched. No decision-log entry: nothing was contested.
+
 ## t-bikepatch-field-descriptions
 
 TRIGGERED DEBT, filed not scoped. NONE of `BikePatch`'s 5 fields carries a `description=` — the worst-covered model in the contract.
 - Current consumer: none — no route publishes the model.
 - Promotion trigger: `PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`.
 - Worth a sentence when it is taken: on a PATCH model the description is where the partial-update semantics get stated (omitted means unchanged), which is exactly the thing a generated client cannot infer from the type.
-- TRIGGER FIRED 2026-09-16, TASK STILL OPEN. `t-bikes-patch-endpoint` binds `BikePatch` as the request body of `PATCH /trips/{slug}/bikes/{id}`, so the model is now published into the OpenAPI document and reaches the generated client with all five fields undescribed. This is no longer filed-not-scoped debt with no consumer; it is a promotion candidate with a live one.
+- CLOSED 2026-09-17, **ABSORBED INTO `t-bikecreate-field-descriptions`** and shipped in that one patch — both models' descriptions landed together in `backend/app/models/bike.py` with a shared ratchet. This id is kept and marked `done` rather than deleted; the closeout, including the "omitted is not null" wording and the `specs`-clears-with-empty-string rule, lives under `## t-bikecreate-field-descriptions`. Read it there, not here.
+- TRIGGER FIRED 2026-09-16, TASK STILL OPEN AT THE TIME. `t-bikes-patch-endpoint` binds `BikePatch` as the request body of `PATCH /trips/{slug}/bikes/{id}`, so the model is now published into the OpenAPI document and reaches the generated client with all five fields undescribed. This is no longer filed-not-scoped debt with no consumer; it is a promotion candidate with a live one.
 
 ## t-photo-upload-endpoint
 

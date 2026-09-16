@@ -102,8 +102,8 @@
 
     { "id": "t-bikes-create-endpoint", "storyId": "s-bike-management", "title": "POST /api/trips/{slug}/bikes — 201 new / 200 replay / 409 cross-trip", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-bikes-patch-endpoint", "storyId": "s-bike-management", "title": "PATCH /api/trips/{slug}/bikes/{id} — partial update, last-write-wins", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-bikecreate-field-descriptions", "storyId": "s-bike-management", "title": "BikeCreate — 3 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
-    { "id": "t-bikepatch-field-descriptions", "storyId": "s-bike-management", "title": "BikePatch — none of its 5 fields carries a description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-bikecreate-field-descriptions", "storyId": "s-bike-management", "title": "BikeCreate — 3 of 6 fields carry no description= — shipped carrying t-bikepatch-field-descriptions absorbed into the same patch", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-bikepatch-field-descriptions", "storyId": "s-bike-management", "title": "BikePatch — none of its 5 fields carries a description= — ABSORBED INTO t-bikecreate-field-descriptions and shipped there; id kept deliberately, no merged id minted", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
 
     { "id": "t-map-geojson-endpoint", "storyId": "s-map-geojson-endpoint", "title": "GET /api/trips/{slug}/map — GeoJSON FeatureCollection with stop pins and trail", "status": "done", "agent": "dev", "blockers": [] },
 
@@ -117,5 +117,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-17T22:30:00Z"
+  "lastUpdated": "2026-09-17T23:15:00Z"
 }
