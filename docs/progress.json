@@ -7,7 +7,7 @@
   ],
   "stories": [
     { "id": "s-session0-scaffolding", "milestoneId": "m1-foundations", "title": "Session 0 — architecture scaffolding", "status": "done" },
-    { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO)", "status": "done" },
+    { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO)", "status": "in_progress" },
     { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon, R2, Graph, Container Apps, budget alert", "status": "not_started" },
     { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record (script built, human must run it)", "status": "in_progress" },
     { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1)", "status": "done" },
@@ -37,6 +37,8 @@
   "tasks": [
     { "id": "t-session0-scaffolding", "storyId": "s-session0-scaffolding", "title": "Session 0 output", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-local-dev-env-setup", "storyId": "s-local-dev-env", "title": "docker-compose + Dockerfile + backend skeleton", "status": "done", "agent": "orchestrator", "blockers": [] },
+    { "id": "t-frontend-build-order", "storyId": "s-local-dev-env", "title": "frontend/package.json — build script runs tsc before vite, failing on the vite-plugin-generated routeTree.gen.ts", "status": "done", "agent": "dev", "blockers": [], "gate": "broken" },
+    { "id": "t-dockerignore-route-tree", "storyId": "s-local-dev-env", "title": ".dockerignore omits frontend/src/routeTree.gen.ts — a dev working tree leaks a host-generated route tree into the frontend-build stage", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
     { "id": "t-error-envelope-model", "storyId": "s-api-contract", "title": "backend/app/models/common.py — ErrorCode, ErrorDetail, ErrorEnvelope", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-trip-model", "storyId": "s-api-contract", "title": "backend/app/models/trip.py — Access, TripOut", "status": "done", "agent": "orchestrator", "blockers": [] },
     { "id": "t-stop-model", "storyId": "s-api-contract", "title": "backend/app/models/stop.py — LocationSource, StopCreate, StopOut", "status": "done", "agent": "orchestrator", "blockers": [] },
@@ -108,5 +110,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-16T23:00:00Z"
+  "lastUpdated": "2026-09-16T23:45:00Z"
 }
