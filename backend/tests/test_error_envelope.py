@@ -1133,18 +1133,26 @@ def test_spa_delete_on_the_registered_stops_path_is_405(spa_client: TestClient) 
 
     `Allow` is asserted as an exact set for the reason its `/api/health` sibling
     gives: a substring check survives a hardcoded string, a set that lost `HEAD`
-    and a set that grew a verb the path does not accept. `{"GET", "HEAD"}` is the
-    stops path's real verb set today — `HEAD` from the second, schema-excluded
-    registration of the same handler. When `POST /trips/{slug}/stops` lands this
-    set becomes `{"GET", "HEAD", "POST"}` and this assertion is *supposed* to
-    fail; that is the check doing its job, not a stale test.
+    and a set that grew a verb the path does not accept. `{"GET", "HEAD", "POST"}`
+    is the stops path's real verb set today — `HEAD` from the second,
+    schema-excluded registration of the list handler, `POST` from the create
+    endpoint (`t-stops-create-endpoint`).
+
+    **The `POST` was added by observation, not by prediction (2026-09-16.)** The
+    previous revision said this set was *supposed* to fail when the create
+    endpoint landed, and it did: the failure read
+    `assert {'GET', 'HEAD', 'POST'} == {'GET', 'HEAD'}`. The new value is the set
+    the running app actually returned in that message — the same discipline
+    entry 6 was written for, where the documented `405` example was assumed
+    rather than run and was a `404` for weeks. Nothing here was reasoned out from
+    the router's registrations.
     """
     response = spa_client.delete("/api/trips/some-slug/stops")
 
     assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     detail = assert_envelope(response)
     assert detail.code is ErrorCode.METHOD_NOT_ALLOWED
-    assert allow_verbs(response) == {"GET", "HEAD"}
+    assert allow_verbs(response) == {"GET", "HEAD", "POST"}
 
 
 def test_spa_wrong_method_on_a_real_api_route_is_still_405(spa_client: TestClient) -> None:

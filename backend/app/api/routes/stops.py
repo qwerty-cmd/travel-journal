@@ -1,26 +1,44 @@
 """
-Stop routes — ``GET /api/trips/{slug}/stops``, the journal's actual content.
+Stop routes — ``GET``/``POST /api/trips/{slug}/stops``, the journal's actual content.
 
-The handler below is deliberately thin, the same shape ``trips.py`` set: the
+The handlers below are deliberately thin, the same shape ``trips.py`` set: the
 slug dependency has already resolved the trip, and the repository layer owns
 every column name and builds every statement. Nothing here names a column or
 imports SQLAlchemy.
+
+The two handlers declare **different dependencies**, and that difference is the
+whole of the access model on this path: ``GET`` takes ``require_trip_access``
+(either slug — it is a read), ``POST`` takes ``require_rider_access`` (the rider
+slug only, 403 on the viewer's). They are otherwise identically shaped, so the
+dependency is the only thing standing between a read-only guest and a write.
 """
 
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
-from app.core.security import TripContext, require_trip_access
+from app.core.errors import ApiError
+from app.core.security import TripContext, require_rider_access, require_trip_access
 from app.data.db import SessionDep
-from app.data.repositories.stops import list_by_trip
+from app.data.repositories.stops import StopIdOnAnotherTrip, create, list_by_trip
 from app.models.common import ErrorEnvelope
-from app.models.stop import StopOut
+from app.models.stop import StopCreate, StopOut
 
 # GET/POST /trips/{slug}/stops — list/create stops (POST is rider-slug only,
-# 403 on viewer slug). POST lands with its own task.
+# 403 on viewer slug).
 router = APIRouter(prefix="/trips/{slug}/stops", tags=["stops"])
+
+# Shown when the id in the body is already a stop on a different trip. Says that
+# the id is taken and that nothing was stored, and **nothing else** — not the
+# other trip's slug, id or name, not the other stop's fields. A 409 already tells
+# the caller the id exists somewhere; anything more is disclosure of a record the
+# caller's link does not authorise (decision-log Entry 14). The raise site holds
+# that by never reading the conflicting row.
+ID_ALREADY_USED_MESSAGE = (
+    "This stop couldn't be saved: its id is already in use on another trip. Nothing was "
+    "changed here. Sending it again unchanged will keep failing — it needs a new id."
+)
 
 
 @router.get(
@@ -93,3 +111,118 @@ async def list_stops(
 # keeps the document to the one operation `docs/api-contract.md` describes.
 # (Measured on FastAPI 0.141.1; decision-log Entry 11.)
 router.add_api_route("", list_stops, methods=["HEAD"], include_in_schema=False)
+
+
+# No HEAD sibling here, and that is not an omission: HEAD is GET without a body
+# (RFC 9110 §9.3.2), so the convention two blocks up is a property of *read*
+# routes. A HEAD that ran a create would store a stop and throw the response
+# away.
+@router.post(
+    "",
+    status_code=HTTPStatus.CREATED,
+    summary="Add a stop to a trip",
+    response_description="The stop as stored — the one just created (201), or the one "
+    "already stored under this id (200).",
+    responses={
+        HTTPStatus.OK: {
+            "model": StopOut,
+            "description": "**A replay, not a second stop.** This id is already a stop on "
+            "this trip, so nothing was created and the **stored** record is returned "
+            "unchanged — even where this request's body differs from it. A success, not an "
+            "error: the offline queue can resend a create it never saw confirmed, any number "
+            "of times, and reconcile against whichever attempt landed.",
+        },
+        HTTPStatus.FORBIDDEN: {
+            "model": ErrorEnvelope,
+            "description": "The slug resolved, but it is the trip's **viewer** slug — a "
+            "read-only link. Deliberately not a 404: the link genuinely works, just not for "
+            "writes. Nothing was created.",
+        },
+        HTTPStatus.NOT_FOUND: {
+            "model": ErrorEnvelope,
+            "description": "No trip has this slug. Deliberately the same answer for a "
+            "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
+            "'Access control: 403 and 404 are different answers'.",
+        },
+        HTTPStatus.CONFLICT: {
+            "model": ErrorEnvelope,
+            "description": "The `id` in the body already belongs to a stop on a **different** "
+            "trip, so this is not a replay. Nothing was created, and nothing about the "
+            "conflicting record is disclosed — not in the body, not in the message. "
+            "Never-retry for the offline queue: the same id will conflict on every future "
+            "attempt, so the stop needs a new one.",
+        },
+        HTTPStatus.UNPROCESSABLE_ENTITY: {
+            "model": ErrorEnvelope,
+            "description": "The body failed schema validation — a missing or mistyped field, "
+            "a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC "
+            "offset**. That last one is server-enforced only; the generated client types it "
+            "as a plain string and cannot catch it.",
+        },
+    },
+    description="""
+**Context.** This is how a stop gets into the journal, and the one write the app
+makes most: the rider taps "Add stop" on the Stuart Hwy, often with no signal, so
+the stop is captured on the device with an id the *client* generates and queued
+until there is a connection. Rider slug only — a viewer link can read this trip's
+stops but not add one. Task `t-stops-create-endpoint`.
+
+**How it works.** `{slug}` is resolved by `require_rider_access`, which raises a
+404 if no trip has this slug and a 403 if it is the trip's viewer slug; the stop
+is stored against the `trip_id` that dependency resolved, never against anything
+in the path or the body. `StopCreate.id` then decides one of **three** branches
+(`docs/api-contract.md`, "Idempotency"; decision-log Entry 14):
+
+- an **unseen** id creates the stop — `201`, body is the new stop;
+- an id **already on this trip** is a replay — `200`, body is the **stored**
+  record, and a body that differs from the stored one changes nothing;
+- an id that exists **on a different trip** is not a replay — `409` /
+  `CONFLICT`, nothing is created, and nothing about the other record is
+  disclosed.
+
+The replay is matched on `(trip_id, id)` rather than on the id alone, so no
+other trip's stop can be returned through this trip's slug, and the third branch
+is decided by a check *before* the insert rather than by letting the insert fail
+— a driver error would render `500` / `INTERNAL_ERROR`, which the offline queue
+retries forever.
+
+`arrivedAt` is the time the rider arrived, not the time this request was
+received, and its **UTC offset is required**: a naive value is a `422`, because a
+rider crossing timezones has no offset worth guessing (decision-log Entry 15).
+
+**Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,
+`GET /api/trips/{slug}` is the trip header above it (its `access` field is the
+UI hint for whether to offer this write at all),
+`POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created
+here, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.
+""",
+)
+async def create_stop(
+    context: Annotated[TripContext, Depends(require_rider_access)],
+    session: SessionDep,
+    stop: StopCreate,
+    response: Response,
+) -> StopOut:
+    """
+    Create the stop, or hand back the one this id already named on this trip.
+
+    Two statuses from one route, which FastAPI cannot declare twice: `201` is the
+    route's `status_code=`, and the replay's `200` is set on `response` here, at
+    runtime. It is also declared in `responses=` above — without that the
+    generated client would not know `200` is a legal success on this operation.
+
+    The repository decides *which* branch; this handler only maps the branch onto
+    a status. `StopIdOnAnotherTrip` carries no data, and the message below takes
+    nothing from the conflicting record.
+    """
+    try:
+        created_stop, created = await create(session, context.trip.id, stop)
+    except StopIdOnAnotherTrip:
+        # `from None`: the chained context would be an internal exception in the
+        # log for an ordinary, expected client condition.
+        raise ApiError.conflict(ID_ALREADY_USED_MESSAGE) from None
+
+    if not created:
+        response.status_code = HTTPStatus.OK
+
+    return created_stop
