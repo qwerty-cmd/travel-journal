@@ -97,7 +97,7 @@
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
 
     { "id": "t-takenat-tz-question", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoCreateForm.takenAt accepts naive datetimes against a timestamptz column — open question, filed not scoped", "status": "not_started", "agent": "ba", "blockers": [], "gate": "triggered" },
-    { "id": "t-photoout-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoOut — 4 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-photoout-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoOut — 4 of 6 fields carry no description= — trigger fired at a628259, all 6 now described, takenAt deliberately makes no timezone claim", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-photocreateform-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoCreateForm — 1 of 3 fields carries no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
 
     { "id": "t-bikes-create-endpoint", "storyId": "s-bike-management", "title": "POST /api/trips/{slug}/bikes — 201 new / 200 replay / 409 cross-trip", "status": "done", "agent": "dev", "blockers": [] },
@@ -117,5 +117,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-17T23:15:00Z"
+  "lastUpdated": "2026-09-17T23:59:00Z"
 }
