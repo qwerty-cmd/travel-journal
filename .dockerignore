@@ -1,0 +1,32 @@
+# Build context exclusions. Mirrors .gitignore: nothing secret, and nothing
+# host-shaped, may enter an image layer.
+
+# Secrets — `COPY backend/ ./backend/` would otherwise bake .env into a layer
+**/.env
+**/.env.local
+**/*.key
+**/graph_token.json
+
+# Python — host venvs are Windows-shaped (Scripts/, no bin/) and would land on
+# top of the Linux venv that `uv sync` builds, breaking the uvicorn CMD
+**/.venv*
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+
+# Node / frontend — node_modules is installed fresh by `npm ci`; dist is built
+# in the frontend-build stage and arrives via COPY --from, which .dockerignore
+# does not affect
+**/node_modules
+frontend/dist
+frontend/.vite
+
+# Local service data
+minio-data/
+postgres-data/
+
+# Repo / tooling — not needed to build or run
+.git
+.gitignore
+.claude
