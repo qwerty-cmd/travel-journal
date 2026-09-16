@@ -84,8 +84,10 @@
     { "id": "t-stopcreate-field-contract", "storyId": "s-stop-crud", "title": "models/stop.py — StopCreate.arrivedAt becomes AwareDatetime and all seven fields get description=", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-stopcreate-tz-tests", "storyId": "s-stop-crud", "title": "Contract-first tests for StopCreate.arrivedAt timezone-awareness and the seven field descriptions", "status": "done", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
+    { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "done", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
+    { "id": "t-route-audit-non-apiroute-gap", "storyId": "s-stop-crud", "title": "test_route_dependency_audit._walk silently drops any /api route that is not an APIRoute", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
+    { "id": "t-route-audit-new-verb-double-failure", "storyId": "s-stop-crud", "title": "A new HTTP verb fails test_route_dependency_audit twice, and the first message is misleading", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-trip-metadata-endpoint", "storyId": "s-trip-metadata-endpoint", "title": "GET /api/trips/{slug} — TripOut handler + bikes repo", "status": "done", "agent": "dev", "blockers": [] },
 
@@ -110,5 +112,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-16T23:45:00Z"
+  "lastUpdated": "2026-09-17T18:30:00Z"
 }

@@ -215,6 +215,43 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 MOVED TO `s-stop-crud` 2026-09-15, `gate: triggered` UNCHANGED. The task was always filed against a promotion trigger that lives in that story ("the FIRST wired write endpoint"), and it sat under `s-data-layer-foundation` only because that is where it was discovered. Re-homing, not re-classification: the gate, the evidence and the trigger above are all untouched. It lands with `t-stops-create-endpoint`.
 
+COMPLETED 2026-09-17. One new file, `backend/tests/test_route_dependency_audit.py` — 15 tests (12 parametrized method/route pairs plus 3 structural guards), suite 397 → 412. TEST-ONLY: nothing under `backend/app/` was touched. The 12 audited pairs match `docs/api-contract.md`'s endpoint table exactly.
+
+WHY THIS WAS NOT A ONE-LINER, AND THE TRAP IT SIDESTEPS. **FastAPI 0.141.1 does not flatten `app.routes`.** An included router appears as one opaque `_IncludedRouter` node with `path=None` and `methods=None`. A scan keyed on `route.path` therefore sees `/api/health` and the SPA catch-all and **none of the eight contract endpoints** — it passes vacuously, having audited nothing. That is the DEFAULT behaviour on this version, not an edge case, and it is the same `_IncludedRouter` problem already documented in `backend/app/main.py` and decision-log Entry 7b. The module recurses through `effective_candidates()`, duck-typed on the attribute rather than on the private class name, so the older flat layout still works.
+
+GUARD DETECTION IS AN EXACT SET, NOT A MEMBERSHIP TEST. It walks `route.dependant.dependencies` to any depth and asserts the exact set, so declaring *both* guards on one route fails too — two resolutions of a single `{slug}` is an ambiguity resolved by parameter ordering, which is not something to leave to chance. The recursive walk has no false positives because `require_rider_access` calls `_resolve_trip` directly rather than depending on `require_trip_access`. The method→guard mapping is CLOSED: a verb with no entry is a hard failure, never a skip.
+
+QA EVIDENCE, INDEPENDENTLY DERIVED RATHER THAN TAKEN ON TRUST.
+- Criterion 1 proven by construction: qa added a brand-new unguarded router in a scratch copy; parametrized cases went 15 → 16 with no edit to the test file, and the run failed on the new route.
+- Completeness: diffed the walked set against `app.openapi()["paths"]` — `in openapi but NOT walked: []`.
+- Arithmetic: 22 observed `(method, route)` pairs under `/api`, minus 10 exempt (2 health + 8 catch-all verbs) = the 12 audited.
+- All four schema-excluded HEAD siblings are present in the walked set and confirmed ABSENT from the OpenAPI document — which is the proof the walk could not have been derived from `app.openapi()`.
+- Mutation, in qa's own scratch tree: `1 failed, 14 passed` with `POST /api/trips/{slug}/stops (create_stop) must declare require_rider_access; it declares ['require_trip_access']`; restored → 15 passed.
+
+DELIBERATE TRADE-OFF, NOT A DEFECT, SO NOT FILED. `UNGUARDED_BY_DESIGN` matches on `route.name` — the handler function name — so a future handler named `health` on a trips router would be exempted silently. Name-matching was chosen so that renaming a path cannot quietly widen the exemption, and qa agreed that is the right side of the trade. Read from the code, not demonstrated.
+
+TWO ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-route-audit-non-apiroute-gap` and `t-route-audit-new-verb-double-failure`. Both have no promotion event today. NO DECISION-LOG ENTRY — nothing was contested at any point in this task.
+
+## t-route-audit-non-apiroute-gap
+
+ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
+
+`_walk` treats `hasattr(route, "dependant")` as "this is a leaf", so a plain Starlette `Route`, a `Mount`ed sub-app, or anything registered via `app.add_route` under `/api` is DROPPED SILENTLY rather than failed. qa demonstrated it: injecting `Route("/api/leaky", ..., methods=["GET", "POST"])` left the audit at 15 passed while `POST /api/leaky` served a live 200.
+
+WHY IT IS NOT WORK TODAY. No such handler exists — all 22 `/api` pairs are `APIRoute`s, and the only `Mount` is `/assets`, which is outside `/api`. `docs/api-contract.md:149` fixes the surface at eight endpoints. qa could name no concrete promotion event, and a triggerless entry dressed as a trigger reads as coverage that is not real.
+
+THE FRAGILITY POINT, IN ITS SHARPENED FORM — record this even if the gap above is never fixed: **`test_audit_is_not_vacuous` covers a TOTAL break, not a PARTIAL one.** It fires only if the walk returns zero routes or loses an entire HTTP method. A future FastAPI that flattened one nesting level but not another would leave the set non-empty with all four methods present, so the guard goes green while the audit covers less than it did. There is no better hook available today; that is the reason it was left, not an oversight.
+
+## t-route-audit-new-verb-double-failure
+
+ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO TRIGGER TODAY.
+
+Adding a correctly-guarded `DELETE` route produces `2 failed`, not 1: the useful "verb with no agreed guard" message, plus a spurious second failure from `assert methods == set(EXPECTED_GUARD)` whose text reads "expected at least one route per guarded method" and then prints a set that DOES contain at least one of each. The equality is deliberate — a method dropping to zero routes should also be loud — so the assertion is right and only the MESSAGE is wrong: it describes a superset check.
+
+No trigger: the contract and the spec both rule out `PUT`/`DELETE` for v1.
+
+TEST-WRITER DELIBERATELY DID NOT FIX IT. Editing the file after qa had signed off would have invalidated the verdict qa derived against that exact file. Fix whenever this file is next touched for any other reason.
+
 ## t-trip-context-slug-exposure
 
 QA: TripContext.trip necessarily holds rider_slug and viewer_slug so the dependency can derive access, and TripOut has no slug fields — but the first handler that spreads the record into a response (return {**asdict(context.trip)}) breaks the guarantee invisibly. The existing test_no_slug_appears_in_any_response_body asserts against probe routes only, so it will not cover real handlers. Pairs naturally with t-route-dependency-audit.
