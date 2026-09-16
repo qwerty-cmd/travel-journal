@@ -5,7 +5,10 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    env_file: .env
+    # backend/.env is the single local secrets file (gitignored). The two
+    # entries below override its host-oriented DATABASE_URL / S3_ENDPOINT_URL
+    # with the compose service names; the rest (S3 creds, GRAPH_*) come from it.
+    env_file: backend/.env
     environment:
       - DATABASE_URL=postgresql://bike_trip:bike_trip@postgres:5432/bike_trip
       - S3_ENDPOINT_URL=http://minio:9000
@@ -16,6 +19,9 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app/backend # live-reload for local dev
+      # Anonymous volume masks the host's Windows-shaped .venv (Scripts/, no
+      # bin/) so the image's Linux venv stays visible. Must follow the bind mount.
+      - /app/backend/.venv
 
   postgres:
     image: postgres:16-alpine
