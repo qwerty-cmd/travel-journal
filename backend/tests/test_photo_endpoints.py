@@ -18,6 +18,9 @@ What the contract promises:
    unseen -> 201; same stop -> 200 replay; different stop -> 409 conflict.
 7. **POST — stop must belong to trip.** 404 if not.
 8. **POST — the 409 discloses nothing** from the conflicting record.
+9. **POST — `takenAt` is an offset-aware instant.** A naive value (no UTC
+   offset) is 422 / ``VALIDATION_ERROR`` and writes nothing; an offset-carrying
+   one is stored as the instant the device sent, whatever zone the API runs in.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ import io
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
@@ -613,3 +616,216 @@ class TestUploadPhoto:
         rows = await photo_rows_for_id(migrated_engine, photo_id)
         assert len(rows) == 1
         assert rows[0]["stop_id"] == stop_own.id
+
+
+# --------------------------------------------------------------------------
+# takenAt is an offset-aware instant (t-takenat-tz-question)
+# --------------------------------------------------------------------------
+
+# Every one of these parses fine as a datetime and carries no UTC offset. The
+# server is the only thing that rejects them: JSON Schema cannot express
+# timezone-awareness, so the OpenAPI document and the generated client both see
+# a plain `{"type": "string", "format": "date-time"}` and wave them through.
+NAIVE_TAKEN_AT = [
+    "2026-06-14T10:00:00",
+    "2026-06-14T10:00",
+    "2026-06-14 10:00:00",
+    "2026-06-14T10:00:00.250000",
+]
+
+# The offsets a real device sends: a half-hour zone, Zulu, explicit UTC, and a
+# negative offset. All four are accepted; none is preferred over another.
+AWARE_TAKEN_AT = [
+    "2026-06-14T10:00:00+09:30",
+    "2026-06-14T10:00:00Z",
+    "2026-06-14T10:00:00+00:00",
+    "2026-06-14T10:00:00-05:00",
+]
+
+
+class TestTakenAtIsOffsetAware:
+    """
+    POST -- ``takenAt`` must carry a UTC offset.
+
+    The ruling (``t-takenat-tz-question``): ``takenAt`` is an offset-aware ISO
+    8601 instant, and a naive value is rejected ``422`` / ``VALIDATION_ERROR``.
+    It is not defaulted, not assumed UTC, and not assumed server-local.
+
+    Why a naive value cannot simply be accepted: nothing between the wire and the
+    ``timestamptz`` column resolves it deterministically. SQLAlchemy's asyncpg
+    dialect has no bind processor, so a naive datetime reaches asyncpg untouched
+    and is resolved in the *host process's* local zone -- the same request writes
+    ``02:00Z`` from a UTC+8 host and ``10:00Z`` from a UTC one. The stored instant
+    would depend on where the API happens to run, and every symptom of that is
+    silent: the upload returns ``201``, the photo appears, and it is simply filed
+    at the wrong hour in the timeline.
+
+    Written from the ruling and the acceptance criteria, not from the handler.
+    """
+
+    @pytest.mark.parametrize("taken_at", NAIVE_TAKEN_AT)
+    async def test_naive_taken_at_returns_422_validation_error(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+        taken_at: str,
+    ) -> None:
+        """A ``takenAt`` with no offset is refused, in the standard error envelope."""
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+
+        response = await client.post(
+            url, data=upload_form(taken_at=taken_at), files=fake_file()
+        )
+
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+        assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR
+
+    @pytest.mark.parametrize("taken_at", NAIVE_TAKEN_AT)
+    async def test_naive_taken_at_writes_nothing(
+        self,
+        client: AsyncClient,
+        migrated_engine: AsyncEngine,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+        taken_at: str,
+    ) -> None:
+        """
+        A rejected upload leaves no row behind -- the rejection is total, not partial.
+
+        The 422 is the half of the contract a caller sees; this is the half that
+        matters to the data. A row written from a value the server then called
+        invalid would be exactly the silently-wrong-hour record the ruling exists
+        to prevent.
+        """
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+        form = upload_form(taken_at=taken_at)
+
+        await client.post(url, data=form, files=fake_file())
+
+        assert await photo_rows_for_id(migrated_engine, form["id"]) == []
+
+    @pytest.mark.parametrize("taken_at", AWARE_TAKEN_AT)
+    async def test_offset_aware_taken_at_returns_201(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+        created_photo_ids: list[str],
+        s3_bucket: None,
+        taken_at: str,
+    ) -> None:
+        """
+        Any offset is accepted -- the rule is "carries one", not "is UTC".
+
+        The rider crosses timezones mid-trip, so demanding UTC on the wire would
+        push the same conversion onto the client that the server is refusing to
+        guess at.
+        """
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+
+        form = upload_form(taken_at=taken_at)
+        created_photo_ids.append(form["id"])
+
+        response = await client.post(url, data=form, files=fake_file())
+
+        assert response.status_code == HTTPStatus.CREATED, response.text
+
+    async def test_submitted_instant_is_what_gets_stored(
+        self,
+        client: AsyncClient,
+        migrated_engine: AsyncEngine,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+        created_photo_ids: list[str],
+        s3_bucket: None,
+    ) -> None:
+        """
+        The instant in the column is the instant the device sent -- not a re-reading
+        of its wall clock in the host process's zone.
+
+        The point of the whole ruling, asserted end to end. ``+09:30`` is chosen
+        because it is a half-hour offset matching no plausible CI or container
+        zone, so a host-local re-resolution cannot coincidentally land on the right
+        answer.
+
+        Compared as datetimes on purpose. The ``201`` body echoes the offset the
+        device sent while the column and every read-back are UTC, so one correct
+        instant has two spellings and a string comparison would fail on a
+        difference that is not a defect.
+        """
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+
+        submitted = datetime(
+            2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30))
+        )
+        form = upload_form(taken_at=submitted.isoformat())
+        created_photo_ids.append(form["id"])
+
+        response = await client.post(url, data=form, files=fake_file())
+        assert response.status_code == HTTPStatus.CREATED, response.text
+
+        rows = await photo_rows_for_id(migrated_engine, form["id"])
+        assert len(rows) == 1
+        stored = rows[0]["taken_at"]
+        assert stored.tzinfo is not None, "photos.taken_at came back naive"
+        assert stored == submitted, f"stored {stored!r}, submitted {submitted!r}"
+
+        assert datetime.fromisoformat(response.json()["takenAt"]) == submitted
+
+        listed = (await client.get(url)).json()
+        photo = next(p for p in listed if p["id"] == form["id"])
+        assert datetime.fromisoformat(photo["takenAt"]) == submitted
+
+    @pytest.mark.parametrize("missing", ["id", "uploadedBy", "takenAt"])
+    async def test_missing_form_field_still_returns_422_validation_error(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+        missing: str,
+    ) -> None:
+        """
+        The ordinary missing-field ``422`` is unchanged by the aware-datetime rule.
+
+        Tightening ``takenAt``'s type moves a value from "accepted" to "rejected";
+        it must not move anything from "rejected" to "accepted", and it must not
+        change the envelope the other two fields already produce.
+        """
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+
+        form = upload_form()
+        del form[missing]
+
+        response = await client.post(url, data=form, files=fake_file())
+
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+        assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR
+
+    async def test_unparseable_taken_at_returns_422_validation_error(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+        seeded_stops: list[SeededStop],
+    ) -> None:
+        """A ``takenAt`` that is not a datetime at all is the same 422, not a 500."""
+        trip = seeded_trips[0]
+        stop = seeded_stops[0]
+        url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
+
+        response = await client.post(
+            url, data=upload_form(taken_at="yesterday afternoon"), files=fake_file()
+        )
+
+        assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+        assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR

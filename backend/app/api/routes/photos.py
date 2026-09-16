@@ -8,12 +8,12 @@ not, preventing cross-trip data access.
 """
 
 import asyncio
-from datetime import datetime
 from functools import partial
 from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from pydantic import AwareDatetime
 
 from app.core.errors import ApiError
 from app.core.security import TripContext, require_rider_access, require_trip_access
@@ -119,7 +119,7 @@ only. Task `t-photo-upload-endpoint`.
 
 **How it works.** `{slug}` is resolved by `require_rider_access` (403 on viewer,
 404 on unknown). `{stop_id}` is verified to belong to the resolved trip.
-`PhotoCreateForm.id` decides the three-way idempotency branch: unseen -> 201,
+The `id` form field decides the three-way idempotency branch: unseen -> 201,
 same stop -> 200 replay, different stop -> 409. The file is stored in S3 with
 object key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in
 the database.
@@ -134,9 +134,40 @@ async def upload_photo(
     session: SessionDep,
     stop_id: str,
     response: Response,
-    id: Annotated[str, Form(description="Client-generated UUID4 for idempotency.")],
-    uploadedBy: Annotated[str, Form(description="Display name of the uploader.")],
-    takenAt: Annotated[datetime, Form(description="ISO 8601 timestamp when the photo was taken.")],
+    id: Annotated[
+        str,
+        Form(
+            description="Client-generated UUID4, assigned when the photo is captured "
+            "(possibly offline, before upload succeeds). Replaying the same id -- same "
+            "photo retried after a dropped connection -- returns the existing photo (200) "
+            "instead of storing a duplicate. See docs/api-contract.md 'Idempotency'."
+        ),
+    ],
+    uploadedBy: Annotated[
+        str, Form(description="Display name only, no auth -- see spec Section 6.")
+    ],
+    # `AwareDatetime` and a bare `datetime` emit the *same* JSON Schema, so the aware type
+    # looks free in a spec diff. It is not: SQLAlchemy's asyncpg dialect has no bind
+    # processor, so a naive value reaches asyncpg untouched and `timestamptz_encode` calls
+    # `obj.astimezone(utc)` -- resolving it in the *host process's* local zone. Measured:
+    # `2026-06-14T10:00` becomes `02:00Z` on a UTC+8 host and `10:00Z` under the container.
+    # Same input, different instant, decided by where the API runs.
+    # See docs/api-contract.md, "`takenAt` on the photo upload form must be timezone-aware".
+    # Do not relax this to `datetime`.
+    takenAt: Annotated[
+        AwareDatetime,
+        Form(
+            description="When the photo was taken, as a timezone-aware ISO 8601 instant. "
+            "Captured on the device, which may have been offline, so it is the capture time "
+            "and not the time the upload reached the server. The UTC offset is **required** "
+            "-- a naive value (no offset) is rejected with 422 / VALIDATION_ERROR rather than "
+            "assumed to be UTC or server-local, because a rider crossing timezones has no "
+            "offset worth guessing. EXIF `DateTimeOriginal` is naive, so the client composes "
+            "this field: pair it with `OffsetTimeOriginal` when present, otherwise apply the "
+            "device's current offset. The generated client cannot catch this; only the server "
+            "rejects it."
+        ),
+    ],
     file: Annotated[UploadFile, File(description="The photo file.")],
 ) -> PhotoOut:
     await _verified_stop(context, stop_id, session)

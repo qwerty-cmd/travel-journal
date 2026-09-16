@@ -64,6 +64,10 @@ Constraint verified by QA: the SQLAlchemy engine in app/data/db.py is created at
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: both photo endpoints shipped (`a628259`) but the story still holds `t-takenat-tz-question`, `t-photoout-field-descriptions` and `t-photocreateform-field-descriptions` — and the OneDrive sync half in the story's own title has no task at all, so `done` overstated it twice. `in_progress` rather than `not_started`: `done` tasks sit under it.
 
+STAYS `in_progress` 2026-09-17. All three tasks named above are now `done` — `t-photoout-field-descriptions`, then `t-takenat-tz-question` carrying `t-photocreateform-field-descriptions` absorbed into it. **The story still cannot close, and the reason is the second of the two overstatements above, which nothing has touched: the OneDrive sync half of the title has no task at all.** Not "no implementation" — no scoped task, so there is nothing for `ba` to have deferred and no row to point at. Closing this story now would repeat the exact `4958048` error recorded under `m2-core-api`: reading "the endpoints are built" as "the story is done". Two new rows also landed here from `t-takenat-tz-question`'s qa pass: `t-photo-insert-echoes-argument` (gate unresolved, orchestrator ruling owed) and `t-photo-form-model-binding` (ordinary debt).
+
+NEXT ACTION FOR THIS STORY IS A SCOPING ONE, NOT A CODING ONE: `ba` scopes the OneDrive write-only background sync. The constraint at the top of this note — the engine's asyncpg connections are bound to the event loop that created them, so the sync must not run from a second loop — is the first thing that scoping has to respect.
+
 ## s-bike-management
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped (`ae96533`) but the story still holds `t-bikecreate-field-descriptions` and `t-bikepatch-field-descriptions`, whose promotion triggers — "`POST /trips/{slug}/bikes`" and "`PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`" — fired when those routes bound `BikeCreate` and `BikePatch` as request bodies and published them into the OpenAPI document. `in_progress` rather than `not_started`: `done` tasks sit under it.
@@ -71,6 +75,8 @@ STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped (`ae9
 ## m2-core-api
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16, alongside three of its five stories. All eight contract endpoints are built and tested — that part of `4958048`'s claim is true and is not in dispute. What was wrong is the inference from it: a milestone is not done when three of its stories still hold seven open tasks (`t-route-dependency-audit`, `t-trip-context-slug-exposure`, `t-takenat-tz-question`, `t-photoout-field-descriptions`, `t-photocreateform-field-descriptions`, `t-bikecreate-field-descriptions`, `t-bikepatch-field-descriptions`), plus `s-data-layer-foundation`, which was never `done` and carries the rest of the backlog. "All core API endpoints done" and "milestone 2 complete" are different claims; the commit subject asserted the second from the first.
+
+UPDATE 2026-09-17 — five of those seven are now closed: `t-bikecreate-field-descriptions` + `t-bikepatch-field-descriptions` (absorbed, one patch), `t-photoout-field-descriptions`, and `t-takenat-tz-question` + `t-photocreateform-field-descriptions` (absorbed, one patch). **Still `in_progress`, and not close to done.** Remaining: `t-route-dependency-audit` and `t-trip-context-slug-exposure` under `s-stop-crud`; the unscoped OneDrive sync half of `s-photo-upload-onedrive-sync`; and `s-data-layer-foundation`, still never `done` and still carrying the bulk of the backlog. `s-bike-management` is the only one of the three reverted stories whose named tasks have all closed.
 
 ## s-finding-triage-gate
 
@@ -620,14 +626,51 @@ TWO ASSERTIONS DELIBERATELY NOT MADE, both recorded in the test module's own doc
 
 ## t-takenat-tz-question
 
-FILED, NOT SCOPED — no acceptance criteria, per the gate's rule for an open question. Created urgently for a bookkeeping reason rather than an implementation one: `docs/api-contract.md` and `docs/decision-log.md` both already cite this id, so until the entry existed those were dangling references.
+CLOSED 2026-09-17, gate reclassified TRIGGERED (3) -> **BROKEN (1)**. Ruled, implemented, tested and documented. Contract: `docs/api-contract.md` §"`takenAt` on the photo upload form must be timezone-aware". Contested call: `docs/decision-log.md` **Entry 16**. **This task ABSORBED `t-photocreateform-field-descriptions`** — one patch, both concerns; both ids stay `done`, no merged id minted, same precedent as `t-bikepatch-field-descriptions` into `t-bikecreate-field-descriptions`.
 
-- Finding: `PhotoCreateForm.takenAt` accepts naive datetimes and carries no `description=`, while the `photos.taken_at` column is `timestamptz`.
-- Gate classification: TRIGGERED DEBT (Gate 3).
-- Current consumer: NONE. No route imports `PhotoCreateForm` — the model exists and nothing binds it.
-- Promotion trigger: when `POST /trips/{slug}/stops/{id}/photos` is scoped under `s-photo-upload-onedrive-sync`.
+THE RULING. `takenAt` on `POST /api/trips/{slug}/stops/{stop_id}/photos` is an offset-aware ISO 8601 instant; a naive value is `422` / `VALIDATION_ERROR`. Not defaulted, not assumed UTC, not assumed server-local.
 
-WHY THIS MAY NOT GET THE SAME ANSWER AS `arrivedAt` — the reason it is filed separately instead of folded into Entry 15. `arrivedAt` is supplied by the app at capture, so "reject naive" is a satisfiable rule. `takenAt` comes from EXIF, where `DateTimeOriginal` IS NAIVE BY DESIGN: the UTC offset lives in a separate `OffsetTimeOriginal` tag that is frequently absent on imported, edited or re-encoded images. So "reject naive" may be unsatisfiable for a large share of real photos — the offset genuinely is not in the file — and the answer may instead be that the FRONTEND SUPPLIES THE DEVICE OFFSET AT CAPTURE, with the contract saying so. Do not close this by pointing at Entry 15 and copying the `arrivedAt` ruling across; the input is a different kind of input.
+### The original note's warning, and what happened to it
+
+This entry used to carry a section headed "WHY THIS MAY NOT GET THE SAME ANSWER AS `arrivedAt`", ending: *do not close this by pointing at Entry 15 and copying the `arrivedAt` ruling across; the input is a different kind of input.* **The warning is kept here as history, because it is why the contract section and Entry 16 are ordered the way they are.** Its argument:
+
+> `arrivedAt` is supplied by the app at capture, so "reject naive" is a satisfiable rule. `takenAt` comes from EXIF, where `DateTimeOriginal` IS NAIVE BY DESIGN: the UTC offset lives in a separate `OffsetTimeOriginal` tag that is frequently absent on imported, edited or re-encoded images. So "reject naive" may be unsatisfiable for a large share of real photos — the offset genuinely is not in the file.
+
+**TESTED AND FAILED.** It rests on an unstated premise — that EXIF is the wire source. It is not. The frontend composes the field before the request is built, and `getTimezoneOffset()` is available unconditionally. The ladder that replaces it is contract text for `s-frontend-add-stop-flow`: (a) `DateTimeOriginal` + `OffsetTimeOriginal` -> both; (b) `DateTimeOriginal` alone -> wall clock + device's current offset; (c) no usable EXIF -> `new Date().toISOString()` at pick time.
+
+So the answer IS the same as `arrivedAt`'s — but it was **not copied**, it was derived. The warning did its job: it forced the derivation instead of the analogy. Both the contract section and Entry 16 therefore OPEN with the asyncpg measurement and the EXIF disproof and only then reach the `arrivedAt` parallel. **Do not reorder them into "same as `arrivedAt`, here's why" — that reads as the copy this task was warned against.**
+
+### Why it became Gate 1, and the transferable lesson
+
+Filed as TRIGGERED on this stated evidence: *"Current consumer: NONE. No route imports `PhotoCreateForm`."* True of the model, false of the behaviour — `photos.py` re-declared `takenAt: datetime` as an inline `Form(...)` parameter, so the route implemented the form without importing it, and the bug was live on a shipped endpoint the whole time it sat in the backlog as consumer-free.
+
+> **"No route imports it" is not "no route implements it."**
+
+Measured: SQLAlchemy's asyncpg dialect has no bind processor, so a naive datetime reaches `timestamptz_encode`, which calls `obj.astimezone(utc)` and resolves it in the **host process's** zone. `2026-06-14T10:00` stored as `02:00Z` on a UTC+8 host and `10:00Z` under the container — 8 hours of divergence for identical input, decided by where the API runs.
+
+### The fallback that shipped
+
+Criterion 2 (bind `Annotated[PhotoCreateForm, Form()]`) is **structurally impossible on the pinned FastAPI 0.141.1** — `_should_embed_body_fields` returns `True` unconditionally past one body field, and `params.Form.__init__` never forwards `embed` to `Body`, so `Form(embed=False)` is silently swallowed (qa confirmed independently). Reproduced on a minimal app: body schema becomes `{"form": {"$ref":...}, "file": {...}}` and a flat multipart POST gives `422 {"loc": ["body","form"]}`.
+
+So the pre-authorised fallback was taken: **`PhotoCreateForm` is deleted**, and the three inline `Annotated[..., Form(description=...)]` parameters on the route ARE the contract. `takenAt` is `Annotated[AwareDatetime, Form(...)]`. That is also how the absorbed descriptions task closed.
+
+Files: `backend/app/models/photo.py` (model deleted; `PhotoOut.takenAt` description rewritten to carry the timezone claim; the seven-line deferral comment removed), `backend/app/api/routes/photos.py` (`AwareDatetime`, all three form descriptions, the asyncpg measurement as a co-located comment, `PhotoCreateForm.id` prose -> "the `id` form field"), `backend/tests/test_photo_endpoints.py` (+`TestTakenAtIsOffsetAware`, 17 tests; existing tests and all twelve `upload_form()` call sites byte-identical), `backend/tests/unit/test_photo_model.py` (the "makes no timezone claim" pin **inverted** into a positive pin, +6 schema/description tests).
+
+OPENAPI DIFF, MEASURED: **description text only.** The synthesised body schema keeps its name `Body_upload_photo_api_trips__slug__stops__stop_id__photos_post` and its four properties `{id, uploadedBy, takenAt, file}` with identical types — `takenAt` is still `{"type":"string","format":"date-time"}`, because `AwareDatetime` and `datetime` emit the same JSON Schema. No rename, no type change, no new component, no generated client to break (`frontend/src/api/` is a README). **That is the trap, not the reassurance:** relaxing the type back shows up in a spec diff as nothing at all while reinstating the host-zone bug. The route file carries that warning beside the parameter.
+
+QA: 8 of 9 criteria MET at handover, the ninth being the docs patch. Suite **506** passed (was 483 with 1 failing), ruff holding at exactly 4 pre-existing findings. Mutation-tested — `AwareDatetime` -> `datetime` fails 8 tests, reverting `PhotoOut.takenAt`'s description fails 1, re-adding the old placeholder string fails 1. qa also verified live that a viewer-slug POST with a naive `takenAt` still returns **403**, not 422: the tightened type opened no 422-before-403 disclosure channel.
+
+`PhotoOut.takenAt`'s description was **inverted, not overturned**. `t-photoout-field-descriptions` wrote it to make no timezone claim and pinned the silence word-by-word, deliberately, so a ruling could not be smuggled in through a docstring. Correct while nothing enforced an offset; the condition expired when the server started enforcing one. Same reasoning, opposite output.
+
+### FINDINGS RECORDED, NOT FIXED (a finding from task X is not work for task X)
+
+**1. `t-photo-insert-echoes-argument` — NEEDS AN ORCHESTRATOR RULING, do not settle it by implementing.** `POST` (first) returns `takenAt` as `...T10:00:00+09:30`; the `200` replay and `GET` both return `...T00:30:00Z`. Same instant, two spellings. Cause: `backend/app/data/repositories/photos.py` `insert()` (L122-149) builds its `PhotoOut` from the arguments it was passed rather than reading the row back, while the read paths query the `timestamptz` column. qa lands on **Gate 3 (TRIGGERED DEBT)**: the contract promises an instant and not a spelling, and the new `PhotoOut.takenAt` description documents both forms explicitly, so nothing is violated today. **qa flagged the counter-reading in the same breath and it is the reason this is not simply filed:** the divergence sits *inside the idempotency path* — the 201 and its own 200 replay disagree textually — and the offline queue is spec Section 12's top testing tier, which is an argument for Gate 1. Left unresolved on purpose; it needs a concrete promotion event either way. **The fix when it fires is one line: have `insert()` read the row back.**
+
+**2. `t-photo-form-model-binding` — ORDINARY DEBT (Gate 4), recorded only so a true claim is not remembered as a broader one.** A form model carrying `UploadFile` as a *field* **does** bind flat on FastAPI 0.141.1. It was disqualified for a different reason: FastAPI then declares the content type `application/x-www-form-urlencoded` rather than the `multipart/form-data` the contract promises. What is impossible is a bound form model **in criterion 2's stated shape**, and that narrower claim is what made the fallback legitimate. Also carried as a footnote in decision-log Entry 16.
+
+### One test deliberately skipped — a candidate, ORCHESTRATOR'S CALL
+
+test-writer skipped a grep ratchet asserting `PhotoCreateForm` appears nowhere under `docs/`. qa suggested it, and **it would have caught this exact blocker** — the four stale contract references that were the last open acceptance criterion. It was skipped correctly: at the time it was a `docs/`-scoped assertion for a fix that had not landed. **That fix has now landed.** The references are gone, so the ratchet is implementable today and would be green on arrival. Recorded as a candidate; whether to open it is the orchestrator's call, not the docs agent's. Note it would also need to tolerate deliberate historical mentions — decision-log Entry 16, Entry 15's quoted-and-superseded subsection, and this file all name the deleted class on purpose.
 
 ## t-photoout-field-descriptions
 
@@ -661,6 +704,28 @@ No API contract change — no endpoint, shape, status code or `required` set mov
 TRIGGERED DEBT, filed not scoped. 1 of `PhotoCreateForm`'s 3 fields carries no `description=`. Same model as `t-takenat-tz-question` but a different concern: that task is about what the field ACCEPTS, this one about what the document SAYS. They will likely be taken in one patch when the photo endpoints land, but the tz question is a contract ruling that must be made first and this one is not blocked on it.
 - Current consumer: none — no route imports `PhotoCreateForm`.
 - Promotion trigger: `POST /trips/{slug}/stops/{id}/photos` publishing the model into OpenAPI.
+
+CLOSED 2026-09-17, **ABSORBED INTO `t-takenat-tz-question`** and shipped in that one patch. Id kept and marked `done` rather than deleted; no merged id minted — the `t-bikepatch-field-descriptions` precedent, applied again. Read the closeout under `## t-takenat-tz-question`, not here.
+
+**It did not close the way this entry predicted, and the difference is the useful part.** The promotion trigger above never fired: `PhotoCreateForm` never reached `components.schemas`, because binding it was proven impossible on FastAPI 0.141.1 without changing the wire format. So the fix was not descriptions on the model — **the model was deleted**, and the three descriptions now live on the route's inline `Annotated[..., Form(description=...)]` parameters, which is the only place a client ever read them from. `t-photo-upload-endpoint`'s note anticipated exactly this fork ("whoever takes that task should decide whether the fix is descriptions on the model or binding the model at all; those are not the same patch") — and the third option, neither, is what shipped.
+
+Its sibling framing was also right and worth keeping: this task was about what the document SAYS, `t-takenat-tz-question` about what the field ACCEPTS. They landed in one patch because they turned out to be the same three lines of code.
+
+## t-photo-insert-echoes-argument
+
+Filed by qa during `t-takenat-tz-question`, 2026-09-17. **TRIGGERED DEBT (Gate 3) per qa, with a live counter-reading for Gate 1 — the orchestrator has not ruled. Do not implement on sight, and do not file the counter-reading away.** Full statement under `## t-takenat-tz-question`, "FINDINGS RECORDED, NOT FIXED", item 1.
+
+One line: `backend/app/data/repositories/photos.py` `insert()` (L122-149) builds its `PhotoOut` from the arguments passed in instead of reading the inserted row back, so a fresh `201` echoes the device's offset (`...+09:30`) while the `200` replay and `GET` return UTC (`...Z`). Same instant, two spellings — and the pair that disagrees is the `201` and its **own replay**, inside the idempotency path.
+
+Needs a concrete promotion event before it becomes work. The obvious candidate is `s-offline-queue`: a queue that reconciles its local copy against the returned entity by comparing fields would see a spurious difference. Fix is one line — read the row back.
+
+## t-photo-form-model-binding
+
+Filed by dev during `t-takenat-tz-question`, 2026-09-17. **ORDINARY DEBT (Gate 4).** Not a defect and not scheduled — recorded so a precise claim is not remembered as a broader one.
+
+A Pydantic form model carrying `UploadFile` as a *field* **does** bind flat on FastAPI 0.141.1. It was disqualified because FastAPI then declares the request content type as `application/x-www-form-urlencoded` rather than the `multipart/form-data` `docs/api-contract.md` promises. So "a bound form model is impossible here" is **false as stated**; what is impossible is a bound form model in criterion 2's shape (model + separate `UploadFile` parameter, flat multipart wire). Also a footnote in decision-log Entry 16 — that footnote is the primary record and this row exists to make it greppable.
+
+Promotion would require wanting the model back, which would mean accepting the content-type change — i.e. a contract change, not a refactor.
 
 ## t-bikecreate-field-descriptions
 
@@ -710,6 +775,8 @@ WHAT ACTUALLY SHIPPED, where it differs from what the contract table implies:
 - `{stop_id}` is verified to belong to the resolved trip before any photo work (`_verified_stop`), so a valid stop id from another trip is a 404, not a cross-trip write.
 
 BACKLOG IDS THIS ENDPOINT BEARS ON, all still open: `t-takenat-tz-question`, `t-photocreateform-field-descriptions` (trigger NOT fired, see above), `t-photoout-field-descriptions` (trigger FIRED — `PhotoOut` is the declared response model of both routes and is published).
+
+**ALL THREE NOW CLOSED (2026-09-17), and the two bullets above about `takenAt` and `PhotoCreateForm` are superseded — kept because they are the record of what this endpoint actually shipped with.** `takenAt` is `AwareDatetime`; a naive value is a `422`. `PhotoCreateForm` no longer exists — binding it was proven impossible on FastAPI 0.141.1, so the inline `Form(...)` parameters this note describes as a *divergence from the contract table* became the contract, and the table was corrected to match them. The "stays UNRULED, do not read the shipped annotation as the answer" bullet was right at the time and is the reason the question survived to be ruled. See `## t-takenat-tz-question` and decision-log Entry 16. The in-memory-`put_object` observation in the third bullet is untouched and still open.
 
 ## t-photo-list-endpoint
 
