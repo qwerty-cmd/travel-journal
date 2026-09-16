@@ -1,7 +1,7 @@
 {
   "milestones": [
     { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
-    { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "in_progress" },
+    { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "done" },
     { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "not_started" },
     { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
   ],
@@ -16,10 +16,10 @@
 
     { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
-    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "in_progress" },
-    { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "not_started" },
-    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "not_started" },
-    { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "not_started" },
+    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "done" },
+    { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "done" },
+    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
+    { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
 
     { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "not_started" },
     { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map + timeline feed", "status": "not_started" },
@@ -81,7 +81,7 @@
     { "id": "t-arrivedat-tz-contract", "storyId": "s-stop-crud", "title": "api-contract.md arrivedAt timezone-awareness section + decision-log Entry 15", "status": "done", "agent": "docs", "blockers": [] },
     { "id": "t-stopcreate-field-contract", "storyId": "s-stop-crud", "title": "models/stop.py — StopCreate.arrivedAt becomes AwareDatetime and all seven fields get description=", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-stopcreate-tz-tests", "storyId": "s-stop-crud", "title": "Contract-first tests for StopCreate.arrivedAt timezone-awareness and the seven field descriptions", "status": "done", "agent": "test-writer", "blockers": [], "gate": "triggered" },
-    { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "not_started", "agent": "dev", "blockers": [] },
+    { "id": "t-stops-create-endpoint", "storyId": "s-stop-crud", "title": "POST /api/trips/{slug}/stops — 201 new / 200 replay / 409 cross-trip", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-route-dependency-audit", "storyId": "s-stop-crud", "title": "Test enumerating every route's declared access dependency", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-trip-context-slug-exposure", "storyId": "s-stop-crud", "title": "TripContext slug exposure — convention not enforced", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
 
@@ -91,8 +91,15 @@
     { "id": "t-photoout-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoOut — 4 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-photocreateform-field-descriptions", "storyId": "s-photo-upload-onedrive-sync", "title": "PhotoCreateForm — 1 of 3 fields carries no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
 
+    { "id": "t-bikes-create-endpoint", "storyId": "s-bike-management", "title": "POST /api/trips/{slug}/bikes — 201 new / 200 replay / 409 cross-trip", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-bikes-patch-endpoint", "storyId": "s-bike-management", "title": "PATCH /api/trips/{slug}/bikes/{id} — partial update, last-write-wins", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-bikecreate-field-descriptions", "storyId": "s-bike-management", "title": "BikeCreate — 3 of 6 fields carry no description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-bikepatch-field-descriptions", "storyId": "s-bike-management", "title": "BikePatch — none of its 5 fields carries a description=", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+
+    { "id": "t-map-geojson-endpoint", "storyId": "s-map-geojson-endpoint", "title": "GET /api/trips/{slug}/map — GeoJSON FeatureCollection with stop pins and trail", "status": "done", "agent": "dev", "blockers": [] },
+
+    { "id": "t-photo-upload-endpoint", "storyId": "s-photo-upload-onedrive-sync", "title": "POST /api/trips/{slug}/stops/{id}/photos — multipart upload with idempotency", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-photo-list-endpoint", "storyId": "s-photo-upload-onedrive-sync", "title": "GET /api/trips/{slug}/stops/{id}/photos — presigned URLs from S3", "status": "done", "agent": "dev", "blockers": [] },
 
     { "id": "t-qa-mutation-scratch-tree", "storyId": "s-agent-tool-boundaries", "title": ".claude/agents/qa.md — mutation experiments run in a scratch tree, never the working tree", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "observable" },
     { "id": "t-qa-mutation-hook", "storyId": "s-agent-tool-boundaries", "title": "PreToolUse hook matching write-shaped Bash commands against the project path — enforce qa.md's scratch-tree rule structurally", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
@@ -101,5 +108,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-16T00:00:02Z"
+  "lastUpdated": "2026-09-16T12:00:00Z"
 }
