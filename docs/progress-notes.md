@@ -265,6 +265,57 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 MOVED TO `s-stop-crud` 2026-09-15, `gate: triggered` UNCHANGED — same reasoning as `t-route-dependency-audit` above, with which it pairs: its own promotion trigger names that task and that story. Re-homing, not re-classification.
 
+COMPLETED 2026-09-17. One new file, `backend/tests/test_no_slug_in_response_bodies.py` — 39 tests, suite 412 → 451. TEST-ONLY: nothing under `backend/app/` was touched. Shape is `39 = 3 + 36`, where 36 is 12 routes × 3 credential kinds (rider / viewer / unknown) and 3 are audit-of-the-audit tests: `test_every_registered_trip_route_has_a_plan`, `test_the_plan_drives_success_and_both_error_answers`, `test_the_leak_check_catches_a_leak`.
+
+THE ROUTE COUNT IS 12, RECONCILED THREE WAYS — recorded explicitly so it is not re-litigated. `len(AUDITED)` in the committed `t-route-dependency-audit` module, `len(TRIP_ROUTES)` here, and `docs/api-contract.md`'s 8 contracted endpoints + 4 HEAD siblings all agree. Measured against the live app: 22 `/api` `(method, route)` pairs, minus `health` (2) and the SPA catch-all (8 verbs) = 12 — the same arithmetic `t-route-dependency-audit` recorded. **The orchestrator's task brief carried a "13 routes" premise; it was a miscount, caught by measurement before anything was built on it.** Nobody argued for 13, so there is no contested call here — but the reconciliation is written down because "is it 12 or 13?" is exactly the question a future agent re-derives from scratch.
+
+ENUMERATION IS IMPORTED, NOT RE-IMPLEMENTED. Line 73: `from test_route_dependency_audit import _api_routes`. No second walk of `app.routes` exists anywhere in this module, and that is load-bearing rather than tidy — a naive `app.routes` scan sees none of the contract endpoints under FastAPI's lazy `_IncludedRouter` (see `t-route-dependency-audit` above and decision-log Entry 7b) and would pass vacuously, auditing nothing. Any future edit that "simplifies" this into a local walk re-introduces that trap.
+
+SLUG **VALUES** ARE ASSERTED, NEVER KEY NAMES. `find_leaked_slug` iterates `.values()` over the four real seeded `secrets.token_urlsafe(16)` tokens hanging off the `SeededTrip` dataclass, and searches `response.text` **plus the response headers**. Both trips' slug pairs are searched on every case, not just the one the request used — so a handler that reached the wrong row, or that listed trips, surfaces as a credential failure rather than passing quietly.
+
+QA'S FOUR MUTATIONS AGAINST REAL HANDLERS, WITH OBSERVED RESULTS. This is the evidence the guard is non-vacuous; it is the part that evaporates otherwise.
+1. `get_trip` returning `context.trip.rider_slug` as `name` → `2 failed, 37 passed`. The detector is wired to a leaking *handler body*, not merely to a fixture.
+2. `security.py`'s 403 message interpolating `context.trip.rider_slug` → `4 failed, 35 passed`, hitting all four write routes.
+3. `get_trip` setting a response *header* to the rider slug → `4 failed, 35 passed`, **including the HEAD cases, whose body is `''`**. This is what makes the header half of the search load-bearing rather than decorative: without it the 6 HEAD cases would be entirely vacuous — an empty body trivially contains no slug.
+4. An unplanned `GET /api/trips/{slug}/summary` route → `KeyError` plus 4 failures. The coverage guard fails loudly instead of silently skipping an unaudited route.
+All four ran in a `tar` scratch copy per `.claude/agents/qa.md`; the working tree was never touched, and the restored tree is green at `39 passed`.
+
+CHARACTERISED NON-DETECTION — RECORD IT SO IT IS NEVER MISTAKEN FOR COVERAGE. Mutation 3a changed `_resolve_trip`'s 404 to `f"{UNKNOWN_TRIP_MESSAGE} (slug={slug!r})"` and the suite stayed **green** (`39 passed`). That is correct by design, not a hole: on the unknown-slug path the echoed value is the caller's *own input*, not a credential belonging to anyone. So the 404 cases prove "this answer contains no **other** trip's credential" — the only leak that path can commit — and **not** "this answer echoes nothing". Do not read the 12 unknown-slug cases as protection against input echo; they were never that.
+
+NO DECISION-LOG ENTRY — nothing was contested at any point in this task. (The 13-vs-12 miscount above was an arithmetic slip corrected by measurement, not two positions in conflict.)
+
+PROCESS NOTE. The original `test-writer` run and its chained `qa` were both killed by the 600s stall watchdog before qa ever ran. The test file itself executes in ~12s — **the stall was in the agent process, not the tests**, so a slow-test diagnosis would be wrong. The artifact was salvaged from the working tree and `qa` was re-dispatched against it rather than the task being redone from scratch.
+
+THREE ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-s3-bucket-fixture-duplication`, `t-slug-audit-minio-overrequest`, `t-slug-audit-replay-and-conflict-bodies`. None has a promotion event today.
+
+## t-s3-bucket-fixture-duplication
+
+ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
+
+An `s3_bucket` fixture exists twice: `backend/tests/test_no_slug_in_response_bodies.py:203-212` and `backend/tests/test_photo_endpoints.py:169-178`. The executable bodies are identical — `head_bucket`, and on any exception `create_bucket`, against `BUCKET_NAME` from `app.storage.s3_client`. (They are *not* byte-identical: the docstrings differ and the newer copy carries a `# noqa: BLE001` on its `except Exception:`. Same behaviour, different text.) `head_bucket`/`create_bucket` appear in these two modules and nowhere else in the suite.
+
+WHY IT WAS DEFENSIBLE AT THE TIME: neither copy lives in `conftest.py`, so importing was not available without first *moving* the fixture — a change to a second test module, outside the scoped task.
+
+WHY IT IS NOT WORK TODAY: no current consumer, and nothing depends on the two copies agreeing. The risk is drift only, and only if bucket setup changes.
+
+## t-slug-audit-minio-overrequest
+
+ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
+
+`s3_bucket` is a plain parameter on `test_no_slug_value_comes_back_from_any_route` (`test_no_slug_in_response_bodies.py:363`), with no marker and no conditional — so **all 36** parametrised cases set up a MinIO bucket, though only `POST …/photos` (3 of the 36) has a storage leg. With MinIO down, 36 cases error at setup instead of 3.
+
+WHY IT IS NOT WORK TODAY: no current consumer — CI and local dev both bring MinIO up via `docker compose`, so the fixture always succeeds. Worth noting it *compounds* the already-known papercut that the suite does not fail cleanly without `docker compose up -d postgres minio`: it widens the blast radius of that failure without creating a new one.
+
+## t-slug-audit-replay-and-conflict-bodies
+
+ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
+
+`build_request` mints a fresh `uuid4()` on every invocation (`test_no_slug_in_response_bodies.py:237`, `:250`, `:260`), so every write case is a 201 create and the **200-replay body is never produced**. `EXPECTED_STATUS` likewise has no 200-replay and no 409 entry. Those two response bodies therefore exist in the contract but are never leak-checked.
+
+WHY IT IS NOT WORK TODAY — there is no leak to find. Every 409 message is a module-level constant with no interpolation of any kind: `ID_ALREADY_USED_MESSAGE` (`app/api/routes/stops.py:38`, raised at `:223`), `ID_ALREADY_USED_MESSAGE` (`app/api/routes/bikes.py:26`, raised at `:87`) and `PHOTO_ID_CONFLICT_MESSAGE` (`app/api/routes/photos.py:38`, raised at `:152`). On top of that, `ApiError.conflict`'s docstring forbids naming the conflicting record.
+
+NO PROMOTION TRIGGER, DELIBERATELY. The closest candidate — "a 409 message gains an f-string" — is hypothetical, and **qa explicitly declined to record it as a trigger**: a triggerless entry dressed as a trigger reads as coverage that is not real (same reasoning as `t-route-audit-non-apiroute-gap`).
+
 ## t-error-log-parameter-redaction
 
 QA: unhandled_exception_handler uses logger.exception, so a DBAPIError traceback carries parameters: ('<live-slug>', ...). The slug is already in the uvicorn access log by virtue of being in the URL, so this is a duplicate rather than a new exposure class — but it is the copy most likely to reach a third-party error tracker. Low priority; noted so it is a decision rather than an oversight.
