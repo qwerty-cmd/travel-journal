@@ -43,7 +43,7 @@ On the server, a create request's id falls into exactly one of three branches:
 This three-way branch applies identically to all three create endpoints. It is stated once here rather than per endpoint, because it follows from the schema rather than from any one route:
 
 - `POST /trips/{slug}/stops` (`StopCreate.id`) — parent is the trip
-- `POST /trips/{slug}/stops/{id}/photos` (`PhotoCreateForm.id`) — parent is the stop
+- `POST /trips/{slug}/stops/{id}/photos` (the `id` **form field**) — parent is the stop
 - `POST /trips/{slug}/bikes` (`BikeCreate.id`) — parent is the trip
 
 **Why the third branch exists at all.** Each of `stops`, `photos` and `bikes` has a **global** primary key on `id` plus a *separate* parent foreign key — `stops.trip_id`, `photos.stop_id`, `bikes.trip_id` (`backend/app/data/tables.py`). An id is therefore unique across the whole table, while the parent it belongs to is a different column entirely. So "this id already exists" and "this id already exists *here*" are two different questions, and only the second one means replay.
@@ -155,7 +155,7 @@ Eight endpoints, matching spec Section 5. No others. There are no update or dele
 | `GET` | `/trips/{slug}` | either | — | `TripOut` | 200, 404 |
 | `GET` | `/trips/{slug}/stops` | either | — | `StopOut[]` | 200, 404 |
 | `POST` | `/trips/{slug}/stops` | rider only | `StopCreate` | `StopOut` | 201 new, 200 replay, 403, 404, 409, 422 |
-| `POST` | `/trips/{slug}/stops/{id}/photos` | rider only | multipart: `PhotoCreateForm` fields + `file` | `PhotoOut` | 201 new, 200 replay, 403, 404, 409, 422 |
+| `POST` | `/trips/{slug}/stops/{id}/photos` | rider only | multipart form fields `id`, `uploadedBy`, `takenAt` + binary `file` part | `PhotoOut` | 201 new, 200 replay, 403, 404, 409, 422 |
 | `GET` | `/trips/{slug}/stops/{id}/photos` | either | — | `PhotoOut[]` | 200, 404 |
 | `POST` | `/trips/{slug}/bikes` | rider only | `BikeCreate` | `BikeOut` | 201 new, 200 replay, 403, 404, 409, 422 |
 | `PATCH` | `/trips/{slug}/bikes/{id}` | rider only | `BikePatch` | `BikeOut` | 200, 403, 404, 422 |
@@ -165,7 +165,7 @@ Models by file:
 
 - `TripOut`, `Access` — `backend/app/models/trip.py`
 - `StopCreate`, `StopOut`, `LocationSource` — `backend/app/models/stop.py`
-- `PhotoCreateForm`, `PhotoOut` — `backend/app/models/photo.py`
+- `PhotoOut` — `backend/app/models/photo.py`. **There is no photo *request* model.** The upload's form fields are declared inline on the route as `Annotated[..., Form(description=...)]` parameters in `backend/app/api/routes/photos.py`, and those parameter declarations *are* the request contract — that is where their descriptions live and what the OpenAPI document is built from. A `PhotoCreateForm` class existed until `t-takenat-tz-question`; binding it was proven impossible on the pinned FastAPI without changing the wire format, so it was deleted. See "`takenAt` on the photo upload form must be timezone-aware", below, and `docs/decision-log.md` Entry 16.
 - `BikeCreate`, `BikePatch`, `BikeOut` — `backend/app/models/bike.py`
 - `MapFeatureCollection` and its feature/geometry/properties models — `backend/app/models/map.py`
 - `ErrorCode`, `ErrorDetail`, `ErrorEnvelope` — `backend/app/models/common.py`
@@ -178,7 +178,7 @@ Models by file:
 
 **`POST /trips/{slug}/stops`** — `StopCreate` carries the client-generated id, coordinates, `locationSource`, `arrivedAt` and optional notes. The id decides a three-way branch (see Idempotency, above): an **unseen** id creates the stop and returns `201`; an id **already on this trip** is a replay and returns the existing stop with `200`; an id that exists **on a different trip** returns `409` / `CONFLICT` with nothing created and nothing about the other trip disclosed — not in the body, not in the message. The replay lookup is on `(trip_id, id)`, and the cross-trip case is found by checking, not by letting the insert fail.
 
-**`POST /trips/{slug}/stops/{id}/photos`** — multipart. `PhotoCreateForm` describes the form *fields* only; the binary part (`file`) is a separate multipart part and is not a field on the Pydantic model, because Pydantic models don't carry binary parts. `{id}` here is the stop id the photo attaches to. Replay of a known photo id returns the existing photo with `200` rather than storing the bytes twice.
+**`POST /trips/{slug}/stops/{id}/photos`** — `multipart/form-data`. Three form fields — `id`, `uploadedBy`, `takenAt` — plus `file`, the binary part, as a fourth part. They are declared as inline `Form(...)` / `File(...)` parameters on the handler rather than as a request model: there is no Pydantic class for this request body (see "Models by file", above). `takenAt` must carry a UTC offset — see "`takenAt` on the photo upload form must be timezone-aware", below. `{id}` here is the stop id the photo attaches to. Replay of a known photo id returns the existing photo with `200` rather than storing the bytes twice.
 
 **`GET /trips/{slug}/stops/{id}/photos`** — photos for one stop. See Photo serving, below, for what `url` actually is.
 
@@ -274,6 +274,71 @@ The reasoning this replaces — that the description must *not* claim timezone-a
 
 ---
 
+## `takenAt` on the photo upload form must be timezone-aware
+
+**Ruling (`t-takenat-tz-question`).** `takenAt` on `POST /api/trips/{slug}/stops/{stop_id}/photos` is an **offset-aware ISO 8601 instant**. A **naive** value — one carrying no UTC offset — is **rejected** with `422` / `VALIDATION_ERROR`. It is not defaulted, not assumed to be UTC, and not assumed to be the server's local time.
+
+Read the next two subsections before the third. The conclusion here is identical to `StopCreate.arrivedAt`'s, and it was **not** reached by copying it across — it was reached by measuring the server and by testing the one premise that was supposed to make photos different, which failed. Anyone skimming will assume the analogy did the work. It did not.
+
+### Why this is a live bug and not a style preference — the asyncpg measurement
+
+A naive `takenAt` did not land in the database as "a naive value". It landed as a **different instant depending on which machine served the request.**
+
+SQLAlchemy's asyncpg dialect has **no bind processor** for `timestamptz`, so a naive `datetime` reaches asyncpg untouched, and asyncpg's `timestamptz_encode` calls `obj.astimezone(utc)` — which resolves a naive datetime in the **host process's local zone**. Measured, same input both times:
+
+| Host zone | Input `takenAt` | Stored instant |
+|---|---|---|
+| `Malay Peninsula Standard Time` (UTC+8) | `2026-06-14T10:00` | `2026-06-14T02:00Z` |
+| UTC (the container) | `2026-06-14T10:00` | `2026-06-14T10:00Z` |
+
+**Eight hours of divergence for identical input, decided by where the API happens to run.** A developer's local `uvicorn` and the deployed container wrote different instants from the same upload, on a shipped route, with no error anywhere. That is why this was a Gate 1 (**CURRENTLY BROKEN**) fix rather than debt: it is not that a naive value *could* be misread, it is that two deployments of the same code already read it two ways.
+
+### Why photos were thought to be different — the EXIF argument, tested and failed
+
+The question was filed separately from the `arrivedAt` ruling on one specific premise, and the filing said in as many words: do not close this by copying Entry 15 across, because the input is a different kind of input. The premise:
+
+> EXIF `DateTimeOriginal` is **naive by design** — the offset lives in a separate `OffsetTimeOriginal` tag that is frequently absent on imported, exported or edited images. So "reject naive" may be **unsatisfiable** for a large share of real photos, and the answer may have to be something weaker.
+
+**That premise was tested and it failed.** EXIF is never the wire source. The frontend composes this field before the request is built, and `Date.prototype.getTimezoneOffset()` is available unconditionally in every browser the app runs in. There is no case where the client has a capture time and no offset to pair with it — at worst it has the *device's current* offset, which for a photo just picked on that device is the right one.
+
+**The frontend ladder — contract text, not a suggestion.** Whoever builds `s-frontend-add-stop-flow` implements this, in order, stopping at the first rung that yields a value:
+
+- **(a)** `DateTimeOriginal` **and** `OffsetTimeOriginal` both present → combine them. Most faithful: the offset the camera itself recorded.
+- **(b)** `DateTimeOriginal` present, no `OffsetTimeOriginal` → combine the wall-clock reading with the **device's current** UTC offset from `getTimezoneOffset()`.
+- **(c)** No usable EXIF at all → `new Date().toISOString()` at pick time.
+
+(b) and (c) can be wrong — a photo imported from a camera whose clock was set in another timezone, or picked from the library weeks later. They are wrong by a bounded, explainable amount. An unenforced naive value was wrong by *wherever the server was running*, which is not a property of the photo at all.
+
+### Only now: it lands where `arrivedAt` landed
+
+With the EXIF objection gone, the field is structurally what `StopCreate.arrivedAt` is — captured on-device, possibly hours offline, by a rider crossing timezone boundaries, synced later, stored in a `timestamptz` column — and it gets the same answer for the same reasons. See decision-log Entry 15 for that reasoning and Entry 16 for this one. The three consequences below carry over intact.
+
+**The endpoint table does not change.** This is the **same `422` already listed** on the `POST /trips/{slug}/stops/{id}/photos` row. A naive value fails schema validation *before the handler runs*, exactly like a missing `uploadedBy` — it is not a new failure mode, a new code, or a new status. **Do not add a second `422` row for it.** That row stays byte-identical.
+
+**JSON Schema has no vocabulary for timezone-awareness — so this is server-enforced only.** Pydantic's `AwareDatetime` and a bare `datetime` emit the *identical* schema: `{"type": "string", "format": "date-time"}`. There is no keyword meaning "offset required". So:
+
+- The OpenAPI document cannot express the constraint, and **Kubb types this `takenAt: string`.**
+- The generated client therefore **cannot catch a naive value** — no type error, no client-side validation failure, nothing at the call site.
+- The **only** thing that rejects a naive value is the server.
+
+The corollary a maintainer needs: because the emitted schema is byte-identical either way, **relaxing `AwareDatetime` back to `datetime` produces no visible diff in the OpenAPI document.** It looks free. It is the exact change that reintroduces the host-zone bug above. The route file carries this warning beside the parameter for that reason.
+
+**What that costs the offline queue.** `VALIDATION_ERROR` is a **never-retry** code (see "Error envelope", above), so the queued item is **dequeued permanently and surfaced to the rider**. A frontend bug that sends a naive `takenAt` does not retry the upload — it **loses** it, and shows the rider an error instead. That is the accepted trade, the same one made for `arrivedAt`: a surfaced error is recoverable because the rider is told; a photo silently filed hours off in the timeline is not.
+
+### `takenAt` comes back in two spellings
+
+Measured, and worth knowing before writing a client assertion against it:
+
+| Response | Example |
+|---|---|
+| `POST` → `201` (fresh upload) | `2026-06-14T10:00:00+09:30` — echoes the offset the device sent |
+| `POST` → `200` (replay) | `2026-06-14T00:30:00Z` |
+| `GET` (list) | `2026-06-14T00:30:00Z` |
+
+Same instant, different text. The `201` returns the value as it arrived; the read paths return it as the `timestamptz` column gives it back, which is UTC. **Compare these as datetimes, never as strings** — a string comparison between a fresh `201` and a later `GET` of the same photo will not match. `PhotoOut.takenAt`'s description states this too, so it reaches the generated client. The divergence itself is filed as debt (see `docs/progress-notes.md`, `t-takenat-tz-question`); the contract deliberately promises **an instant, not a spelling**.
+
+---
+
 ## Related work
 
 - **Introduced by:** story `s-api-contract` (Session 1), tasks `t-error-envelope-model`, `t-trip-model`, `t-stop-model`, `t-bike-model`, `t-photo-model`, `t-map-model`, and this document, `t-api-contract-doc`.
@@ -300,11 +365,13 @@ Everything below is known and deliberate, not an oversight:
    | `PATCH /api/trips/{slug}/bikes/{id}` | `t-bikes-patch-endpoint` | `ae96533` |
    | `GET /api/trips/{slug}/map` | `t-map-geojson-endpoint` | `f8fdc9b` |
 
-   **"Built" is not "the story is closed."** Three of the M2 stories were reverted from `done` to `in_progress` on 2026-09-16 because they still hold open tasks — undescribed fields on `PhotoCreateForm` (`BikeCreate`/`BikePatch` closed 2026-09-17, `PhotoOut` closed 2026-09-17 by `t-photoout-field-descriptions`), the unruled `PhotoCreateForm.takenAt` question (item 5 below), the two access-control guards under `s-stop-crud`, and the OneDrive sync half of `s-photo-upload-onedrive-sync`, which has no task at all. See `docs/progress-notes.md` under `m2-core-api`. The six files in `backend/app/models/` remain the contract; the OpenAPI document now carries all eight routes plus `ErrorEnvelope`, so a generated Kubb client covers the whole surface — including the models whose fields are still undescribed.
+   **"Built" is not "the story is closed."** Three of the M2 stories were reverted from `done` to `in_progress` on 2026-09-16 because they still hold open tasks. Most of those have since closed: the undescribed-field tasks (`BikeCreate`/`BikePatch` 2026-09-17; `PhotoOut` 2026-09-17 by `t-photoout-field-descriptions`; the photo **form** fields 2026-09-17, absorbed into `t-takenat-tz-question`) and the `takenAt` timezone question (item 5 below, now **ruled**). Still open: the two access-control guards under `s-stop-crud`, and the OneDrive sync half of `s-photo-upload-onedrive-sync`, which has no task at all. See `docs/progress-notes.md` under `m2-core-api`. The six files in `backend/app/models/` remain the contract; the OpenAPI document now carries all eight routes plus `ErrorEnvelope`, so a generated Kubb client covers the whole surface — including the models whose fields are still undescribed.
 2. **The global exception handlers are done.** Task `t-error-envelope-handlers` (`backend/app/core/errors.py` + `main.py` wiring) closed after QA. FastAPI's default `422`, `405` and `500` bodies are normalised onto `ErrorEnvelope` by those handlers, so they are no longer response shapes that differ from every other failure. `backend/app/models/common.py` defines the shape — including the two codes added for `405`/`500` (see Error envelope, above) — and the wiring renders it. `t-validation-message-offset` — a `422` message exposing a pydantic byte offset as the field path — **closed 2026-09-17**: an unparseable body now returns a fixed clause, verified on real uvicorn at three different decode offsets (see "`message` and the `INTERNAL_ERROR` leak boundary", above). One narrower remainder is still tracked separately rather than here, **promoted and scoped**: `t-openapi-error-responses` (the shared `responses=` constant across the eight routes, and FastAPI's auto-injected, here-unreachable `422`; scoping it is itself the `ba` task, per its tracker row). Corrected 2026-09-16: `t-conflict-code-impl` used to head that list as "contract, not yet code". It is code — `HTTPStatus.CONFLICT: ErrorCode.CONFLICT` is wired at `backend/app/core/errors.py:72` (commit `7ca82ab`), so a `409` renders a `CONFLICT` envelope and no longer falls through to `INTERNAL_ERROR`. The one consequence of that mapping being keyed on **status** is tracked as `t-bare-409-envelope-bypass`: a bare `HTTPException(409)` gets a well-formed envelope without passing through `ApiError.conflict`, where the message leak boundary lives.
 3. **Handler-side map behaviour is unenforced by the models.** Sorting stops by `arrivedAt` before building the trail, and omitting the trail below 2 stops, are both route-handler responsibilities. `backend/app/models/map.py` encodes the shape and the ">= 2 positions" constraint; it cannot enforce that positions arrive in the right order.
 4. **Replay detection is a handler responsibility too.** The models carry the client-generated `id`; recognising an already-seen id and returning the stored record with `200` is implemented in the route + `data/` layer, and needs its own tests per spec Section 12's offline-queue priority. **The cross-parent branch is part of that same responsibility** — nothing in the models can express it. `id` is a global primary key and the parent is a separate column, so distinguishing "replay" from "this id belongs to another trip" is a `(parent, id)` lookup the handler must perform before inserting; a model can neither see the parent nor stop the wrong lookup being written.
-5. **`PhotoCreateForm.takenAt` — an open question, not an answer.** Structurally it is the same field as `StopCreate.arrivedAt`: a bare `datetime` on a create model, landing in a `timestamptz` column, captured on-device and potentially offline. The obvious move is to apply the ruling above to it verbatim. **That has deliberately not been done**, because photos have a constraint stops do not: the timestamp's natural source is EXIF `DateTimeOriginal`, which is **naive by design** — the offset lives in a *separate* `OffsetTimeOriginal` tag that is frequently absent on imported, exported or edited images. So "reject naive" may be materially harder for the frontend to satisfy here than it is for stops, and the answer may have to be that the **frontend supplies the device offset at capture time** rather than trusting EXIF to carry one. Which of those it is gets decided when the photo endpoints are scoped (`s-photo-upload-onedrive-sync`), not before. Filed as `t-takenat-tz-question`. Until that lands, `PhotoCreateForm.takenAt` is **unruled** — do not read the `arrivedAt` subsection as having settled it by analogy.
+5. **The photo form's `takenAt` — RULED 2026-09-17, no longer outstanding.** It is an offset-aware instant; a naive value is a `422` / `VALIDATION_ERROR`. See "`takenAt` on the photo upload form must be timezone-aware", above, for the ruling and `docs/decision-log.md` Entry 16 for the two arguments it overruled. This item is kept only to record that the question was open and how it closed.
 
-   **`PhotoOut.takenAt`'s description was written to keep it unruled** (`t-photoout-field-descriptions`, 2026-09-17). It states what the instant means — device capture time, not upload time — and makes **no timezone claim at all**, because a description is contract text Kubb ships into the generated client, and a rule stated there would settle this question by the back door. A ratchet test pins the silence word-by-word. When the ruling lands, two strings change together: that description, and the inline form-field description at `backend/app/api/routes/photos.py:141`, which today says "ISO 8601 timestamp when the photo was taken." — a phrase that settles nothing, since ISO 8601 admits both naive and offset-carrying forms.
+   The EXIF premise that kept it open — `DateTimeOriginal` is naive by design, so "reject naive" may be unsatisfiable for photos — was **tested and failed**: EXIF is never the wire source, the frontend composes the field, and `getTimezoneOffset()` is always available. The contract section carries the resulting frontend ladder.
+
+   Two things the earlier text said that are **no longer true**, called out because they were deliberate and someone may remember them: `takenAt` is not "unruled", and `PhotoOut.takenAt`'s description no longer makes "no timezone claim at all". That silence was correct while nothing enforced an offset — a description is contract text Kubb ships into the generated client, and a rule stated there would have settled the question by the back door. Now the server enforces it, so the description states it, and the ratchet test that pinned the silence word-by-word was **inverted into a positive pin**. Both strings changed in the same patch that changed the type (`t-takenat-tz-question`), together with the inline form-field description on the route, which previously read "ISO 8601 timestamp when the photo was taken." — a phrase that settled nothing, since ISO 8601 admits both naive and offset-carrying forms.
 6. **No trip record is seeded yet.** Story `s-seed-trip-record` still has to put the single trip and its two slugs in Postgres before any of these endpoints can return anything. Slug values live only in the database — none appear in this document, and `{slug}` throughout is a placeholder.

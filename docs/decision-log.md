@@ -35,7 +35,8 @@ empirically disproves another.
 | 12 | Finding triage gate, and who may write the governance files | `docs/finding-triage-gate.md`, `CLAUDE.md`, `.claude/**` | The orchestrator's weaker three-question triage was replaced by the user's gate — Stop Condition names the over-investigation behaviours rather than trusting judgment, QA classification is evidence not authority. Separately: no agent can write `CLAUDE.md` or `.claude/**`, so the **orchestrator** owns those paths; widening `docs` to `.claude/**` was rejected as self-modifying permissions |
 | 13 | The one backlog item the gate promoted — Gate 2 vs "the slug is already in the access log" | `core/errors.py`, `progress.json` | `ba` classified `t-error-log-parameter-redaction` CURRENTLY OBSERVABLE (handler and route both run today; qa *observed* the slug in the rendered traceback). The note's own argument — marginal disclosure is zero, so ORDINARY DEBT — lost: Gate 2 tests whether a runtime path is current, not how severe it is. Orchestrator additionally found the task closes only **one of two** sinks; re-scoped, not re-classified |
 | 14 | A client-generated id that already exists under a *different* trip — the sixth `ErrorCode` | `models/common.py`, `core/errors.py`, `repositories/stops.py`, `api-contract.md` | `ba` escalated a second contract gap rather than inventing a code (Entry 6's rule, applied again); user ruled **`CONFLICT` / `409`**. Replay matches **`(parent, id)`**, never `id` alone, and the cross-parent branch is found **by a check, never a failed INSERT** (that renders `500` and the queue retries forever). Four readings rejected — the composite `(trip_id, id)` **primary key is rejected on cost, not correctness**: it cascades into `photos.stop_id` and the unbuilt photo-upload design. Entry 3 does **not** forbid `ON CONFLICT (id) DO NOTHING` here |
-| 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. `PhotoCreateForm.takenAt` is explicitly **left open** (`t-takenat-tz-question`): EXIF `DateTimeOriginal` is naive by design |
+| 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. The photo form's `takenAt` was explicitly **left open** here on an EXIF premise — **since ruled the same way by Entry 16, independently, after that premise was tested and failed**; do not cite this entry for it |
+| 16 | The photo form's `takenAt` must be timezone-aware — and `PhotoCreateForm` is deleted, not bound | `api-contract.md`, `routes/photos.py`, `models/photo.py` | Two losing arguments. (a) **The EXIF objection, disproved:** "`DateTimeOriginal` is naive by design so reject-naive may be unsatisfiable" — EXIF is never the wire source, the frontend composes the field and `getTimezoneOffset()` is always available. (b) **The gate classification was wrong:** filed TRIGGERED on "no route imports `PhotoCreateForm`" — true of the model, false of the behaviour, because `photos.py` re-declared `takenAt: datetime` inline. **"No route imports it" is not "no route implements it."** Measured: a naive value is resolved in the *host process's* zone by asyncpg, so the same upload stored `02:00Z` on a UTC+8 host and `10:00Z` in the container. Binding a form model was proven impossible on FastAPI 0.141.1 (`_should_embed_body_fields` returns `True` unconditionally past one body field), so the pre-authorised fallback shipped: model deleted, inline `Form(...)` params are the contract |
 
 ---
 
@@ -1387,18 +1388,26 @@ client is least able to protect.
   input as well as output; it was already pinned by `test_arrived_at_is_timezone_aware` in
   `backend/tests/test_stops_list_endpoint.py`.
 
-### Explicitly not settled: `PhotoCreateForm.takenAt`
+### Was explicitly not settled here: the photo form's `takenAt` — SETTLED SEPARATELY, Entry 16
 
-`takenAt` is structurally the same field — bare `datetime`, `timestamptz` column, captured on-device
-and possibly offline — and the obvious move is to apply this ruling to it verbatim. **This entry does
-not do that, and must not be cited as having done it.**
+**Status as of 2026-09-17: ruled, by Entry 16, not by this entry.** The paragraph below is the
+original text and it still says something true — *this* entry does not settle `takenAt` and must not
+be cited as having done it. Entry 16 reached the same conclusion **independently**: by measuring the
+server, and by testing the EXIF premise below, which failed. Cite Entry 16.
 
-Photos carry a constraint stops do not: the natural source of `takenAt` is EXIF `DateTimeOriginal`,
-which is **naive by design** — the offset lives in a separate `OffsetTimeOriginal` tag that is
-frequently absent on imported, exported or edited images. So "reject naive" may be materially harder
-for the frontend to satisfy here, and the answer may have to be that the **frontend supplies the
-device offset at capture** rather than trusting EXIF to carry one. Decided when the photo endpoints
-are scoped (`s-photo-upload-onedrive-sync`). Filed as `t-takenat-tz-question`.
+> `takenAt` is structurally the same field — bare `datetime`, `timestamptz` column, captured on-device
+> and possibly offline — and the obvious move is to apply this ruling to it verbatim. **This entry does
+> not do that, and must not be cited as having done it.**
+>
+> Photos carry a constraint stops do not: the natural source of `takenAt` is EXIF `DateTimeOriginal`,
+> which is **naive by design** — the offset lives in a separate `OffsetTimeOriginal` tag that is
+> frequently absent on imported, exported or edited images. So "reject naive" may be materially harder
+> for the frontend to satisfy here, and the answer may have to be that the **frontend supplies the
+> device offset at capture** rather than trusting EXIF to carry one. Decided when the photo endpoints
+> are scoped (`s-photo-upload-onedrive-sync`). Filed as `t-takenat-tz-question`.
+
+The last sentence of that paragraph turned out to be the answer — the frontend does supply the
+offset — but as the *rule*, not as a weaker alternative to one. Entry 16.
 
 **Co-location owed (Entry 4's rule).** One site, outside the `docs` agent's `docs/`-only scope, so
 it could not be placed by the patch that recorded this entry:
@@ -1409,3 +1418,170 @@ it could not be placed by the patch that recorded this entry:
   option would actually be retried**: by someone relaxing the aware type back to bare `datetime` on
   the reasoning that the emitted schema is byte-identical either way. That reasoning is *true* — and
   it is exactly the point being missed, because the schema was never what was doing the enforcing.
+
+---
+
+## 16. The photo form's `takenAt` must be timezone-aware — and the model that was supposed to carry it is deleted
+
+**Who:** the filing that classified this as debt, and the EXIF argument inside it, vs. what was
+measured when the task was finally picked up. Both lost, and both lost **empirically**.
+**Where:** `docs/api-contract.md` §"`takenAt` on the photo upload form must be timezone-aware",
+`backend/app/api/routes/photos.py`, `backend/app/models/photo.py`,
+`backend/tests/test_photo_endpoints.py`, `backend/tests/unit/test_photo_model.py`.
+Task `t-takenat-tz-question` (gate: **broken**), which absorbed `t-photocreateform-field-descriptions`.
+
+**The ruling.** `takenAt` on `POST /api/trips/{slug}/stops/{stop_id}/photos` is an **offset-aware
+ISO 8601 instant**. A naive value is **rejected** with `422` / `VALIDATION_ERROR` — not defaulted, not
+assumed UTC, not assumed server-local.
+
+**Read the next two sections before the third.** The conclusion is identical to Entry 15's, and it was
+**not** copied from it. The filing for this task said in as many words: *do not close this by pointing
+at Entry 15 and copying the `arrivedAt` ruling across; the input is a different kind of input.* It was
+not copied. The server was measured, the premise that made photos different was tested, and the
+premise failed. That ordering is the whole reason this entry exists — the conclusion on its own would
+be indistinguishable from the lazy answer.
+
+### (A) What was measured: the same upload stored two different instants
+
+SQLAlchemy's asyncpg dialect has **no bind processor** for `timestamptz`. A naive `datetime` therefore
+reaches asyncpg untouched, and asyncpg's `timestamptz_encode` calls `obj.astimezone(utc)` — which
+resolves a naive datetime in the **host process's local zone**.
+
+| Host zone | Input | Stored |
+|---|---|---|
+| `Malay Peninsula Standard Time` (UTC+8) | `2026-06-14T10:00` | `2026-06-14T02:00Z` |
+| UTC (the container) | `2026-06-14T10:00` | `2026-06-14T10:00Z` |
+
+**Eight hours of divergence for identical input, decided by where the API runs.** A developer's local
+`uvicorn` and the deployed container wrote different instants from the same request — today, on a
+shipped route, with no error raised anywhere. Not "could be misread": *was* read two ways by two
+deployments of one codebase.
+
+### (B) The losing argument that was disproved: EXIF
+
+The filing's central claim, and the reason this was kept out of Entry 15:
+
+> `arrivedAt` is supplied by the app at capture, so "reject naive" is a satisfiable rule. `takenAt`
+> comes from EXIF, where `DateTimeOriginal` **is naive by design**: the UTC offset lives in a separate
+> `OffsetTimeOriginal` tag that is frequently absent on imported, edited or re-encoded images. So
+> "reject naive" may be **unsatisfiable** for a large share of real photos — the offset genuinely is
+> not in the file.
+
+Stated fairly, because every factual sentence in it is true. `DateTimeOriginal` really is naive,
+`OffsetTimeOriginal` really is often missing, and if EXIF were the source of the wire value the
+conclusion would follow.
+
+**It fails on its unstated premise: that EXIF is the wire source. It is not.** The frontend composes
+this field before the request is built, and `Date.prototype.getTimezoneOffset()` is available
+unconditionally. There is no case where the client holds a capture time and no offset to pair with it.
+The ladder, now contract text for `s-frontend-add-stop-flow`:
+
+- **(a)** `DateTimeOriginal` + `OffsetTimeOriginal` → use both.
+- **(b)** `DateTimeOriginal`, no offset tag → wall-clock reading + the device's **current** offset.
+- **(c)** No usable EXIF → `new Date().toISOString()` at pick time.
+
+(b) and (c) can be wrong — an imported photo from a camera whose clock was set elsewhere. They are
+wrong by a **bounded, explainable** amount. The unenforced naive value was wrong by *wherever the
+server was running*, which is not a property of the photo at all. A worse-but-bounded answer beats an
+answer that is a deployment detail.
+
+### (C) Only now does it land where `arrivedAt` landed
+
+With the EXIF objection gone, the field is structurally what `StopCreate.arrivedAt` is, and gets the
+same answer for the same reasons. Entry 15's three consequences carry over unchanged and are not
+re-derived here: the endpoint table does **not** gain a `422` row (a naive value fails schema
+validation before the handler runs, so it is the `422` already listed); JSON Schema has no vocabulary
+for timezone-awareness, so Kubb types it `string` and this is **server-enforced only**; and
+`VALIDATION_ERROR` is never-retry, so a naive value **loses the photo** rather than retrying it —
+accepted, because a photo silently filed hours off is unrecoverable and a surfaced error is not.
+
+### The second losing argument, and the transferable one: the gate classification was wrong
+
+This was filed **TRIGGERED DEBT (Gate 3)**, with the current-consumer line stated plainly:
+
+> Current consumer: NONE. No route imports `PhotoCreateForm` — the model exists and nothing binds it.
+
+**True of the model. False of the behaviour.** `backend/app/api/routes/photos.py` had re-declared
+`takenAt: datetime` as an inline `Form(...)` parameter. The route implemented the form **without
+importing it** — so the grep that justified "no consumer" was searching for a *symbol* while the
+question was about a *behaviour*. The naive-acceptance bug was live on a shipped endpoint for the
+entire time it sat in the backlog as having no consumer. Reclassified **Gate 1 (CURRENTLY BROKEN)**.
+
+> **"No route imports it" is not "no route implements it."**
+
+That is the part to carry forward. The triage gate asks whether a runtime path exercises the
+behaviour today, and an import graph is only a proxy for that — a good one for models bound as request
+bodies, a bad one wherever a route can restate a field inline. `Form(...)`, `Query(...)`, `Header(...)`
+and hand-built dicts are all places the same substitution can be made. When a finding's no-consumer
+evidence is "nothing imports the class", check whether anything **re-declares the field**.
+
+### The design that was pre-authorised and proved impossible
+
+The task's first choice was to bind the form model properly: `Annotated[PhotoCreateForm, Form()]`,
+which would have given the field one home and closed the descriptions task at the same time.
+
+**Structurally impossible on the pinned FastAPI (0.141.1) — proven, not assumed.**
+`fastapi.dependencies.utils._should_embed_body_fields` returns `True` **unconditionally** once there
+is more than one body field, and `form` + `file` are two. There is no escape hatch:
+`params.Form.__init__` never forwards an `embed` argument to `Body`, so `Form(embed=False)` is
+silently swallowed — `qa` confirmed that independently. Reproduced on a minimal app: the body schema
+becomes `{"form": {"$ref": ...}, "file": {...}}` and a flat multipart POST returns
+`422 {"loc": ["body", "form"]}`. **The flat wire format this contract promises is unreachable that
+way.**
+
+So the pre-authorised fallback was taken. **`PhotoCreateForm` is deleted** — from `models/photo.py`
+and from the tree — and the three inline `Annotated[..., Form(description=...)]` parameters on the
+route **are** the request contract. `takenAt` is `Annotated[AwareDatetime, Form(...)]`. That is also
+how `t-photocreateform-field-descriptions` closed: the descriptions it wanted now live on the
+parameters, which is the only place a client ever saw them from.
+
+**Footnote, so nobody re-derives the general claim as unqualified.** A form model that carries
+`UploadFile` as a *field* **does** bind flat on FastAPI 0.141.1 — so "a bound form model is impossible
+here" is false as stated. It was disqualified for a different reason: FastAPI then declares the
+request content type as `application/x-www-form-urlencoded` rather than the `multipart/form-data` this
+contract promises. What is impossible is a bound form model **in criterion 2's stated shape** (model +
+separate `UploadFile` parameter, flat multipart wire format), and that narrower claim is what made the
+fallback legitimate. Recorded as ordinary debt; see `docs/progress-notes.md` under
+`t-takenat-tz-question`.
+
+### What changed, and the one thing that did not
+
+**The OpenAPI diff is description text and nothing else — measured.** The synthesised request body
+schema keeps its name `Body_upload_photo_api_trips__slug__stops__stop_id__photos_post` and its four
+properties `{id, uploadedBy, takenAt, file}` with identical types. `takenAt` is still
+`{"type": "string", "format": "date-time"}`, because `AwareDatetime` and `datetime` emit the same
+JSON Schema. No rename, no type change, no new component, and no generated client to break
+(`frontend/src/api/` is still a README).
+
+**Which is exactly the trap.** Relaxing `AwareDatetime` back to `datetime` shows up in a spec diff as
+*nothing at all*, while reintroducing the host-zone bug in (A). The reasoning someone will use — "the
+emitted schema is byte-identical either way" — is **true**, and is precisely the point being missed:
+the schema was never what was enforcing this. Entry 15 records the same trap for `arrivedAt`; this is
+the second field it applies to.
+
+**`PhotoOut.takenAt`'s description was inverted, deliberately.** `t-photoout-field-descriptions`
+(2026-09-17) had written it to make **no timezone claim at all**, and pinned that silence word-by-word
+with a ratchet test. That restraint was correct *while nothing enforced an offset*: a description is
+contract text Kubb ships into the generated client, and a rule stated there would have settled this
+question through a docstring, where nobody looks for rulings. The ruling makes the claim true, so the
+description now states it and the ratchet was **inverted into a positive pin**. The earlier call was
+not overturned — its condition expired.
+
+**Verification.** Suite green at **506** (from 483 with 1 failing). Mutation-tested: reverting
+`AwareDatetime` → `datetime` fails 8 tests; reverting `PhotoOut.takenAt`'s description fails 1;
+re-adding the old placeholder string fails 1. `qa` also verified live that a viewer-slug POST carrying
+a naive `takenAt` still returns **403**, not `422` — the tightened type opened no 422-before-403
+disclosure channel, which is the access-control failure this kind of change most plausibly introduces.
+
+**Co-location (Entry 4's rule) — already placed, by the implementing patch rather than by this one.**
+`backend/app/api/routes/photos.py` carries the asyncpg measurement as a comment directly above the
+`takenAt` parameter, ending "Do not relax this to `datetime`", and cites the contract section by its
+exact title. That is the file where the rejected option would actually be retried, and it is the
+reason the contract section's title must not be renamed: the citation is by string.
+
+**The section was retitled, and that is downstream of the fallback.** The `ba` brief proposed
+"`PhotoCreateForm.takenAt` must be timezone-aware", parallel to Entry 15's heading. That names a class
+this patch deleted, so the shipped title is **"`takenAt` on the photo upload form must be
+timezone-aware"** — which is what the route already cites. Not cosmetic: a heading naming a
+nonexistent model is how the four stale `PhotoCreateForm` references this patch also had to repair got
+there in the first place.
