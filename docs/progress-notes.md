@@ -30,9 +30,21 @@ This story also fires the outstanding half of `t-stops-405-doc-revisit`: registe
 
 The contract gap this story surfaced — a client-generated id that already exists under a *different* trip — was ruled on by the user before implementation started: `CONFLICT` / `409`, decision-log Entry 14. The four `t-conflict-*` tasks under `s-data-layer-foundation` land that ruling; `t-stops-create-endpoint` consumes it and is no longer blocked on it.
 
+STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped but the story still holds `t-route-dependency-audit` and `t-trip-context-slug-exposure`, the two `gate: triggered` tasks this story's own note above says "both must land with it" — `t-stops-create-endpoint` was the first wired write endpoint and fired their promotion trigger. `in_progress` rather than `not_started` for the same reason `s-agent-tool-boundaries` carries it: `done` tasks sit under it.
+
 ## s-photo-upload-onedrive-sync
 
 Constraint verified by QA: the SQLAlchemy engine in app/data/db.py is created at module import time and its asyncpg connections are bound to the event loop that created them. Safe under uvicorn, --workers and --reload (the pool is empty at import; connections are made lazily in the serving loop). UNSAFE from a second event loop — starting this sync as threading.Thread(target=lambda: asyncio.run(sync())) or from a sync scheduler creating its own loop, while touching app.data.db.async_session, produces an intermittent AttributeError: 'NoneType' object has no attribute 'send'. Intermittent because the failed checkout invalidates and replaces the connection. dev is adding this constraint as a comment in db.py.
+
+STATUS REVERTED `done` -> `in_progress` 2026-09-16: both photo endpoints shipped (`a628259`) but the story still holds `t-takenat-tz-question`, `t-photoout-field-descriptions` and `t-photocreateform-field-descriptions` — and the OneDrive sync half in the story's own title has no task at all, so `done` overstated it twice. `in_progress` rather than `not_started`: `done` tasks sit under it.
+
+## s-bike-management
+
+STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped (`ae96533`) but the story still holds `t-bikecreate-field-descriptions` and `t-bikepatch-field-descriptions`, whose promotion triggers — "`POST /trips/{slug}/bikes`" and "`PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`" — fired when those routes bound `BikeCreate` and `BikePatch` as request bodies and published them into the OpenAPI document. `in_progress` rather than `not_started`: `done` tasks sit under it.
+
+## m2-core-api
+
+STATUS REVERTED `done` -> `in_progress` 2026-09-16, alongside three of its five stories. All eight contract endpoints are built and tested — that part of `4958048`'s claim is true and is not in dispute. What was wrong is the inference from it: a milestone is not done when three of its stories still hold seven open tasks (`t-route-dependency-audit`, `t-trip-context-slug-exposure`, `t-takenat-tz-question`, `t-photoout-field-descriptions`, `t-photocreateform-field-descriptions`, `t-bikecreate-field-descriptions`, `t-bikepatch-field-descriptions`), plus `s-data-layer-foundation`, which was never `done` and carries the rest of the backlog. "All core API endpoints done" and "milestone 2 complete" are different claims; the commit subject asserted the second from the first.
 
 ## s-finding-triage-gate
 
@@ -122,6 +134,10 @@ NARROWED 2026-09-16 — AND THE ORIGINAL FRAMING WAS WRONG, WHICH IS THE PART WO
 WHAT ACTUALLY REMAINS, checked against the tree on 2026-09-16: `integration/` only. The README reserves it for the three priority failure modes (access control, data integrity, offline queue); there is no `backend/tests/integration/` directory. Everything else in `backend/tests/` is `unit/test_stop_model.py` plus seven root-level `test_*.py` files.
 
 STILL `not_started`, STILL `gate: ordinary`, AND STILL NOT WORK. No consumer, no trigger — a README has no runtime path. `integration/` is on the same trajectory `unit/` just travelled: the first access-control or offline-queue test to be written will read that line and create the directory, the same way this one did. Editing the README to delete the line would REMOVE the guidance that worked, which is the opposite of the fix. If anything ever closes this it should be the directory appearing, not the sentence disappearing.
+
+RE-CHECKED AGAINST THE TREE 2026-09-16, BECAUSE A PREVIOUS PASS COULD NOT DETERMINE IT. `backend/tests/integration/` DOES NOT EXIST. The full contents of `backend/tests/` are: `README.md`, `conftest.py`, `unit/test_stop_model.py`, and eleven root-level `test_*.py` files — `test_schema.py`, `test_slug_access.py`, `test_seed_trip.py`, `test_error_envelope.py`, `test_head_method.py`, `test_trip_metadata_endpoint.py`, `test_stops_list_endpoint.py`, `test_stops_create_endpoint.py`, `test_bikes_create_endpoint.py`, `test_bikes_patch_endpoint.py`, `test_map_endpoint.py`, `test_photo_endpoints.py`. So the `integration/` line in `README.md:5` still describes a directory that has never been created.
+
+THAT CHANGES NOTHING, AND THE REASON IS WORTH RESTATING RATHER THAN ASSUMED. `not_started` / `gate: ordinary` stands: a README has no runtime path, nothing imports or executes it, so no behaviour can depend on its being wrong — Gate 4, ordinary debt, no current consumer and no honest promotion trigger. Note specifically that the M2 endpoint tests did NOT fire anything here: `test_bikes_create_endpoint.py` and `test_photo_endpoints.py` do assert access control (403 on a viewer slug), which is one of the three failure modes `README.md:5` reserves `integration/` for, and they landed at the root anyway. That is evidence the line is aspirational rather than followed — NOT evidence it should be deleted. Deleting it is still the wrong fix for the reason above: `unit/` closed itself by being used, and `integration/` closes the same way when someone writes the offline-queue or OneDrive-failure test the line is actually reserved for. DO NOT delete the `integration/` line.
 
 ## t-openapi-error-responses
 
@@ -230,6 +246,12 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`. **THIS 
 - Current consumer: none in the defect sense; the one existing site works.
 - Promotion trigger, reused verbatim from the note above: "MUST land BEFORE the first s-stop-crud handler, since that is where the copying starts."
 - A firing trigger is a promotion candidate, not a licence: it is still not implemented in this patch, and whoever promotes it must first do what the note above requires — enumerate every session-taking site (routes plus `core/security.py`) and state which adopt the alias and which do not, deliberately rather than by omission.
+
+STATUS CORRECTED `not_started` -> `done` 2026-09-16. NO PATCH WAS WRITTEN FOR THIS CORRECTION — the work was already in the tree and the tracker had simply not been updated, which is the only reason this reads as a status flip rather than a task closeout. It landed in commit `f4eae79`, "chore(data): add SessionDep so route modules import no SQLAlchemy", and the sequencing constraint this note set held: `f4eae79` precedes `c80f011` (`t-stops-create-endpoint`), so the alias existed before the copying started. Evidence, verified against the tree by the orchestrator:
+- `SessionDep = Annotated[AsyncSession, Depends(get_session)]` at `backend/app/data/db.py:111`.
+- Adopted by all five route modules — `trips.py`, `stops.py`, `photos.py`, `bikes.py`, `map.py` — and by `backend/app/core/security.py`. No module under `app/api/routes/` imports `AsyncSession` any more, which is the specific claim in `db.py`'s header that `trips.py` used to disprove.
+- `_resolve_trip` and every repository function DELIBERATELY KEEP a bare `AsyncSession`. That is not an omission: `Depends(...)` means nothing outside a request, so annotating them with `SessionDep` would make them un-callable from a seed script or a background job. The alias is for FastAPI dependency injection only.
+- The precondition this note set for closing is discharged IN THE CODE, not here: the comment at `db.py:96-110` enumerates the session-taking sites and states which adopt the alias and which do not, deliberately. It also keeps the honest framing this note demanded — the alias hides the import, not the coupling; the value bought is greppability and a true module header, not portability.
 
 ## t-bike-order-collation
 
@@ -511,6 +533,66 @@ TRIGGERED DEBT, filed not scoped. NONE of `BikePatch`'s 5 fields carries a `desc
 - Current consumer: none — no route publishes the model.
 - Promotion trigger: `PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`.
 - Worth a sentence when it is taken: on a PATCH model the description is where the partial-update semantics get stated (omitted means unchanged), which is exactly the thing a generated client cannot infer from the type.
+- TRIGGER FIRED 2026-09-16, TASK STILL OPEN. `t-bikes-patch-endpoint` binds `BikePatch` as the request body of `PATCH /trips/{slug}/bikes/{id}`, so the model is now published into the OpenAPI document and reaches the generated client with all five fields undescribed. This is no longer filed-not-scoped debt with no consumer; it is a promotion candidate with a live one.
+
+## t-photo-upload-endpoint
+
+CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, as part of `t-m1-m2-record-reconciliation` — this task shipped with no note at all. Everything below is read off the tree and the git history, not off a `dev` or `qa` report, because none was recorded. Treat the absence as the finding it is: five M2 endpoints closed without the closeout that every earlier task got.
+
+COMMIT `a628259`, "feat(api): GET + POST /api/trips/{slug}/stops/{id}/photos — list and upload" — ONE COMMIT CARRIES BOTH PHOTO TASKS, this one and `t-photo-list-endpoint`. Tests: `backend/tests/test_photo_endpoints.py`, 18 test functions covering both endpoints. Suite green at 395 collected, verified this session.
+
+WHAT ACTUALLY SHIPPED, where it differs from what the contract table implies:
+- The handler declares `id`, `uploadedBy` and `takenAt` as inline `Form(...)` parameters (`backend/app/api/routes/photos.py:137-140`) rather than binding `PhotoCreateForm`. The endpoint table's request-model cell reads "multipart: `PhotoCreateForm` fields + `file`", and the *fields* match — but the model class itself is never imported by the route, so it is still absent from the OpenAPI document. Consequence for the backlog: `t-photocreateform-field-descriptions`'s promotion trigger, stated as "`POST /trips/{slug}/stops/{id}/photos` publishing the model into OpenAPI", HAS NOT FIRED — the endpoint landed and the model still is not published. Whoever takes that task should decide whether the fix is descriptions on the model or binding the model at all; those are not the same patch.
+- `takenAt` is annotated as a bare `datetime`, so it accepts a naive value against the `timestamptz` column. `t-takenat-tz-question` stays open and stays UNRULED — the endpoint shipped without the ruling its promotion trigger said would be made when it was scoped. Do not read the shipped annotation as the answer; it is the absence of one. The contract question is being scoped separately.
+- Storage is a single `s3.put_object` of the whole file after `await file.read()` (`photos.py:156-161`), i.e. the bytes are held in memory and the upload is not resumable. CLAUDE.md's stack section says "Multipart upload for photos (resumable on failure)" — that is S3 multipart upload, a different thing from the HTTP `multipart/form-data` request this endpoint correctly accepts, and the route docstring's use of "multipart" means only the latter. FILED AS AN OBSERVATION HERE, NOT AS A TASK: no id is minted for it in this pass. It needs `ba`, because the promotion trigger is plausibly `s-offline-queue` (a queued upload resuming after network loss is the scenario the resumability exists for) and that is a scoping call, not a docs call.
+- Idempotency matches the contract's three-way branch and checks replay BEFORE uploading bytes, so a replay does not re-store the object. Cross-stop collision raises `ApiError.conflict` with a message carrying nothing from the conflicting record, as decision-log Entry 14 requires.
+- `{stop_id}` is verified to belong to the resolved trip before any photo work (`_verified_stop`), so a valid stop id from another trip is a 404, not a cross-trip write.
+
+BACKLOG IDS THIS ENDPOINT BEARS ON, all still open: `t-takenat-tz-question`, `t-photocreateform-field-descriptions` (trigger NOT fired, see above), `t-photoout-field-descriptions` (trigger FIRED — `PhotoOut` is the declared response model of both routes and is published).
+
+## t-photo-list-endpoint
+
+CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, same pass and same caveat as `t-photo-upload-endpoint`: no `dev`/`qa` report was recorded, this is read off the tree.
+
+SHIPPED IN THE SAME COMMIT `a628259` as the upload endpoint, tests shared in `backend/tests/test_photo_endpoints.py` (18 test functions across both). `GET /api/trips/{slug}/stops/{stop_id}/photos`, either slug, `PhotoOut[]`, `responses={404: ErrorEnvelope}`, plus the HEAD sibling registration at `photos.py:83` per decision-log Entry 11. Empty stop is a `200` with `[]`, not a 404.
+
+THE PRESIGNED URL IS NOT STORED. It is generated per request in `data/repositories/photos.list_by_stop`; the database holds only the object key `{trip_id}/{stop_id}/{photo_id}`. That is the contract's Photo serving section holding — a stored URL would outlive its signature and would also be a second copy of the storage layout outside `storage/`.
+
+`t-photoout-field-descriptions` APPLIES HERE AND IS OPEN: this route publishes `PhotoOut` into the OpenAPI document, which is exactly that task's promotion trigger, and 4 of its 6 fields still carry no `description=`. The generated Kubb client gets the type with four undescribed fields today.
+
+## t-bikes-create-endpoint
+
+CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, same pass and same caveat: no recorded `dev`/`qa` report, read off the tree.
+
+COMMIT `ae96533`, "feat(api): POST + PATCH /api/trips/{slug}/bikes — create and partial update" — ONE COMMIT CARRIES BOTH BIKE TASKS. Tests: `backend/tests/test_bikes_create_endpoint.py`, 25 test functions.
+
+`POST /api/trips/{slug}/bikes`, rider slug only via `require_rider_access` (403 viewer, 404 unknown). The three-way idempotency branch is NOT re-derived in the handler: `data/repositories/bikes.create` returns `(bike, created)` and raises `BikeIdOnAnotherTrip` for the cross-trip case, which the route turns into `ApiError.conflict` with a fixed message (`ID_ALREADY_USED_MESSAGE`, `bikes.py:26-29`) that names no value from the conflicting record — decision-log Entry 14's leak boundary, enforced at the raise site as `t-conflict-code-tests` said it would have to be. The replay returns the stored record unchanged with `200`; the status is set on the `Response` object rather than by raising, so the declared 201 stays the schema default.
+
+`t-bikecreate-field-descriptions` IS OPEN AND ITS TRIGGER HAS FIRED: this route binds `BikeCreate` as its request body, publishing it into the OpenAPI document with 3 of 6 fields undescribed.
+
+## t-bikes-patch-endpoint
+
+CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, same pass and same caveat.
+
+SHIPPED IN THE SAME COMMIT `ae96533` as the create endpoint. Tests: `backend/tests/test_bikes_patch_endpoint.py`, 18 test functions.
+
+`PATCH /api/trips/{slug}/bikes/{id}`, rider slug only. LAST-WRITE-WINS IS DELIBERATE AND IS STATED IN THE ROUTE'S OWN `description=` (`bikes.py:118-120`): no conflict detection, no ETag, no version column, per spec Section 4. There is no 409 on this path and no replay case — an unknown bike id is a plain `404` raised by the handler when the repository returns `None`. That asymmetry with `POST /bikes` is the contract, not an oversight: a patch has no client-generated id to collide.
+
+`t-bikepatch-field-descriptions` IS OPEN AND ITS TRIGGER HAS FIRED — see that entry. `BikePatch` is now published with none of its five fields described, and a PATCH model is where "omitted means unchanged" has to be stated, because the generated client cannot infer it from the type.
+
+## t-map-geojson-endpoint
+
+CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, same pass and same caveat.
+
+COMMIT `f8fdc9b`, "feat(api): GET /api/trips/{slug}/map — GeoJSON FeatureCollection". Tests: `backend/tests/test_map_endpoint.py`, 24 test functions.
+
+THE HANDLER IS ONE LINE AND THAT IS THE DESIGN (`backend/app/api/routes/map.py:52-57`). The two handler-side responsibilities `api-contract.md` §Outstanding item 3 flagged as unenforceable by the models — ordering stops by `arrivedAt` before building the trail, and omitting the trail below 2 stops — both live in `data/repositories/stops.map_features`, not in the route. The repository selects only `id`, `name`, `lat`, `lng`, `arrived_at`, orders chronologically in SQL, and appends the LineString only at 2+ stops. So item 3's warning is discharged by placement: there is one implementation of that logic and it is in the layer that owns column names. `map.py` imports no SQLAlchemy and names no column.
+
+COORDINATE ORDER IS `[lng, lat]`, per the GeoJSON spec and the contract's own silent-bug-risk subsection. The wire order on `StopCreate`/`StopOut` is the opposite, which is why `t-stopcreate-field-contract` put the reversal warning on those fields.
+
+Either slug — it is a read. `responses={404: ErrorEnvelope}` plus the HEAD sibling registration (`map.py:60`). A trip with no stops is a `200` with `features: []`.
+
+NO OPEN BACKLOG ID IS ATTACHED TO THIS TASK, and that is why `s-map-geojson-endpoint` stays `done` while the other three M2 endpoint stories revert. `MapFeatureCollection` and its sub-models were described when `t-map-model` landed, so there is no field-description debt of the kind the photo and bike models carry.
 
 ## t-bare-409-envelope-bypass
 

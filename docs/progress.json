@@ -1,7 +1,7 @@
 {
   "milestones": [
     { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
-    { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "done" },
+    { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "in_progress" },
     { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "not_started" },
     { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
   ],
@@ -16,9 +16,9 @@
 
     { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
-    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "done" },
-    { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "done" },
-    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
+    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "in_progress" },
+    { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "in_progress" },
+    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "in_progress" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
 
     { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "not_started" },
@@ -58,7 +58,7 @@
     { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "done", "agent": "dev", "blockers": [], "gate": "observable" },
     { "id": "t-access-log-slug-exposure", "storyId": "s-data-layer-foundation", "title": "uvicorn access log records the trip slug from the request URL", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
     { "id": "t-405-router-route-collapse", "storyId": "s-data-layer-foundation", "title": "Wrong verb on router-registered /api route returns 404 not 405", "status": "done", "agent": "dev", "blockers": [] },
-    { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-session-dep-alias", "storyId": "s-data-layer-foundation", "title": "Add SessionDep alias in data/db.py", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-bike-order-collation", "storyId": "s-data-layer-foundation", "title": "Bike ordering test collation-safety", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
     { "id": "t-head-on-get-routes", "storyId": "s-data-layer-foundation", "title": "Every GET path also answers HEAD, via a second schema-excluded registration of the same handler", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-head-route-kwarg-divergence", "storyId": "s-data-layer-foundation", "title": "Guard the GET/HEAD route pair on a path against dependency divergence", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "triggered" },
@@ -108,5 +108,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-16T12:00:00Z"
+  "lastUpdated": "2026-09-16T23:00:00Z"
 }
