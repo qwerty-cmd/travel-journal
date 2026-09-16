@@ -35,17 +35,29 @@ A finding from task X is not work for task X — one task → one patch → veri
 | Agent | Job | Tools |
 |---|---|---|
 | `ba` | Breaks spec into Stories/Milestones (`docs/progress.json`), then Stories into single scoped tasks | Read-only |
-| `dev` | Implements exactly one task | Full edit, scoped to the task |
-| `test-writer` | Writes tests — contract-first for access control/data integrity/offline queue, implementation-following elsewhere | Read/Edit/Write/Bash |
-| `qa` | Independently verifies acceptance criteria; no edit access, reports back rather than fixing | Read/Bash/Grep |
+| `pm-assist` | Context gatherer — assembles structured task briefs, status summaries, and next-task lookups | Read-only (Read/Grep/Glob/Bash) |
+| `scrum-master` | Scope guardrail — pre-flight (is the task tight?) and post-flight (did the diff stay in scope?) | Read-only (Read/Grep/Glob/Bash) |
+| `architect` | Technical research for blockers — investigates, recommends, escalates only when architecture invariants are at stake | Read-only + WebSearch/WebFetch |
+| `dev` | Implements one task, then chains the full pipeline: test-writer → qa → docs. Returns combined result | Full edit + Agent |
+| `test-writer` | Writes tests, then chains into qa with a structured context brief | Read/Edit/Write/Bash + Agent (to spawn qa) |
+| `qa` | Independently verifies acceptance criteria; no edit access, reports findings to caller | Read/Bash/Grep |
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
-| `docs` | Writes per-task docs once QA signs off; owns `docs/progress.json` checkpoint and `docs/decision-log.md` | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
+| `docs` | Writes per-task docs, closes out progress.json, owns decision-log | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
 `CLAUDE.md`, `.claude/agents/` and `.claude/skills/` have **no agent owner** — every agent is scoped to a subtree and none covers them. The orchestrator writes those files directly: the bounded exception to "never write the resulting files directly" above, still gated on `ba` scoping the task first and the patch being reviewed like any other. See decision-log Entry 12.
 
-The main session is the orchestrator/PM: decides what's next, dispatches to agents, surfaces every resulting patch for review before starting the next task. One task = one reviewable patch — don't queue up several unreviewed.
+The main session is the orchestrator/PM: makes priority calls and reviews results. Typical task flow:
+
+1. `pm-assist` assembles the task brief (structured format).
+2. `scrum-master` pre-flight validates scope and prerequisites.
+3. `dev` runs the full pipeline: implement → test-writer → qa → docs. Returns one combined result.
+4. Orchestrator reviews. Optionally `scrum-master` post-flight checks the diff for scope drift.
+
+`architect` is spawned on-demand when any agent hits a technical blocker — it researches and recommends. Only decisions affecting architecture invariants or the locked stack escalate to the user.
+
+One task = one reviewable patch — don't queue up several unreviewed.
 
 ## Commands
 ```

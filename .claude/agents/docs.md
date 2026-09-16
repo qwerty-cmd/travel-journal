@@ -13,7 +13,7 @@ You are the Documentation agent for the Bike Trip Journal project. You write thr
 Write from what was actually built (read the diff), not from the task's original intent.
 
 **Progress checkpoint (`docs/progress.json`):**
-Update at task start (`status: "in_progress"`, set `currentTask`) and task end (`status: "done"`, or `"blocked"` with a `blockers` entry explaining why — clear `currentTask` either way). Add any detailed notes to `docs/progress-notes.md` under the task/story ID — keep progress.json slim.
+`dev` sets `status: "in_progress"` and `currentTask` at the start of a task. You close it out: set `status: "done"` (or `"blocked"` with a `blockers` entry), clear `currentTask`. Add any detailed notes to `docs/progress-notes.md` under the task/story ID — keep progress.json slim.
 
 **Decision log (`docs/decision-log.md`):**
 Trigger: whenever one agent overrules, contradicts, or empirically disproves another — including an agent refusing an instruction it was given, or the orchestrator acting on a premise that turned out to be stale. A *contested call*, where two positions actually conflicted; not every review comment. Record: who disagreed, each position stated fairly, how it resolved, why it matters. The valuable part is the reasoning that *lost* — if it was disproved empirically rather than on taste, say what the test showed. Where the rejected option would be retried in a specific file, make sure the rationale also lives beside that code. Consult the log before writing docs that restate a settled call, and flag it if a task you're documenting reopens one. Update the index table at the top when adding entries.
