@@ -55,7 +55,9 @@
     { "id": "t-tests-readme-stale", "storyId": "s-data-layer-foundation", "title": "backend/tests/README.md documents an integration/ subdirectory that does not exist yet", "status": "not_started", "agent": "docs", "blockers": [], "gate": "ordinary" },
     { "id": "t-openapi-error-responses", "storyId": "s-data-layer-foundation", "title": "Declare ErrorEnvelope in OpenAPI responses= on every route", "status": "not_started", "agent": "ba", "blockers": [], "gate": "triggered" },
     { "id": "t-ruff-format-gate", "storyId": "s-data-layer-foundation", "title": "Decide whether ruff format joins the validation gate", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
-    { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-validation-message-offset", "storyId": "s-data-layer-foundation", "title": "422 message exposes pydantic byte offset as field path", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-validation-empty-body-message", "storyId": "s-data-layer-foundation", "title": "422 message for an empty request body reads 'Field required' with no subject", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
+    { "id": "t-malformed-body-precedes-access-guard", "storyId": "s-data-layer-foundation", "title": "Malformed body returns 422 before the access guard runs — identical on rider, viewer and unknown slugs, so not a leak", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
     { "id": "t-errors-docstring-tense", "storyId": "s-data-layer-foundation", "title": "errors.py docstring described future security.py behaviour", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-error-log-parameter-redaction", "storyId": "s-data-layer-foundation", "title": "500 path logs bound SQL parameters including slugs", "status": "done", "agent": "dev", "blockers": [], "gate": "observable" },
     { "id": "t-access-log-slug-exposure", "storyId": "s-data-layer-foundation", "title": "uvicorn access log records the trip slug from the request URL", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
@@ -115,5 +117,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-17T21:15:00Z"
+  "lastUpdated": "2026-09-17T22:30:00Z"
 }

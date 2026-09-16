@@ -41,6 +41,7 @@ pools asyncpg connections bound to whichever event loop first used them.
 
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -1387,3 +1388,205 @@ def test_openapi_route_description_follows_the_mandated_format() -> None:
     assert "Related APIs" in description
     assert "t-stops-create-endpoint" in description
     assert len(description) > 400, "a heading-only description is not a description"
+
+
+# --------------------------------------------------------------------------
+# 7. The 422 ``message`` itself — t-validation-message-offset
+# --------------------------------------------------------------------------
+# ``message`` is contractually "safe to show a rider directly" (api-contract.md,
+# §"`message` and the `INTERNAL_ERROR` leak boundary") and the frontend renders
+# it unsanitised. This endpoint is the first request-body route, so it is the
+# first place a rider can actually reach the unparseable-body branch — the
+# promotion trigger ``t-validation-message-offset`` was filed against.
+#
+# Two claims, and the second is the one at risk: a malformed body must not
+# render a byte offset as a field path, **and** ordinary field errors must still
+# name their field. The obvious fix to the first destroys the second.
+
+
+MALFORMED_BODIES = {
+    # Truncated mid-object. ``json.JSONDecodeError.pos`` is small and non-zero
+    # here, which is the shape that produced the reported "1: JSON decode error".
+    "truncated": b'{"id": ',
+    # Not JSON at all — a decode failure at offset 0.
+    "not-json": b"this is not json",
+    # An empty body sent with a JSON content type.
+    "empty": b"",
+    # Structurally invalid JSON with a larger offset, so a formatter that leaked
+    # the offset would leak a different integer here than in "truncated".
+    "trailing-comma": b'{"id": "a", "name": "b",}',
+}
+
+
+async def post_raw(client: AsyncClient, slug: str, body: bytes) -> Any:
+    """POST a raw byte body declared as JSON, bypassing httpx's serialiser."""
+    return await client.post(
+        STOPS_PATH.format(slug=slug),
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+
+
+@pytest.mark.parametrize("case", sorted(MALFORMED_BODIES))
+async def test_a_malformed_body_is_422_with_no_integer_field_path(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    case: str,
+) -> None:
+    """
+    An unparseable body is a ``VALIDATION_ERROR`` naming no field called ``1``.
+
+    FastAPI builds this error as ``loc=("body", e.pos)`` where ``pos`` is a byte
+    offset into the request, so a formatter that joins ``loc`` into a dotted path
+    shows the rider a field name that is really a character count. Asserted as
+    "no bare integer appears where a field path goes", not as "the string ``1:``
+    is absent", so a body whose decode error lands at offset 7 or 24 is caught
+    too — which is why the four cases above decode-fail at four different
+    offsets.
+
+    The rider slug on purpose — but note that for *this* error the guard does
+    **not** win. FastAPI parses the JSON body before it solves route
+    dependencies, so an unparseable body is 422 on a rider, viewer or unknown
+    slug alike; the ordering recorded above the ``INVALID_BODIES`` cases holds
+    for field errors, not for a decode failure. That is not an oracle: the
+    status and the message are byte-identical on all three slugs, so it
+    distinguishes nothing about whether a slug resolved.
+    """
+    trip = seeded_trips[0]
+    before = await stop_ids_for_trip(migrated_engine, trip.id)
+
+    response = await post_raw(client, trip.rider_slug, MALFORMED_BODIES[case])
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+    detail = parse_envelope(response)
+    assert detail.code is ErrorCode.VALIDATION_ERROR
+    assert not re.search(r"(?:\A|[.;] )\d+:", detail.message), (
+        f"a byte offset is being rendered as a field path: {detail.message!r}"
+    )
+    assert "JSON decode error" not in detail.message, (
+        f"pydantic's raw decode message reached the rider: {detail.message!r}"
+    )
+    # Half the promise is the status; the other half is the table.
+    assert await stop_ids_for_trip(migrated_engine, trip.id) == before
+
+
+@pytest.mark.parametrize("case", sorted(set(MALFORMED_BODIES) - {"empty"}))
+async def test_a_malformed_body_message_says_the_body_could_not_be_parsed(
+    client: AsyncClient, seeded_trips: list[SeededTrip], case: str
+) -> None:
+    """
+    The message tells the rider what is actually wrong: the body, not a field.
+
+    Asserted on meaning rather than exact copy — it has to mention the body and
+    that it is JSON — because what the contract pins is that ``message`` is
+    rider-safe and written for the situation, not its exact wording.
+
+    ``empty`` is excluded, and the exclusion is a finding rather than a
+    convenience. An empty body is not a decode failure at all: FastAPI reports it
+    as ``{"type": "missing", "loc": ("body",)}``, so the rider is told
+    ``"The request could not be validated. Field required"`` — no bogus field
+    name, which is all this task promises, but no indication that what is missing
+    is the body. That is pre-existing behaviour on a different error type, is
+    unchanged by this task, and is out of its scope.
+    """
+    trip = seeded_trips[0]
+
+    response = await post_raw(client, trip.rider_slug, MALFORMED_BODIES[case])
+    message = parse_envelope(response).message.lower()
+
+    assert "body" in message, message
+    assert "json" in message, message
+
+
+async def test_a_malformed_body_message_never_echoes_what_was_submitted(
+    client: AsyncClient, seeded_trips: list[SeededTrip]
+) -> None:
+    """
+    Nothing the caller sent appears anywhere in the response.
+
+    A body that never parsed can contain anything — a pasted password, another
+    trip's slug — and ``message`` is rendered unsanitised by the frontend. The
+    whole response text is searched, not only ``message``, because an echo
+    anywhere in the envelope is the same leak.
+    """
+    trip = seeded_trips[0]
+    markers = ["supersecret-marker-9f3a", "another-trips-slug-zz", "GRAPH_CLIENT_SECRET"]
+    identifier, slug, secret = markers
+    # Deliberately unterminated, so it is the decode branch that answers.
+    body = f'{{"id": "{identifier}", "notes": "{slug} {secret}"'.encode()
+
+    response = await post_raw(client, trip.rider_slug, body)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+    for marker in markers:
+        assert marker not in response.text, f"{marker!r} was echoed back"
+
+
+# --- the regression risk: ordinary field errors must still name their field ---
+#
+# Flattening every 422 to one generic sentence is the obvious way to kill the
+# byte offset, and it would tell a rider "something was wrong" with no way to
+# find out what. The guard has to be keyed on the *error type*, so these stay.
+
+# field name -> the override that breaks it. `None` means "omit the key".
+FIELD_ERROR_CASES: dict[str, Any] = {
+    "lat": None,
+    "lng": "not a number",
+    "locationSource": "carrier-pigeon",
+    "arrivedAt": "2026-06-14T15:15:00",
+}
+
+
+@pytest.mark.parametrize("field", sorted(FIELD_ERROR_CASES))
+async def test_a_field_error_still_names_the_field(
+    client: AsyncClient, seeded_trips: list[SeededTrip], created_ids: list[str], field: str
+) -> None:
+    """
+    ``arrivedAt: ...`` — the useful half of the message survives the fix above.
+
+    The field name is spelled in the contract's camelCase, because that is what
+    the rider's client sent and the only spelling they can act on. Four fields
+    covering four different failure kinds: a missing key, a wrong type, a value
+    outside an enum, and the naive datetime the timezone ruling forbids.
+    """
+    trip = seeded_trips[0]
+    payload = new_payload()
+    if FIELD_ERROR_CASES[field] is None:
+        del payload[field]
+    else:
+        payload[field] = FIELD_ERROR_CASES[field]
+    created_ids.append(payload["id"])
+
+    response = await client.post(STOPS_PATH.format(slug=trip.rider_slug), json=payload)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+    detail = parse_envelope(response)
+    assert detail.code is ErrorCode.VALIDATION_ERROR
+    assert f"{field}: " in detail.message, (
+        f"the {field} error no longer names its field: {detail.message!r}"
+    )
+
+
+async def test_several_field_errors_are_joined_with_a_semicolon(
+    client: AsyncClient, seeded_trips: list[SeededTrip], created_ids: list[str]
+) -> None:
+    """
+    One request, three broken fields, one message listing all three.
+
+    The offline queue replays a capture the rider made hours ago, possibly a long
+    way from anywhere; a message reporting only the first problem would make
+    fixing it a round trip per field.
+    """
+    trip = seeded_trips[0]
+    payload = new_payload(locationSource="carrier-pigeon", arrivedAt="2026-06-14T15:15:00")
+    del payload["lat"]
+    created_ids.append(payload["id"])
+
+    response = await client.post(STOPS_PATH.format(slug=trip.rider_slug), json=payload)
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
+    message = parse_envelope(response).message
+    assert "; " in message, message
+    for field in ("lat", "locationSource", "arrivedAt"):
+        assert f"{field}: " in message, f"{field} missing from {message!r}"

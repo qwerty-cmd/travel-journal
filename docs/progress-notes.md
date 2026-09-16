@@ -197,6 +197,15 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 - Gate classification: TRIGGERED DEBT (Gate 3). The second of the two closest calls — see `t-backlog-retro-triage` — because the defect is real and already rendered; what is absent is any path to it.
 - Current consumer: none.
 - Promotion trigger: the first request-body endpoint, `POST /trips/{slug}/stops`.
+- CORRECTION 2026-09-17 (premise only, outcome unaffected): by the time the trigger fired, **four** body-taking routes were registered — `POST /stops`, `POST /bikes`, `PATCH /bikes/{id}`, `POST /stops/{id}/photos` — so the trigger had fired no later than the line above states, and the shared-formatter fix covers all four.
+
+CLOSED 2026-09-17 — qa PASS, no CURRENTLY BROKEN findings. One guard at the top of the `for error in errors` loop in `_format_validation_errors` (`backend/app/core/errors.py`): `error["type"] == "json_invalid"` appends the fixed clause `The request body could not be read as JSON.` and skips the location/msg branch. +3 lines of code, +8 of docstring, nothing else in the function changed; no route signature, response model or status code moved.
+
+- WHY THE SHARED FORMATTER AND NOT THE ROUTE. Every 422 message in the app is assembled in that one function, so one guard covers all four body-taking routes; a per-route fix would have been four guards and would have left each new body route broken by default.
+- WHY IT IS KEYED ON THE ERROR *TYPE*, NOT ON "`loc` CONTAINS AN INT". `json_invalid` is the only error that carries a byte offset in `loc`. Matching on "there is an integer in the location" would also swallow genuine list-index field errors (`stops.0.lat`), turning a precise field message into a generic one. The type key cannot do that. This is the criterion-3 guard and it is mutation-tested: flattening every message to one generic string fails 5 of the new tests, reverting the fix fails 6.
+- VERIFIED ON REAL UVICORN + CURL, NOT TestClient. Malformed body, byte-identical at decode offsets 0, 7 and 24 — `The request could not be validated. The request body could not be read as JSON.` (422, `VALIDATION_ERROR`). Field errors unchanged — `The request could not be validated. lat: Field required; locationSource: Input should be 'gps' or 'manual'; arrivedAt: Input should have timezone info`.
+- Suite 464 passed (451 baseline + 13 new in `backend/tests/test_stops_create_endpoint.py` section 7), exit 0, real Postgres. ruff: 4 findings, all pre-existing in `backend/tests/` and identical at HEAD `8c0b136` — zero added.
+- Two findings filed, neither implemented: `t-validation-empty-body-message` and `t-malformed-body-precedes-access-guard`. Both ORDINARY DEBT.
 
 ## t-errors-docstring-tense
 
@@ -761,3 +770,27 @@ GATE TRIAGE 2026-09-16 — `gate: ordinary`.
 - **Promotion trigger: none, deliberately.** Not "the first out-of-scope write" — unlike `t-qa-mutation-hook`, where a live-tree mutation is detectable by a `git status --porcelain` check that is already part of the dispatch loop, nothing currently watches `docs`'s writes, so a trigger phrased as "the first breach" names an event no one would observe. Inventing an unobservable trigger to make the item look actionable is worse than recording none: it reads as coverage the backlog does not have. If this is ever promoted it will be by a decision to scope agent grants generally, not by this item firing.
 
 RELATED, NOT DUPLICATE: decision-log Entry 12 records that widening `docs` to `.claude/**` was REJECTED as self-modifying permissions. That is the opposite direction — Entry 12 refused to make this grant wider; this item observes it is not explicitly narrow. Do not read Entry 12 as having settled the scoping question, and do not reopen its ruling on the way to closing this one.
+
+## t-validation-empty-body-message
+
+`qa` finding from `t-validation-message-offset`. An **empty** request body on a body-taking route renders `The request could not be validated. Field required` — a pydantic message with no subject. FastAPI reports that case as `{"type": "missing", "loc": ("body",)}`, a **different error type** from the `json_invalid` that task fixed, and `_format_validation_errors` strips the literal `"body"` out of the location, leaving the bare message.
+
+GATE TRIAGE 2026-09-17 — `gate: ordinary`.
+- Finding: the 422 `message` for an empty body names no subject.
+- Evidence: pre-existing and unchanged by `t-validation-message-offset` — the guard there is keyed on `json_invalid`, which this is not. Verified against the shipped behaviour, not predicted.
+- Gate classification: ORDINARY DEBT (Gate 4). Nothing is violated: no **bogus** field name is produced (that was the defect, and it stays fixed), and the contract does not require `message` to name the body — only that it is safe to show a rider, which a subject-less `Field required` is. Confusing ≠ broken.
+- Current consumer: none.
+- Promotion trigger: none recorded. `qa` noted that IF the offline queue's arrival is read as a promotion event, this could be re-triaged TRIGGERED, since the queue is the consumer that surfaces a never-retry `message` straight to the rider. **That is qa's note, not a ruling** — the orchestrator makes the call, and until it does this stays Gate 4 with no trigger.
+- If it is ever fixed, fix it in the same place and the same way: a type-keyed branch in `_format_validation_errors`, not a per-route message. `missing` with `loc == ("body",)` is the whole condition.
+
+## t-malformed-body-precedes-access-guard
+
+`qa` finding from `t-validation-message-offset`. FastAPI parses and validates the request body **before** it solves route dependencies, so a malformed body short-circuits the access guard: `'{"id": '` returns `422` on a rider slug, a viewer slug **and** an unknown slug alike, while a body that is valid JSON but fails field validation still gets the expected `403`/`404` first.
+
+**THIS IS NOT A LEAK, AND THE READING THAT IT IS SHOULD NOT BE RE-DERIVED.** Status and message are **byte-identical across all three slug classes**, so the response distinguishes nothing: it is no slug-validity oracle. A caller learns only that its own body was unparseable — something it could determine without asking the server. `test-writer` recorded the real ordering in the relevant test docstring in `backend/tests/test_stops_create_endpoint.py` so the next reader meets it beside the assertion rather than rediscovering it.
+
+GATE TRIAGE 2026-09-17 — `gate: ordinary`.
+- Finding: body parsing precedes dependency solving, so a 422 pre-empts the 403/404 an unauthorised slug would otherwise get.
+- Evidence: observed on real uvicorn across rider, viewer and unknown slugs; responses identical.
+- Gate classification: ORDINARY DEBT (Gate 4). No access-control rule is violated — the guard is not skipped, it is not reached, and nothing that requires authorization happens on the 422 path. No record is read, written or disclosed.
+- Current consumer: none. Promotion trigger: none — this is framework ordering, not project code, and "fixing" it means moving body parsing behind the dependency, which FastAPI does not offer without hand-rolling the body read.

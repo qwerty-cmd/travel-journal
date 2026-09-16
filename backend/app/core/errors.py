@@ -250,9 +250,20 @@ def _format_validation_errors(errors: list[dict[str, Any]]) -> str:
 
     Only the field location and pydantic's own message are used — never the
     submitted `input`, which is user data we have no reason to echo back.
+
+    One error type gets a fixed message instead of its own: `json_invalid`, the
+    body that never parsed. FastAPI builds it with `loc=("body", e.pos)`, and
+    that `pos` is a **byte offset** — so the generic branch below renders it as
+    `"1: JSON decode error"`, a field path naming a field called `1`. There is
+    no field to name when the body isn't JSON, so we don't invent one. Handled
+    here rather than per-route because every body-taking route funnels through
+    this function.
     """
     parts: list[str] = []
     for error in errors:
+        if error.get("type") == "json_invalid":
+            parts.append("The request body could not be read as JSON.")
+            continue
         location = ".".join(str(item) for item in error.get("loc", ()) if item != "body")
         message = str(error.get("msg", "Invalid value"))
         parts.append(f"{location}: {message}" if location else message)
