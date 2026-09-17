@@ -70,6 +70,10 @@ NEXT ACTION FOR THIS STORY IS A SCOPING ONE, NOT A CODING ONE: `ba` scopes the O
 
 THAT SCOPING HAPPENED 2026-09-17 and produced two patches: `t-photos-pending-archive-repo` (the repository reads/writes the sync needs — **`done`**) and `t-onedrive-sync-job` (the job itself — still open). **The story stays `in_progress` and the OneDrive sync half is exactly what remains**; do not read Patch 1 landing as the story closing, which is the same inference `4958048` got wrong. Two debt rows were also filed here out of Patch 1: `t-mark-archived-overwrite-guard` (TRIGGERED — **its promotion trigger is Patch 2 itself, so `t-onedrive-sync-job`'s scoping must evaluate it**) and `t-pending-archive-limit-validation` (ORDINARY).
 
+STAYS `in_progress` 2026-09-17 AFTER PATCH 2. `t-onedrive-sync-job` is `done`, so **both halves of the story title are now built** and the specific reason this story could not close — "the OneDrive sync half has no task at all" — is discharged. It still does not close, on the rule `s-bike-management` closed under: a story goes `done` when it holds **no open row of any gate**. This one holds eight — `t-photo-insert-echoes-argument` (gate unresolved, orchestrator ruling still owed), `t-photo-form-model-binding`, `t-mark-archived-overwrite-guard`, `t-pending-archive-limit-validation`, and the four filed out of Patch 2's qa pass (`t-onedrive-main-untested`, `t-onedrive-per-photo-isolation`, `t-onedrive-filename-url-encoding`, `t-onedrive-heic-brand-list`). "Both halves shipped" is again not "the story is done" — the `4958048` inference.
+
+`t-onedrive-preflight-check` HAS NO ROW AND IS CITED BY THREE PLACES. The `onedrive_sync.py` module docstring, this story's closeout and `t-onedrive-filename-url-encoding` all name it as the human step that closes the UNVERIFIED Graph question. It does not exist in `progress.json` — nothing was scoped, so it is a dangling id, not a deferred task. **`ba` has to scope it**; it depends on `s-cloud-service-setup` (`not_started`) because it cannot run without a real app registration and `GRAPH_*` credentials.
+
 ## s-bike-management
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped (`ae96533`) but the story still holds `t-bikecreate-field-descriptions` and `t-bikepatch-field-descriptions`, whose promotion triggers — "`POST /trips/{slug}/bikes`" and "`PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`" — fired when those routes bound `BikeCreate` and `BikePatch` as request bodies and published them into the OpenAPI document. `in_progress` rather than `not_started`: `done` tasks sit under it.
@@ -941,6 +945,12 @@ TRIGGERED DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. Do not 
 - The fix at that point is one clause: `AND one_drive_file_id IS NULL` on the update, which turns the race into a harmless `0` rows updated — which the `rowcount` return already lets the caller read (see the closeout above; `0` already means "not written").
 - **CARRY THIS INTO `t-onedrive-sync-job`'S SCOPING.** The trigger fires *inside* that task, not before it, so it has to be evaluated there or it is forgotten — a triggered item whose trigger is the very next task is the easy one to miss.
 
+TRIGGER EVALUATED AT `t-onedrive-sync-job` 2026-09-17 — **IT DID NOT FIRE. THE ROW STAYS `not_started`.** This is the evaluation the bullet above demanded; it has happened, and it should not be re-litigated on sight of the two rows sitting next to each other.
+
+The trigger was "Patch 2 running sweeps concurrently". Patch 2 as built is one process, one `asyncio.run()` in the `__main__` block, one sequential `for` loop over the batch, no `gather`, no worker pool, no replica count — and **nothing schedules it**: no cron, no compose service, no container entrypoint. qa confirmed each of those independently rather than reading it off the task brief. There is no second sweep to race, so the overwrite is still unreachable by construction: `list_pending_archive` only ever returns rows whose `one_drive_file_id IS NULL`.
+
+The trigger does not change. What fires it is still a *second concurrent sweep* — a scheduler that can overlap ticks, a replica count above 1, or an in-process worker pool — not merely the job existing. The one-clause fix (`AND one_drive_file_id IS NULL` on the update) is unchanged and still lands cleanly on the `rowcount` return.
+
 ## t-pending-archive-limit-validation
 
 ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigger today.
@@ -950,3 +960,82 @@ ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigg
 - Gate classification: ORDINARY DEBT (Gate 4). **No HTTP surface is involved** — this is a repository function with no route in front of it, so the error-envelope guarantee is not in play and no contract is violated. `Could break ≠ is broken`.
 - Current consumer: none. Every future call site is inside the sync job, which passes its own batch size.
 - Promotion trigger: **Patch 2 reading its batch size from configuration rather than a module constant.** A literal in the job's source cannot be negative by accident; an env var or settings field can.
+
+TRIGGER EVALUATED AT `t-onedrive-sync-job` 2026-09-17 — **DID NOT FIRE.** Patch 2 ships `BATCH_LIMIT = 50` as a module constant in `onedrive_sync.py`, with a comment saying it is deliberately not configuration. The single call site passes it. The trigger still stands as written: moving the batch size into `Settings` or an env var fires it.
+
+## t-onedrive-sync-job
+
+COMPLETED 2026-09-17, qa PASS on all 11 acceptance criteria, nothing CURRENTLY BROKEN. Patch 2 of 2 for the OneDrive archive sync — Patch 1 was `t-photos-pending-archive-repo`, whose `list_pending_archive` / `mark_archived` this consumes. The comment-only stub at `backend/app/storage/onedrive_sync.py` is replaced by the real module; `backend/tests/test_onedrive_sync.py` is new (35 tests, `test-writer`).
+
+**THE MODULE DOCSTRING IS THE DOCUMENTATION, NOT THIS NOTE.** `onedrive_sync.py`'s docstring is already written in the project's Context → How it works → Related APIs format and states the write-only/never-a-read-dependency property plainly. It is co-located deliberately: this is a background job with no HTTP surface, so it has no row in `api-contract.md` and no separate doc file. Read the docstring for behaviour; this note carries only what a docstring cannot — what was verified, what was not, and what was deliberately left undone.
+
+Public surface: `BATCH_LIMIT = 50` (module constant, deliberately not config), `archive_photos(client, photos, record) -> int`, `main()`, and a `__main__` block with **exactly one** `asyncio.run()`. `client` is the only injection point — that is what lets the tests assert the request this code actually constructs, via `httpx.MockTransport`, against real Postgres and real MinIO. `archive_photos` knows nothing about the database; the session and repository wiring lives in `main()`, which imports `app.data.*` *inside the function* so the library half never reaches into `data/`.
+
+THE ONE `asyncio.run()` IS THE STORY-LEVEL CONSTRAINT BEING HONOURED, NOT A STYLE CHOICE. The note at the top of `s-photo-upload-onedrive-sync` records qa's finding that the engine in `app/data/db.py` binds its asyncpg connections to the loop that created them, and that a second loop produces an intermittent `AttributeError: 'NoneType' object has no attribute 'send'`. A fresh `python -m` process per run is the whole scheduler; there is no in-process scheduler, no thread, no sleep loop. Backoff *is* the next scheduled run.
+
+Behaviour, in one pass: exit 0 when everything selected archived or nothing was pending, non-zero if a photo failed or the run aborted. An empty `graph_refresh_token` is a clean no-op — logs "not configured", returns 0, **before any network, database or S3 access**. Otherwise one access token per run from the refresh-token grant, then per photo: read the object from S3 by `object_key`, sniff the first 12 bytes for an extension, PUT to `…/me/drive/root:/{folder}/{photo id}{ext}:/content?@microsoft.graph.conflictBehavior=replace`, and on 2xx record Graph's returned file id immediately via `mark_archived` — never batched to the end, because a crash must not lose an archive that already happened. Per-photo failures are logged (id + status, never a secret) and skipped. 401 twice, or a 429/503, aborts the run. **Nothing is ever deleted**; a photo that fails every run stays pending and is re-selected next time.
+
+**VALIDATION — all three commands run, by `dev` and again independently by `qa`:** `uv run pytest tests/test_onedrive_sync.py` → 35 passed. Full `uv run pytest` → **549 passed** (baseline 514). `uv run ruff check .` → exactly 4 pre-existing findings, none added, none fixed. `GRAPH_REFRESH_TOKEN= uv run python -m app.storage.onedrive_sync` → exit 0, logged the not-configured line, database untouched.
+
+MUTATION: 29 mutants in a scratch tree, 27 killed. **Both survivors are in `main()`**, and qa closed both by execution in a scratch process rather than leaving them open — the behaviour is correct, only the regression protection is missing. That gap is filed as `t-onedrive-main-untested`, not fixed here.
+
+**UNVERIFIED — DO NOT ASSERT THIS AWAY: whether real Microsoft Graph accepts this request shape.** The URL form, the token scope and the `conflictBehavior` placement have never been tried against real Graph. `conflictBehavior` is spelled into the URL literally rather than passed as an httpx `params=` key because httpx percent-encodes the leading `@` of a param key; the Graph docs show the literal form, so the code sends exactly what the docs describe. That should be equivalent — it has not been *shown* to be. No `GRAPH_*` credentials exist, `s-cloud-service-setup` is `not_started`, and the app registration has not happened. `t-onedrive-preflight-check` is the human step that closes this and **has no row yet** (see the story note). A green suite here means the code does what the docs say, not that Graph agrees.
+
+ALSO ASPIRATIONAL: acceptance criterion 2's "state of CI" clause. **There is no CI in this repo.** The unconfigured-no-op behaviour the criterion is really about *is* verified, by the fourth validation command above; the CI half of the sentence had nothing to be true of.
+
+`ba`'S FAILURE-MODE LIST CONTRADICTED ITS OWN ACCEPTANCE CRITERION 8, AND CRITERION 8 WON. The brief's failure-mode list said "503 for photo 2, 200 for 1 and 3 → per-photo isolation"; criterion 8 in the same brief said "a 429 or 503 aborts the run". Both cannot hold. The numbered criterion was followed — a 429/503 aborts — and per-photo isolation is tested with a **500** instead, which exercises the same isolation path without contradicting criterion 8. Recorded so the contradiction is not re-derived from the brief later and read as a defect in the implementation. Not a decision-log entry: nothing was contested between two agents, an illustrative example lost to a numbered criterion in the same document. If anyone later argues 503 *should* isolate, that is the point it becomes a contested call.
+
+FOUR DEBT ROWS FILED OUT OF qa'S PASS, **NONE IMPLEMENTED** — a finding from task X is not work for task X. See the four sections below. Separately, the two rows from Patch 1 had their triggers evaluated here: `t-mark-archived-overwrite-guard` **did not fire** (recorded in full under that row — do not re-litigate) and `t-pending-archive-limit-validation` did not fire either.
+
+## t-onedrive-main-untested
+
+ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
+
+`main()`'s *configured* path — real session, real repositories, non-empty refresh token — has no automated test. The unconfigured no-op path is tested; the two mutation survivors in the whole run were both inside `main()`.
+
+- Gate classification: ORDINARY DEBT (Gate 4). Nothing is broken: qa verified the behaviour **correct by execution** in a scratch process. What is missing is regression protection, not correctness.
+- Current consumer: none. **Nothing schedules this job today** — no cron, no compose service, no container entrypoint. The only thing that runs it is a human typing `python -m app.storage.onedrive_sync`.
+- Promotion trigger: none recorded. Scheduling the job would make it worth having, but the honest classification today is ordinary debt.
+
+## t-onedrive-per-photo-isolation
+
+TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
+
+The S3 read (`_read_object` via `to_thread`) and the `response.json()["id"]` that follows a successful upload both sit **outside** the per-photo `try`. A missing S3 object or a 2xx body without an `id` therefore aborts the whole run with a traceback, instead of logging that one photo and continuing — which is the isolation the rest of the loop is built for.
+
+- Gate classification: TRIGGERED DEBT (Gate 3). **Not reachable today**, and each leg was checked rather than assumed: the upload route writes the S3 object *before* inserting the row, so a row cannot precede its object; there are no DELETE routes in `app/api/`; and there is no `delete_object` call anywhere in `app/`. So no path today produces a row whose object is absent.
+- qa confirmed the resulting traceback **leaks no secret** — it is an ugly abort, not a disclosure.
+- Current consumer: none (nothing schedules the job).
+- Promotion trigger: whichever comes first of (a) the job actually being scheduled, or (b) any path that can delete an S3 object while leaving its `photos` row — a delete endpoint, a lifecycle rule, a bucket cleanup script.
+- The fix at that point is to move both statements inside the existing `try` and `continue`, matching how HTTP failures are already handled.
+
+## t-onedrive-filename-url-encoding
+
+TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
+
+A photo id containing `#` or `?` mangles the Graph upload URL. **Measured, not reasoned:** with a `#` in the id, both the `:/content` suffix and the `@microsoft.graph.conflictBehavior=replace` directive are dropped from the request — and `conflictBehavior` is precisely the protection acceptance criterion 5 exists for (without it, Graph's default `fail` strands a photo pending forever after a crash between upload and `UPDATE`).
+
+- Gate classification: TRIGGERED DEBT (Gate 3). `photos.id` is `text` with **no CHECK constraint**, and the upload form field has no pattern — so the database does not prevent it. But no client sends a non-UUID4 id and **no such row exists**. Could break ≠ is broken.
+- Current consumer: none (nothing schedules the job).
+- Promotion trigger: any id reaching `photos` that is not a plain UUID4 — a client that mints its own id format, an import, a seed or backfill script.
+- The fix is one line: `urllib.parse.quote(filename, safe="")` before formatting it into `UPLOAD_URL`.
+- qa suggests folding this into `t-onedrive-preflight-check` — the same trip against real Graph that settles the URL shape would settle the encoding too. **`t-onedrive-preflight-check` has no row yet**; if it is scoped, fold this in rather than shipping a separate one-line patch.
+
+## t-onedrive-heic-brand-list
+
+ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
+
+`_extension` recognises the HEIF brands `heic` and `heif` but not `mif1`, `heix` or `hevc`. Photos carrying those brands archive as `.bin`.
+
+- Gate classification: ORDINARY DEBT (Gate 4). **No acceptance criterion is violated.** `.bin` is the documented fallback and it is deterministic; the cost is a thumbnail in the OneDrive web UI, not a photo. The bytes are archived intact either way, and S3 remains the source of truth regardless.
+- Current consumer: none. Promotion trigger: none — add the brands if and when a real iPhone upload is seen landing as `.bin`.
+
+## t-onedrive-preflight-check
+
+ROW ADDED 2026-09-17 — it existed only as an id, cited by three places (`onedrive_sync.py`'s module docstring, the `s-photo-upload-onedrive-sync` story closeout above, and `t-onedrive-filename-url-encoding`) but was never written into `progress.json`. `qa`'s independent verification pass on `t-onedrive-sync-job` found the row missing and flagged it; `ba`'s original scoping text is transcribed verbatim as the task title and blocker.
+
+NO ACCEPTANCE CRITERIA, DELIBERATELY. This is not an implementable task — it is a manual verification step: a human runs the real sync against the live Microsoft Graph tenant and confirms the refresh token is healthy and the request shape `t-onedrive-sync-job` built (URL form, token scope, `conflictBehavior` placement — all UNVERIFIED per that task's note) is actually accepted by Graph, before the trip departs. An agent cannot hold Graph credentials or consent to an OAuth grant, so there is nothing here for `dev` to implement or `qa` to verify against a spec.
+
+BLOCKER SATISFIED, STATUS UNCHANGED. `t-onedrive-sync-job` is now `done`, so the one blocker named in `ba`'s original scoping is discharged — the task is unblocked. It stays `not_started` anyway, because what it actually depends on is `s-cloud-service-setup`'s app registration and OAuth consent, neither of which exist. That story is `not_started` and — per its own note above — needs explicit human approval per CLAUDE.md's off-limits list (`GRAPH_*` env vars, OneDrive token handling) and **has zero scoped tasks today**, because every task under it would touch `.env`, `infra/`, or Graph tokens directly. There is nothing for `ba` to scope until a human does the app registration outside this pipeline.
+
+`t-onedrive-filename-url-encoding` names this row as the place to fold its one-line percent-encoding fix in, rather than shipping it separately — see that section above. That folding has not happened; this row still carries no implementation content of its own.
