@@ -68,9 +68,13 @@ STAYS `in_progress` 2026-09-17. All three tasks named above are now `done` — `
 
 NEXT ACTION FOR THIS STORY IS A SCOPING ONE, NOT A CODING ONE: `ba` scopes the OneDrive write-only background sync. The constraint at the top of this note — the engine's asyncpg connections are bound to the event loop that created them, so the sync must not run from a second loop — is the first thing that scoping has to respect.
 
+THAT SCOPING HAPPENED 2026-09-17 and produced two patches: `t-photos-pending-archive-repo` (the repository reads/writes the sync needs — **`done`**) and `t-onedrive-sync-job` (the job itself — still open). **The story stays `in_progress` and the OneDrive sync half is exactly what remains**; do not read Patch 1 landing as the story closing, which is the same inference `4958048` got wrong. Two debt rows were also filed here out of Patch 1: `t-mark-archived-overwrite-guard` (TRIGGERED — **its promotion trigger is Patch 2 itself, so `t-onedrive-sync-job`'s scoping must evaluate it**) and `t-pending-archive-limit-validation` (ORDINARY).
+
 ## s-bike-management
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped (`ae96533`) but the story still holds `t-bikecreate-field-descriptions` and `t-bikepatch-field-descriptions`, whose promotion triggers — "`POST /trips/{slug}/bikes`" and "`PATCH /trips/{slug}/bikes/{id}` under `s-bike-management`" — fired when those routes bound `BikeCreate` and `BikePatch` as request bodies and published them into the OpenAPI document. `in_progress` rather than `not_started`: `done` tasks sit under it.
+
+CLOSED `in_progress` -> `done` 2026-09-17, landed with `t-photos-pending-archive-repo`'s closeout. Both field-description tasks closed on 2026-09-17 (absorbed into one patch, see `t-bikecreate-field-descriptions`), so all four tasks under this story read `done` and the condition the revert above named is discharged — the story holds no open row of any gate. The flip was deferred through the last two patches because neither touched bikes; it is landed here rather than waiting for a bikes patch that has no reason to exist. Nothing about the endpoints changed in this patch.
 
 ## m2-core-api
 
@@ -899,3 +903,50 @@ GATE TRIAGE 2026-09-17 — `gate: ordinary`.
 - Evidence: observed on real uvicorn across rider, viewer and unknown slugs; responses identical.
 - Gate classification: ORDINARY DEBT (Gate 4). No access-control rule is violated — the guard is not skipped, it is not reached, and nothing that requires authorization happens on the 422 path. No record is read, written or disclosed.
 - Current consumer: none. Promotion trigger: none — this is framework ordering, not project code, and "fixing" it means moving body parsing behind the dependency, which FastAPI does not offer without hand-rolling the body read.
+
+## t-photos-pending-archive-repo
+
+COMPLETED 2026-09-17, qa PASS on all six acceptance criteria. Patch 1 of 2 for the OneDrive archive sync; Patch 2 is `t-onedrive-sync-job`, which is the job that consumes both functions added here.
+
+ONE FILE, APPEND-ONLY. `backend/app/data/repositories/photos.py` gained a `dataclasses` import and two functions; nothing else in the module moved. That is verified rather than asserted — qa diffed the rest of the module byte-for-byte against HEAD. Suite 506 → **514**, the 8 new tests in `backend/tests/test_photos_pending_archive_repo.py`. Its fixtures are local to that module rather than added to `conftest.py`, matching how `test_photo_endpoints.py` keeps its own.
+
+`PendingArchivePhoto` IS A `@dataclass(frozen=True, slots=True)` CARRYING EXACTLY `id` AND `object_key`, DELIBERATELY NOT `PhotoOut`. The sync reads bytes from S3 *by key*; a presigned URL is a browser affordance it has no use for. **It presigns nothing**, and that is proven rather than read off the code: qa monkeypatched `get_s3_client`, `_presign` and `boto3.client` to raise, then called the function anyway. Returning `PhotoOut` here would make every sweep mint presigned URLs nobody redeems.
+
+`list_pending_archive` APPLIES NO TRIP OR STOP FILTER, AND THIS IS THE PROPERTY MOST LIKELY TO BE MISTAKEN FOR A BUG. It is a maintenance sweep across the table, not a slug-scoped read — every *other* read in that module is slug-scoped, so a future reader arriving with that pattern in mind will see a missing `WHERE` and "fix" it. `test_sweep_crosses_trips` exists to make that edit fail. The filter is `one_drive_file_id IS NULL` and nothing else.
+
+`mark_archived` RETURNS `result.rowcount` — AN INT, NOT A BOOL. `0` means the row is gone (a cascade-deleted stop), `1` means written, and the caller distinguishes the two without a second query. Collapsing it to `bool` throws that away.
+
+THE MUTATION HISTORY IS THE PART WORTH RECORDING, BECAUSE IT IS A LESSON ABOUT THE TESTS AND NOT ABOUT THE CODE. qa's first mutation run killed only **4 of 7**. All three survivors were gaps in the tests, not defects in the implementation, and `test-writer` fixed them rather than filing them:
+1. **THE ORDERING ASSERTION WAS UNFALSIFIABLE.** The fixture handed out ids and timestamps in the same ascending order, so `ORDER BY id` alone returned an identical result and the `(taken_at, id)` criterion asserted nothing at all. The fixture now runs ids opposite to timestamps, two pending photos share a `taken_at` so the `id` tiebreak carries weight, and they are inserted with the tie's *loser* first — so a dropped tiebreak falls back to Postgres scan order and produces the wrong answer instead of accidentally the right one.
+2. `rows == 1` COULD NOT TELL AN INT FROM A BOOL, since `True == 1`. Pinned with `assert type(rows) is int` — the assertion that makes the `rowcount`-not-`bool` decision above enforceable.
+3. NOTHING ASSERTED THE ROW'S *OTHER* COLUMNS WERE LEFT ALONE. `object_key`, `uploaded_by`, `taken_at` and `stop_id` are now read back and checked after the update.
+
+Re-run after the revisions: **7 of 7 killed**, including a tiebreak-dropping mutation qa had not tried the first time.
+
+qa ALSO DUMPED THE SQL SQLAlchemy ACTUALLY EMITS, which evidences three criteria in one string: `SELECT photos.id, photos.object_key FROM photos WHERE photos.one_drive_file_id IS NULL ORDER BY photos.taken_at, photos.id LIMIT $1` — two columns only, the NULL filter, the two-key ordering.
+
+DELIBERATELY NOT TESTED, PER THE TRIAGE GATE'S STOP CONDITION — no consumer exists yet: concurrent or interleaved sweeps, and cascade-delete-mid-run through the real path rather than the unknown-id path. Both belong with Patch 2, which brings the job that reaches them. Recorded here so the absence reads as a decision rather than an oversight.
+
+Two debt rows filed, neither implemented: `t-mark-archived-overwrite-guard` (TRIGGERED, and its trigger is Patch 2) and `t-pending-archive-limit-validation` (ORDINARY). NO DECISION-LOG ENTRY — nothing was contested at any point in this task.
+
+## t-mark-archived-overwrite-guard
+
+TRIGGERED DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. Do not implement on sight.
+
+`mark_archived`'s update matches on `id` alone (`backend/app/data/repositories/photos.py:202-206`), so a second write silently replaces a `one_drive_file_id` that is already recorded — the first archived copy becomes unreferenced with no error and no signal.
+
+- Gate classification: TRIGGERED DEBT (Gate 3). **Unreachable today**: the only source of ids passed to `mark_archived` is `list_pending_archive`, which by construction returns rows whose `one_drive_file_id IS NULL`. There is no path that reaches the overwrite.
+- Current consumer: none — Patch 2's job does not exist yet.
+- **Promotion trigger: Patch 2 running sweeps concurrently** — a second worker, an overlapping retry after a timeout, or a replica count above 1. Any of those lets two sweeps select the same NULL row before either writes.
+- The fix at that point is one clause: `AND one_drive_file_id IS NULL` on the update, which turns the race into a harmless `0` rows updated — which the `rowcount` return already lets the caller read (see the closeout above; `0` already means "not written").
+- **CARRY THIS INTO `t-onedrive-sync-job`'S SCOPING.** The trigger fires *inside* that task, not before it, so it has to be evaluated there or it is forgotten — a triggered item whose trigger is the very next task is the easy one to miss.
+
+## t-pending-archive-limit-validation
+
+ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigger today.
+
+`list_pending_archive` does not validate `limit`. `limit=0` returns `[]`; a negative limit raises a raw `DBAPIError` wrapping asyncpg's `InvalidRowCountInLimitClauseError` straight out of the repository.
+
+- Gate classification: ORDINARY DEBT (Gate 4). **No HTTP surface is involved** — this is a repository function with no route in front of it, so the error-envelope guarantee is not in play and no contract is violated. `Could break ≠ is broken`.
+- Current consumer: none. Every future call site is inside the sync job, which passes its own batch size.
+- Promotion trigger: **Patch 2 reading its batch size from configuration rather than a module constant.** A literal in the job's source cannot be negative by accident; an env var or settings field can.

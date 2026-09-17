@@ -18,7 +18,7 @@
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
     { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "in_progress" },
     { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "in_progress" },
-    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "in_progress" },
+    { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
 
     { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "not_started" },
@@ -111,6 +111,9 @@
 
     { "id": "t-photo-upload-endpoint", "storyId": "s-photo-upload-onedrive-sync", "title": "POST /api/trips/{slug}/stops/{id}/photos — multipart upload with idempotency", "status": "done", "agent": "dev", "blockers": [] },
     { "id": "t-photo-list-endpoint", "storyId": "s-photo-upload-onedrive-sync", "title": "GET /api/trips/{slug}/stops/{id}/photos — presigned URLs from S3", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-photos-pending-archive-repo", "storyId": "s-photo-upload-onedrive-sync", "title": "photos repository — list_pending_archive + mark_archived, the two reads/writes the OneDrive sync needs (Patch 1 of 2)", "status": "done", "agent": "dev", "blockers": [] },
+    { "id": "t-mark-archived-overwrite-guard", "storyId": "s-photo-upload-onedrive-sync", "title": "mark_archived overwrites an already-set one_drive_file_id with no guard", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-pending-archive-limit-validation", "storyId": "s-photo-upload-onedrive-sync", "title": "list_pending_archive does not validate limit", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-qa-mutation-scratch-tree", "storyId": "s-agent-tool-boundaries", "title": ".claude/agents/qa.md — mutation experiments run in a scratch tree, never the working tree", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "observable" },
     { "id": "t-qa-mutation-hook", "storyId": "s-agent-tool-boundaries", "title": "PreToolUse hook matching write-shaped Bash commands against the project path — enforce qa.md's scratch-tree rule structurally", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
@@ -119,5 +122,5 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-17T23:59:00Z"
+  "lastUpdated": "2026-09-17T23:59:59Z"
 }

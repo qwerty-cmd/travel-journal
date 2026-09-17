@@ -15,6 +15,7 @@ Presigned URLs are generated here because ``PhotoOut.url`` is derived from
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from functools import partial
 
 from sqlalchemy import exists, select
@@ -147,3 +148,61 @@ async def insert(
         takenAt=taken_at,
         archived=False,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PendingArchivePhoto:
+    """
+    One photo the OneDrive sync still has to archive.
+
+    Deliberately not ``PhotoOut``: the sync needs the object key to read the
+    bytes back out of S3, and needs no presigned URL at all.
+    """
+
+    id: str
+    object_key: str
+
+
+async def list_pending_archive(
+    session: AsyncSession, limit: int,
+) -> list[PendingArchivePhoto]:
+    """
+    Photos that have never been archived (``one_drive_file_id IS NULL``), across
+    every trip and stop -- this is a maintenance sweep, not a slug-scoped read.
+
+    Ordered ``(taken_at, id)`` like ``list_by_stop`` so the sweep is
+    deterministic, and capped at ``limit``. There is no queue, cursor or lease:
+    "still needs archiving" is a pure query over current state, so a run that
+    crashes leaves the row untouched and the next run re-selects it.
+
+    Presigns nothing -- the sync reads bytes from S3 directly.
+    """
+    statement = (
+        select(photos.c.id, photos.c.object_key)
+        .where(photos.c.one_drive_file_id.is_(None))
+        .order_by(photos.c.taken_at, photos.c.id)
+        .limit(limit)
+    )
+    rows = (await session.execute(statement)).all()
+    return [PendingArchivePhoto(id=row.id, object_key=row.object_key) for row in rows]
+
+
+async def mark_archived(
+    session: AsyncSession, photo_id: str, one_drive_file_id: str,
+) -> int:
+    """
+    Record that this photo now exists in OneDrive, by setting its
+    ``one_drive_file_id`` -- the only column touched, on the only row matched.
+    ``PhotoOut.archived`` is derived from it, never stored.
+
+    Returns the number of rows updated: 0 means that photo is gone (its stop
+    was cascade-deleted mid-run), which the caller can tell from a write
+    without a second query.
+    """
+    result = await session.execute(
+        photos.update()
+        .where(photos.c.id == photo_id)
+        .values(one_drive_file_id=one_drive_file_id)
+    )
+    await session.commit()
+    return result.rowcount
