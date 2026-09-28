@@ -54,10 +54,17 @@ Tick each box as you go.
     (`POST /api/trips/{slug}/stops/{stopId}/photos`, one idempotent request each, decision-log Entry 20).
     Presigned GET URLs are loaded by `<img>` tags, which don't make CORS requests.
 - [ ] **You. Microsoft Graph app registration (for the OneDrive archive).**
-  - Register an app that allows personal Microsoft accounts.
+  - Register an app with supported account type **"Accounts in any organizational directory and personal
+    Microsoft accounts"**. The sync and the helper below use the `/common` endpoint, which only accepts a
+    personal account under this setting.
   - Grant the delegated `Files.ReadWrite` and `offline_access` permissions.
-  - Add a redirect URI and create a client secret.
-  - Complete the one-time OAuth consent as yourself, then store the resulting refresh token.
+  - Add a redirect URI on the **Web** platform, exactly `http://localhost:8765`, and create a client secret.
+  - Put `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` in `backend/.env`. Then, in your own terminal (never
+    an agent session), run `cd backend && uv run python -m app.storage.get_refresh_token`. Run it from
+    `backend/` so the full `.env` loads: it needs the database and S3 settings too, not just `GRAPH_*`.
+    It opens the browser for consent and prints the refresh token once.
+  - Store the printed token in your password manager and as the Azure secret `GRAPH_REFRESH_TOKEN`.
+    Never commit it or paste it into chat.
   - The exact scope and request shape have not been checked against Graph. Step 5 checks them.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only

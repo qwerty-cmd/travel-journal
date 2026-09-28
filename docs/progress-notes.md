@@ -1645,3 +1645,22 @@ Every deploy also updates the job's image. The orchestrator changed step 3 of `.
 **Docs updated.** `docs/deploy-cutover-runbook.md` (§0, §1, §5, §6 and the triggered-debt table) and `docs/architecture-diagram.md` (the sync edge label, plus a note that the one-artifact invariant still holds because the job runs the same image).
 
 NO DECISION-LOG ENTRY: the user made the choice, and no two agents' positions conflicted.
+
+## t-graph-refresh-token-helper
+
+**Closeout (done).** Story `s-cloud-service-setup`, agent `dev`, gate `none`. New `backend/app/storage/get_refresh_token.py`, a one-time helper the owner runs themselves to get the first Graph refresh token (`cd backend && uv run python -m app.storage.get_refresh_token`). New `backend/tests/test_get_refresh_token.py` with 22 tests; the full suite passed (616). QA passed AC1–9 and caught all 10 mutations. AC10 was the runbook §1 Graph bullet. `onedrive_sync.py` is unchanged.
+
+**User approval (verbatim from the scope record).** APPROVAL (verified by orchestrator in the user's own chat message): on 2026-09-29 the orchestrator offered "(b) The pipeline adds a small get_refresh_token script under backend/app/storage/ that you run once. This is OneDrive token handling, which CLAUDE.md puts off-limits without your approval, so it only happens if you say (b)." The user replied "b". Scope limited to this helper + tests + docs.
+
+**Notes.**
+- The tenant is `/common`, taken from `onedrive_sync.TOKEN_URL`. The authorize URL is derived from that constant, so the helper and the sync always use the same endpoint.
+- Nobody has checked yet whether Graph accepts this. That happens in `t-onedrive-preflight-check`. If Graph rejects `/common` for this registration, fix both files together (`get_refresh_token.py` and `onedrive_sync.py`) in a separate task.
+- There is no `--port` flag. Add one only if port 8765 turns out to be taken. The registered redirect URI would then have to change too.
+
+**QA findings (ordinary debt, not filed as rows).**
+- (a) `exchange_code` raises `AttributeError` if the JSON body is not an object. Nothing leaks, and Graph always returns objects.
+- (b) Importing the helper imports `onedrive_sync`, which imports `s3_client`, which calls `get_settings()`. So the helper needs the full app settings (`DATABASE_URL` and the S3 values), not just `GRAPH_*`. Run it from `backend/`, where `.env` lives. Otherwise a pydantic validation error comes up before the AC2 "missing client id/secret" message. The runbook §1 says this.
+
+**Docs updated.** `docs/deploy-cutover-runbook.md` §1 Graph bullet (only that bullet).
+
+NO DECISION-LOG ENTRY: the user made the choice, and no two agents' positions conflicted.
