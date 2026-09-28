@@ -1,12 +1,44 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { getLastSlug } from "../localStore";
+import { parseTripLink } from "../trip";
 
-// Trip home (spec Section 6, screen 2): map + trail + timeline feed.
-// Built in Week 3 once the API contract (Session 1) and map GeoJSON endpoint
-// (Week 2) exist — this is routing scaffolding only.
+// `/` (decision-log Entry 18): back to the last trip opened on this device, or,
+// when there is none (e.g. first launch of the installed iOS app, whose storage
+// is separate from Safari's), a one-field "paste your trip link" screen.
 export const Route = createFileRoute("/")({
-  component: TripHome,
+  beforeLoad: () => {
+    const slug = getLastSlug();
+    if (slug) throw redirect({ to: "/t/$slug", params: { slug }, replace: true });
+  },
+  component: PasteLink,
 });
 
-function TripHome() {
-  return <div>Bike Trip Journal</div>;
+function PasteLink() {
+  const navigate = useNavigate();
+  const [link, setLink] = useState("");
+  const [invalid, setInvalid] = useState(false);
+
+  return (
+    <form
+      style={{ padding: 16 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        const slug = parseTripLink(link);
+        setInvalid(!slug);
+        if (slug) navigate({ to: "/t/$slug", params: { slug } });
+      }}
+    >
+      <label>
+        Paste your trip link
+        <input
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          style={{ display: "block", width: "100%" }}
+        />
+      </label>
+      {invalid && <p role="alert">That doesn't look like a trip link.</p>}
+      <button type="submit">Open trip</button>
+    </form>
+  );
 }
