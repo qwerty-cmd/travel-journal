@@ -462,16 +462,28 @@ describe("AC7: QueueNotice + subscribe", () => {
     unsub();
   });
 
-  test("renders nothing with an empty queue or only young retrying entries", async () => {
+  test("renders nothing with an empty queue", async () => {
     await start();
     const QueueNotice = await loadNotice();
     const { container } = render(<QueueNotice />);
     await settle();
     expect(container.innerHTML).toBe("");
+  });
+
+  // t-offline-indicator-pending: deliberately inverted from "renders nothing with
+  // only young retrying entries" — a young entry is now counted, but still not listed.
+  test("a young retrying entry is counted, not listed individually", async () => {
+    await start();
+    const QueueNotice = await loadNotice();
+    const { container } = render(<QueueNotice />);
+    await settle();
     handler = netDown;
     await Q.enqueue(item(stop("Young")));
     await settle();
-    expect(container.innerHTML).toBe("");
+    expect(container.textContent).toContain("Waiting to send: 1 stop");
+    expect(container.textContent).not.toContain("Young");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /dismiss/i })).toBeNull();
   });
 
   test("lists failed (with Dismiss) and stuck >=10 attempts (still trying), and updates live", async () => {
@@ -492,6 +504,8 @@ describe("AC7: QueueNotice + subscribe", () => {
     expect(screen.getByText(/Daly Waters Pub/)).toBeTruthy();
     expect(screen.getByText(/name is too long/)).toBeTruthy();
     expect(screen.queryByText(/Larrimah Hotel/)).toBeNull(); // 9 attempts: not yet shown
+    // Failed excluded; the 9-attempt entry is counted.
+    expect(container.textContent).toContain("Waiting to send: 1 stop");
     expect(screen.getAllByRole("button", { name: /dismiss/i })).toHaveLength(1);
 
     await act(() => Q.drain());
@@ -501,6 +515,7 @@ describe("AC7: QueueNotice + subscribe", () => {
     expect(screen.getByText(/Larrimah Hotel/)).toBeTruthy();
     expect(container.textContent).toMatch(/still trying/i);
     expect(container.textContent).toContain(lastError);
+    expect(container.textContent).toContain("Waiting to send: 1 stop"); // counted regardless of attempts
     // A retrying entry is not dismissable: only failed ones are.
     expect(screen.getAllByRole("button", { name: /dismiss/i })).toHaveLength(1);
 

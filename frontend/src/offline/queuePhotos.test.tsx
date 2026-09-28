@@ -480,6 +480,75 @@ describe("AC6: QueueNotice labels photos", () => {
 });
 
 // ---------------------------------------------------------------------------
+// t-offline-indicator-pending: the notice counts every non-failed entry, by kind.
+describe("QueueNotice pending count", () => {
+  const settle = () => act(() => flush());
+  const summary = (c: HTMLElement) => c.querySelector("p")?.textContent ?? null;
+  const keyOf = async (id: string) => (await rawById(id))!.key as number;
+
+  test("split by kind with singular/plural; rises on enqueue, falls on drain and on dismiss", async () => {
+    await start();
+    const { QueueNotice } = await import("./QueueNotice");
+    const { container } = render(<QueueNotice />);
+    await settle();
+    handler = netDown;
+    const a = stop("A");
+    const b = stop("B");
+    await act(() => Q.enqueue(stopItem(a)));
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 1 stop");
+    await act(() => Q.enqueue(stopItem(b)));
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 2 stops");
+    await act(() => Q.enqueue([photoItem(photo(a, 1)), photoItem(photo(a, 2))]));
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 2 stops, 2 photos");
+    expect(screen.queryAllByRole("listitem")).toHaveLength(0); // young entries: count only
+
+    // A sends, B still can't: FIFO drain stops at B, leaving B's photos too.
+    handler = (p) => (p.id === b.id ? netDown() : created(p));
+    await act(() => Q.drain());
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 1 stop, 2 photos");
+
+    handler = (p) => (isPhoto(p) ? created(p) : netDown());
+    const bKey = await keyOf(b.id);
+    await act(() => Q.dismiss(bKey));
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 2 photos");
+    await act(() => Q.drain());
+    await settle();
+    expect(await rawAll()).toEqual([]);
+    expect(container.innerHTML).toBe("");
+  });
+
+  test("failed entries are excluded from the count and keep their Dismiss; only-failed shows no count", async () => {
+    await start();
+    const { QueueNotice } = await import("./QueueNotice");
+    const bad = stop("Daly Waters Pub");
+    const other = stop("Larrimah Hotel");
+    const waiting = photo(other, 3);
+    handler = (p) => (p.id === bad.id ? envelope(422, "VALIDATION_ERROR", "name is too long") : netDown());
+    await Q.enqueue([stopItem(bad), photoItem(photo(bad, 1))]); // stop fails, its photo cascades
+    await Q.enqueue(photoItem(waiting));
+    await flush();
+
+    const { container } = render(<QueueNotice />);
+    await settle();
+    expect(summary(container)).toBe("Waiting to send: 1 photo");
+    expect(screen.getAllByRole("button", { name: /dismiss/i })).toHaveLength(2);
+    expect(container.textContent).not.toContain("Photo for Larrimah Hotel"); // young: not listed
+
+    const waitingKey = await keyOf(waiting.id);
+    await act(() => Q.dismiss(waitingKey));
+    await settle();
+    expect(container.textContent).not.toMatch(/waiting to send/i);
+    expect(screen.getAllByRole("button", { name: /dismiss/i })).toHaveLength(2);
+    expect(container.textContent).toContain("name is too long");
+  });
+});
+
+// ---------------------------------------------------------------------------
 test("AC7 (spec §12): stop sent, photo lost to the network, restart, photo replayed with original id and bytes", async () => {
   await start();
   const s = stop("Tennant Creek");

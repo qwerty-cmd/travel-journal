@@ -29,7 +29,7 @@
 
     { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "not_started" },
     { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN", "status": "not_started" },
-    { "id": "s-offline-indicator", "milestoneId": "m4-polish-deploy", "title": "Offline indicator UI", "status": "not_started" },
+    { "id": "s-offline-indicator", "milestoneId": "m4-polish-deploy", "title": "Offline indicator UI", "status": "done" },
     { "id": "s-real-device-testing", "milestoneId": "m4-polish-deploy", "title": "Real-device testing day", "status": "not_started" },
     { "id": "s-deploy-cutover", "milestoneId": "m4-polish-deploy", "title": "Azure Container Apps production cutover", "status": "not_started" },
     { "id": "s-handover-docs", "milestoneId": "m4-polish-deploy", "title": "Handover documentation", "status": "not_started" }
@@ -145,8 +145,9 @@
     { "id": "t-photo-capture-processing", "storyId": "s-offline-queue", "title": "Photo capture processing — createImageBitmap → 1600px JPEG 0.82, hand-parsed EXIF DateTimeOriginal/OffsetTimeOriginal from the original file", "status": "done", "agent": "dev", "blockers": ["t-frontend-test-runner"], "gate": "none" },
     { "id": "t-photo-exif-invalid-values", "storyId": "s-offline-queue", "title": "EXIF values that pass the format check but are not real dates/offsets flow into takenAt and 422 as never-retry", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-offline-queue-photos", "storyId": "s-offline-queue", "title": "Photo entries in the same queue store — blob persisted, marked uploaded only on 2xx, stop never-retry cascades to its photos; scripted mid-upload network-loss + restart test", "status": "done", "agent": "dev", "blockers": ["t-offline-queue-core", "t-photo-capture-processing", "t-photo-exif-invalid-values"], "gate": "none" },
-    { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "done", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" }
+    { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "done", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" },
+    { "id": "t-offline-indicator-pending", "storyId": "s-offline-indicator", "title": "QueueNotice shows queued/pending syncs (count by kind), not just failed and stuck ones", "status": "done", "agent": "dev", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T23:00:00Z"
+  "lastUpdated": "2026-09-29T23:30:00Z"
 }

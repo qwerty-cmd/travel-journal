@@ -1476,3 +1476,30 @@ Filed findings (ORDINARY DEBT, not fixed, no `progress.json` rows):
 Not covered: a real phone picker and real HEIC (`processPhoto` is stubbed in these tests); real-browser IndexedDB (fake-indexeddb only). Both belong to `s-real-device-testing`.
 
 NO DECISION-LOG ENTRY: nothing was contested.
+
+## t-offline-indicator-pending
+
+**Closeout (done, QA PASS, no CURRENTLY BROKEN findings).** Only task of `s-offline-indicator`, so closing it closes that story. `cd frontend && npm run build && npm test`: build OK, 262/262 tests pass. No change to `queue.ts`, no API change, no `navigator.onLine` use.
+
+Files changed: `frontend/src/offline/QueueNotice.tsx`, `frontend/src/offline/queue.test.tsx`, `frontend/src/offline/queuePhotos.test.tsx`.
+
+Frontend doc:
+- **Design feature.** The rider's offline indicator (spec §6 screen 5). Whenever anything is in the offline queue, the rider sees "Waiting to send: N stop(s), M photo(s)", counting every entry that has not failed, whether it was just queued or has been retrying for a while. Failed entries are listed separately with their error and a Dismiss button, and entries still retrying after 10+ attempts are listed as "still trying" — both lists work as before. The notice disappears only when the queue is empty.
+- **Design format.**
+  - `QueueNotice` subscribes via `queue.ts` `subscribe`, so the count updates live as entries are enqueued, drained or dismissed.
+  - `pending` = entries with no `failed` flag; split by `kind` into stops and photos. A zero part is omitted ("Waiting to send: 2 photos"), and singular/plural is correct ("1 stop", "2 stops"). The count is independent of `attempts`.
+  - Returns `null` only when the queue is empty. Before this task it also returned `null` when only young (under 10 attempts) retrying entries existed.
+  - Failed entries are not counted; they appear only in the failed list.
+- **APIs called.** None. It reads the local IndexedDB queue only; sending is done by the queue drain (`t-offline-queue-core`, `t-offline-queue-photos`).
+
+Tests (AC7): in `queue.test.tsx` the live-update test now also asserts failed entries are excluded and the count ignores `attempts`. `queuePhotos.test.tsx` gains `describe("QueueNotice pending count")`: kind split and plurals, rises on enqueue, falls on drain and on dismiss, failed excluded.
+
+**Intended behaviour change, not a regression (AC6).** The old test "renders nothing with an empty queue or only young retrying entries" was split. The empty-queue half is kept as-is. The young-entry half was deliberately inverted: it now asserts the pending count is shown. Anyone seeing the old assertion gone should not restore it.
+
+"Count falls on dismiss" is only reachable by calling `Q.dismiss` on a pending entry directly. The UI offers Dismiss only on failed entries, and those are not counted, so no UI click lowers the pending count.
+
+Filed findings (ORDINARY DEBT, no promotion trigger, no `progress.json` rows):
+1. When only young pending entries exist, an empty `<ul>` still renders under the count. A screen reader may announce "list, 0 items".
+2. The section's `aria-label` is still "Unsent stops", though the section now counts pending photos too.
+
+NO DECISION-LOG ENTRY: nothing was contested.
