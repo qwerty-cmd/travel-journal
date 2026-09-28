@@ -1282,6 +1282,41 @@ Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retrya
 
 Inherited TRIGGERED DEBT (see `t-frontend-fetch-client` closeout): a 2xx with a non-JSON body, or a connection drop partway through the body, throws a raw `SyntaxError`/`TypeError`, not `ApiError`. Retry classification must treat any non-`ApiError` as retry, or the client must wrap it.
 
+**Closeout (done, QA PASS on all 9 ACs, no CURRENTLY BROKEN findings).** `npm run build` exits 0; `npm test` passes 9 files / 180 tests, 43 of them in the new `frontend/src/offline/queue.test.tsx`. `client.ts` is unchanged. The deps check passes. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Files changed:
+- `frontend/src/offline/queue.ts` (new). Raw IndexedDB, database `btj-queue`, store `entries`, with out-of-line auto-increment keys, so a stored value is exactly `{kind, payload: {slug, data}, attempts, lastError, failed}`. Exports `isNeverRetry`, `subscribe`, `enqueue`, `dismiss`, `drain`, `startQueue`, and the types `QueueItem`, `QueueEntry`, `QueueRecord`.
+- `frontend/src/offline/QueueNotice.tsx` (new). Lists failed entries with a Dismiss button, and says "still trying" once an entry reaches `attempts >= 10`.
+- `frontend/src/main.tsx` calls `startQueue(queryClient)`.
+- `frontend/src/routes/__root.tsx` mounts `QueueNotice`.
+- `frontend/package.json` and the lock file add `fake-indexeddb` as a devDependency only.
+- `frontend/src/stopDetail.test.tsx` gets a setup-only `vi.mock` of `QueueNotice`, so its "IndexedDB never opened" assertion stays meaningful. The assertion itself is unchanged.
+
+Behaviour notes:
+- The explicit triggers (`enqueue`, `visibilitychange` to visible, and `online`) drain immediately, whatever the backoff. The backoff timer is the automatic retry. The backoff counter resets on any 2xx and on `online`.
+- A never-retry failure also counts as an attempt.
+- An envelope with an unknown `code` is retried (orchestrator ruling).
+- There is no `navigator.onLine` gate (Entry 19).
+
+Scope notes: photos are out of scope. The `kind` union is left open for `t-offline-queue-photos`. Known limit: there is no optimistic display, so a queued stop appears in the map and feed only after it drains.
+
+The inherited TRIGGERED DEBT from `t-frontend-fetch-client` (a 2xx with a non-JSON body throws a raw `SyntaxError`/`TypeError`, not `ApiError`) is **RESOLVED** by AC4. Any non-`ApiError` is classified retry, and a retried create replays as `200`. A test covers it.
+
+QA mutation run: 43 mutants, 36 killed at first. Four were real coverage gaps, closed by two added tests (restart without a drain, and attempt counting on commit). The remaining survivors are either equivalent (#14: `lastError` taken from `err.message` equals the envelope message by way of `client.ts`) or undetectable under fake-indexeddb (#34).
+
+Filed findings (ORDINARY DEBT, not fixed, no `progress.json` rows, following the other frontend closeouts):
+- F3. About 31 caught "ReferenceError: indexedDB is not defined" stderr lines come from the routing, displayName, Timeline and TripMap tests, which render the real root under jsdom. The fix belongs in test setup, not in a guard in `queue.ts`.
+- F4. fake-indexeddb cannot tell a request's success from the transaction's commit (mutant #34). This is a known limit.
+
+Frontend doc:
+- **Design feature.** Stop creates never go straight to the API. They are written to an IndexedDB queue and sent from the page in FIFO order, so a stop captured with no signal survives a reload or app restart and is sent when the connection returns. A drain stops at the first retryable failure and backs off from 5s, doubling to a 5min cap. A never-retry failure (envelope code `VALIDATION_ERROR`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `FORBIDDEN` or `NOT_FOUND`, per api-contract.md; it is matched on the code, not the HTTP status) marks the entry failed and the drain moves on. Failed entries stay until the rider dismisses them. Every page shows a small notice listing failed entries with a Dismiss button, plus a "still trying" line for entries that have been retried 10 or more times.
+- **Design format.**
+  - `offline/queue.ts` is a plain module, not a hook. `startQueue(queryClient)` runs once from `main.tsx`: it requests `navigator.storage.persist()` (best effort), registers the `online` and `visibilitychange` triggers, and starts the first drain. `enqueue(item)` resolves after the write commits, then drains. `drain()` runs once per tab: a call made during a drain joins it, and the drain makes one more pass. After a 2xx the entry is deleted, and the trip's `/stops` and `/map` queries are invalidated through the `QueryClient`. `subscribe(fn)` feeds the notice. `dismiss(key)` deletes an entry by its store key.
+  - `offline/QueueNotice.tsx` is mounted in `routes/__root.tsx` and re-renders from `subscribe`. It renders nothing when no entry is failed or still trying.
+- **APIs called.** `POST /api/trips/{slug}/stops` (`StopCreate`), through the generated client, never a hand-written fetch. A replay of an already-created stop returns `200`, and it counts as success.
+
+NO DECISION-LOG ENTRY: the unknown-code ruling was an orchestrator call on a gap in the contract, not a contested one.
+
 ## t-photo-capture-processing
 
 Architect ruling R4. This needed no decision-log entry because nothing was contested with a standing requirement.

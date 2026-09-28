@@ -8,6 +8,11 @@ import type { PhotoOut } from "./api/gen/types/PhotoOut";
 import type { StopOut } from "./api/gen/types/StopOut";
 import type { TripOut } from "./api/gen/types/TripOut";
 
+// The root route mounts <QueueNotice/>, which reads the offline queue's own
+// IndexedDB on mount. That read is not the stop-detail path, so stub it out:
+// the AC7 IndexedDB assertion below stays about presigned photo urls only.
+vi.mock("./offline/QueueNotice", () => ({ QueueNotice: () => null }));
+
 // t-frontend-stop-detail-gallery: /t/$slug/stops/$stopId, plus pin and
 // timeline navigation into it. Driven through the real route tree with fetch
 // stubbed per path (build first so routeTree.gen.ts has the new route).

@@ -21,11 +21,11 @@
     { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
 
-    { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "in_progress" },
-    { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map + timeline feed", "status": "not_started" },
+    { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "done" },
+    { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map + timeline feed", "status": "done" },
     { "id": "s-frontend-add-stop-flow", "milestoneId": "m3-frontend-pwa", "title": "Add-stop flow — camera, GPS, notes", "status": "not_started" },
     { "id": "s-frontend-timeline-gallery", "milestoneId": "m3-frontend-pwa", "title": "Stop detail — photo gallery, notes, timestamp", "status": "done" },
-    { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — IndexedDB FIFO drained from the page + SW app shell, queue-level upload retry (not S3 multipart, decision-log 20), HEIC→JPEG", "status": "not_started" },
+    { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — IndexedDB FIFO drained from the page + SW app shell, queue-level upload retry (not S3 multipart, decision-log 20), HEIC→JPEG", "status": "in_progress" },
 
     { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "not_started" },
     { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN", "status": "not_started" },
@@ -139,7 +139,7 @@
     { "id": "t-frontend-map-pins-trail", "storyId": "s-frontend-map-view", "title": "Leaflet map from GET /map — pins + trail, [lng,lat] order, marker icon import under Vite", "status": "done", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
     { "id": "t-frontend-timeline-feed", "storyId": "s-frontend-map-view", "title": "Chronological timeline feed from GET /stops", "status": "done", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
     { "id": "t-frontend-stop-detail-gallery", "storyId": "s-frontend-timeline-gallery", "title": "/t/$slug/stops/$stopId — notes, timestamp, thumbnail grid (presigned full image + CSS object-fit), tap to enlarge", "status": "done", "agent": "dev", "blockers": ["t-frontend-map-pins-trail", "t-frontend-timeline-feed"], "gate": "none" },
-    { "id": "t-offline-queue-core", "storyId": "s-offline-queue", "title": "IndexedDB queue store + page drain + retry classification for stop creates (decision-log 19), dead-letter list with minimal rider notice; scripted network-loss + restart test", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-fetch-client"], "gate": "none" },
+    { "id": "t-offline-queue-core", "storyId": "s-offline-queue", "title": "IndexedDB queue store + page drain + retry classification for stop creates (decision-log 19), dead-letter list with minimal rider notice; scripted network-loss + restart test", "status": "done", "agent": "dev", "blockers": ["t-frontend-fetch-client"], "gate": "none" },
     { "id": "t-offline-app-shell", "storyId": "s-offline-queue", "title": "Workbox navigateFallback (/api denylisted) — offline cold open renders the capture UI", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-slug-routing", "t-offline-queue-core"], "gate": "none" },
     { "id": "t-frontend-add-stop-form", "storyId": "s-frontend-add-stop-flow", "title": "Add-stop form, rider-only — GPS → gps, denied/unavailable → map tap manual, offset-aware arrivedAt, notes, enqueue (never direct POST)", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-map-pins-trail", "t-offline-queue-core"], "gate": "none" },
     { "id": "t-photo-capture-processing", "storyId": "s-offline-queue", "title": "Photo capture processing — createImageBitmap → 1600px JPEG 0.82, hand-parsed EXIF DateTimeOriginal/OffsetTimeOriginal from the original file", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-test-runner"], "gate": "none" },
@@ -147,5 +147,5 @@
     { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T12:00:00Z"
+  "lastUpdated": "2026-09-29T18:00:00Z"
 }
