@@ -32,9 +32,17 @@ function popupFor({ name, arrivedAt }: StopFeatureProperties) {
  * `GET /api/trips/{slug}/map`. GeoJSON is [lng, lat]; L.geoJSON converts it,
  * so coordinates are never swapped by hand. `collection` undefined (still
  * loading) or empty shows Australia. Clicking a pin opens that stop's detail
- * screen, matched on the GeoJSON Feature.id (the stop id).
+ * screen, matched on the GeoJSON Feature.id (the stop id). `onMapClick`, when
+ * given, receives each tap's position (longitude wrapped into -180..180), used
+ * by the add-stop form's manual-location fallback.
  */
-export function TripMap({ collection }: { collection?: MapFeatureCollection }) {
+export function TripMap({
+  collection,
+  onMapClick,
+}: {
+  collection?: MapFeatureCollection;
+  onMapClick?: (lat: number, lng: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const navigate = useNavigate();
@@ -69,6 +77,19 @@ export function TripMap({ collection }: { collection?: MapFeatureCollection }) {
       layer.remove();
     };
   }, [collection, navigate]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !onMapClick) return;
+    const handler = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng.wrap();
+      onMapClick(lat, lng);
+    };
+    map.on("click", handler);
+    return () => {
+      map.off("click", handler);
+    };
+  }, [onMapClick]);
 
   return <div ref={containerRef} style={{ height: "50vh" }} />;
 }

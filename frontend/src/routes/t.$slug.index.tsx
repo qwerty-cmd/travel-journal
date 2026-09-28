@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useGetTripApiTripsSlugGet } from "../api/gen/hooks/useGetTripApiTripsSlugGet";
 import { useGetMapApiTripsSlugMapGet } from "../api/gen/hooks/useGetMapApiTripsSlugMapGet";
 import { useListStopsApiTripsSlugStopsGet } from "../api/gen/hooks/useListStopsApiTripsSlugStopsGet";
 import { Timeline } from "../components/Timeline";
@@ -13,9 +14,16 @@ function TripHome() {
   const { slug } = Route.useParams();
   const map = useGetMapApiTripsSlugMapGet({ slug });
   const stops = useListStopsApiTripsSlugStopsGet({ slug });
+  // Reads the trip the shell (useTrip) already loaded; no second fetch on mount.
+  const trip = useGetTripApiTripsSlugGet({ slug }, { query: { refetchOnMount: false } });
 
   return (
     <main style={{ padding: 16 }}>
+      {trip.data?.access === "rider" && (
+        <Link to="/t/$slug/add" params={{ slug }}>
+          Add stop
+        </Link>
+      )}
       {map.isError ? <p>Map unavailable</p> : <TripMap collection={map.data} />}
       {stops.isPending ? (
         <p>Loading stops…</p>

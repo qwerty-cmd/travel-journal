@@ -1384,6 +1384,34 @@ CLOSEOUT (status done).
   3. Go offline and reload. Confirm the trip name renders from the persisted TripOut.
   4. Repeat with `npm run build && npm run preview`.
 
+## t-frontend-add-stop-form
+
+**Closeout (done, QA PASS on all 6 ACs, no CURRENTLY BROKEN findings).** 231/231 tests pass. 21 of them are new in `frontend/src/addStop.test.tsx`, written by test-writer. `npm run build` passes. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Files changed: `frontend/src/routes/t.$slug.add.tsx` (new), `frontend/src/components/TripMap.tsx` (new optional `onMapClick` prop), `frontend/src/routes/t.$slug.index.tsx` ("Add stop" link for riders), `frontend/src/addStop.test.tsx` (new).
+
+Frontend doc:
+- **Design feature.** `/t/$slug/add` is the "Add stop" form, for riders only. A rider reaches it from the "Add stop" link on the trip home, which appears only when the trip's `access` is `"rider"`. A viewer who opens the URL directly is sent back to `/t/$slug` (a replace redirect, so Back does not return to the form). On open, the form asks for a GPS fix. If it gets one, the location is marked GPS. If geolocation is missing, denied, times out or fails in any other way, the page says "GPS unavailable: tap the map to set the location" and shows the trip map; a tap sets the location and marks it as a map tap (`"manual"`), and a later tap replaces it. The rider enters a name (required) and optional notes. "Save stop" writes the stop to the offline queue on the device, never straight to the server, and returns to the trip home. The stop appears on the map and in the feed once the queue has sent it. If the write to the device fails, the page shows "Couldn't save the stop on this device" and keeps the form filled in.
+- **Design format.**
+  - The route file is `routes/t.$slug.add.tsx`, a child of the `/t/$slug` shell.
+  - The trip comes from the generated `useGetTripApiTripsSlugGet` with `refetchOnMount: false`. This shares the cache entry the shell's `useTrip` already filled, including the TripOut persisted for offline use, so the form makes no second GET. The rider check uses the server's `access` answer, not anything stored on the device. `t.$slug.index.tsx` reads the trip the same way for its link.
+  - `id` (`crypto.randomUUID()`) and `arrivedAt` (`new Date().toISOString()`) are fixed once when the form opens. A resubmit after a failed enqueue reuses both, so it replays the same idempotent id. `arrivedAt` is UTC with a `Z`: it is timezone-aware, as Entry 15 requires, but the rider's local offset is not kept.
+  - GPS uses `navigator.geolocation.getCurrentPosition` with `{ enableHighAccuracy: true, timeout: 15000 }`.
+  - The name is trimmed. Blank notes become `null`. "Save stop" is disabled while saving, while the name is blank, or while there is no location. The request body is a full `StopCreate` (all seven fields: `id`, `name`, `lat`, `lng`, `locationSource`, `arrivedAt`, `notes`), built as one `data` object and passed to a single `enqueue({ kind: "stop", payload: { slug, data } })` from `offline/queue.ts`.
+  - `components/TripMap.tsx` gains `onMapClick?: (lat, lng) => void`. See `frontend/src/components/README.md`.
+  - States: "Getting GPS fix…", the GPS-unavailable message with the map, a location line ("Location: lat, lng (GPS)" or "(map tap)") to 5 decimal places, and the `role="alert"` enqueue error.
+- **APIs called.**
+  - `GET /api/trips/{slug}` through `useGetTripApiTripsSlugGet`, served from the shell's cache.
+  - `POST /api/trips/{slug}/stops` only indirectly, when the offline queue drains (see `t-offline-queue-core`). No UI file calls `createStopApiTripsSlugStopsPost` or its hook.
+
+Findings (filed, not fixed):
+1. **CURRENTLY OBSERVABLE, for the orchestrator to triage.** The task's validation grep, `! grep -rnE "createStopApiTripsSlugStopsPost|useCreateStopApiTripsSlugStopsPost" frontend/src ... | grep -vE "src/api/gen/|src/offline/"`, always fails. It matches the existing contract tests in `frontend/src/api/client.test.ts` (lines 6, 7, 127 and 257). With `|\.test\.` added to the exclusion it passes, which confirms no UI file calls createStop. The command text needs correcting.
+2. **ORDINARY DEBT.** AC4 says "six StopCreate fields", but `StopCreate` has seven (`notes` is optional). The code sends all seven, as the contract says. Only the wording is wrong.
+3. **ORDINARY DEBT.** `arrivedAt` is sent in UTC, so the rider's local offset is lost. The value is still correct as an instant, and every screen shows it in the viewer's local time. Promotion trigger: a feature that must show the arrival in the rider's local time at the stop. Note that the task title says "offset-aware arrivedAt"; a `Z` value is offset-aware, so this is not a contract violation.
+4. **Note for `t-add-stop-photo-attach`.** The stop is built as one `data` object and passed to a single `enqueue` call. That call is where it becomes `enqueue([stop, ...photos])` once `t-offline-queue-photos` makes `enqueue` accept an array (ba decision 2 in that section).
+
+No `progress.json` rows were filed for findings 2 and 3, following the other frontend closeouts. NO DECISION-LOG ENTRY: nothing was contested.
+
 ## t-offline-queue-photos
 
 Same store as stops (Entry 19). The blob is persisted with the entry. An entry is marked uploaded only on a 2xx. If a stop fails never-retry, its photos fail with it and are never sent. Upload is one request per photo, retried in full with the same `id` (Entry 20).
