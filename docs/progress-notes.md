@@ -1246,6 +1246,36 @@ Known limits of the tests: the order of stops with an invalid or empty `arrivedA
 
 No findings filed. NO DECISION-LOG ENTRY: nothing was contested.
 
+## t-frontend-stop-detail-gallery
+
+**Closeout (done, QA PASS on all 7 ACs).** 99/99 tests pass. 17 of them are new in `frontend/src/stopDetail.test.tsx`. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Files changed: `frontend/src/routes/t.$slug.stops.$stopId.tsx` (new), `frontend/src/components/TripMap.tsx` (a pin click navigates), `frontend/src/components/Timeline.tsx` (items navigate), `frontend/src/stopDetail.test.tsx` (new).
+
+Frontend doc:
+- **Design feature.** `/t/$slug/stops/$stopId` is the stop detail page. It shows the stop name, the arrival time in the viewer's local time (`toLocaleString()`), the notes (nothing is rendered when `notes` is `null`), "approximate location" for manual stops, and a thumbnail grid of the stop's photos. Tapping a thumbnail enlarges it. The page is opened by clicking a map pin (matched on the GeoJSON `Feature.id`) or by clicking a timeline item or pressing Enter on it. It is the same for riders and viewers, and it is read-only.
+- **Design format.**
+  - The route file is `routes/t.$slug.stops.$stopId.tsx`, a child of the `/t/$slug` shell.
+  - There is no stop-by-id endpoint, so the stop is found by `id` in the `/stops` query result. The photos query is enabled only once the stop is found.
+  - Thumbnails are 96x96 buttons holding an `<img loading="lazy">` with `object-fit: cover`.
+  - The enlarged view is plain React state: a fixed `<div role="dialog" aria-modal>` that closes on click or Escape.
+  - States: "Loading stops…"; a stops error (the envelope message, or "Couldn't load stops"); "Stop not found" with a "Back to trip" link; "Loading photos…"; a photos error (the envelope message, or "Couldn't load photos"); "No photos yet".
+  - `TripMap` and `Timeline` navigate with `useNavigate`, not `<Link>`, because `<Link>` crashes outside a `RouterProvider` in the existing standalone component tests. Timeline items are `<div role="link" tabIndex={0}>`.
+- **APIs called.**
+  - `GET /api/trips/{slug}/stops` through `useListStopsApiTripsSlugStopsGet`.
+  - `GET /api/trips/{slug}/stops/{stop_id}/photos` through `useListPhotosApiTripsSlugStopsStopIdPhotosGet`. The photo `url` is presigned. It is shown straight from the query result and never persisted.
+
+Accepted limits: a presigned URL can expire if the page stays open a long time. Photos are not viewable offline.
+
+Filed findings (all ORDINARY DEBT, not fixed, no `progress.json` rows, following the other frontend closeouts):
+- (a) Timeline items are `<div role="link">`, not real `<a href>`, so open-in-new-tab and middle-click do not work.
+- (b) The standalone `TripMap`/`Timeline` tests now log "useRouter must be used inside a <RouterProvider>" warnings. They pass. This becomes work if a standalone test clicks an item.
+- (c) The photo overlay has `aria-modal` but does not move or trap focus.
+- (d) The pin popup is effectively never seen now, because the click that opens it also navigates away.
+- (e) `frontend/tsconfig.tsbuildinfo` is untracked and not gitignored. This predates the task.
+
+NO DECISION-LOG ENTRY: nothing was contested.
+
 ## t-offline-queue-core
 
 Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.

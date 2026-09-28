@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { useEffect, useRef } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import iconUrl from "leaflet/dist/images/marker-icon.png";
@@ -30,11 +31,13 @@ function popupFor({ name, arrivedAt }: StopFeatureProperties) {
  * Trip map (spec Section 6, screen 2): one pin per stop plus the trail, from
  * `GET /api/trips/{slug}/map`. GeoJSON is [lng, lat]; L.geoJSON converts it,
  * so coordinates are never swapped by hand. `collection` undefined (still
- * loading) or empty shows Australia.
+ * loading) or empty shows Australia. Clicking a pin opens that stop's detail
+ * screen, matched on the GeoJSON Feature.id (the stop id).
  */
 export function TripMap({ collection }: { collection?: MapFeatureCollection }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const map = L.map(containerRef.current!).setView(AUSTRALIA, 4);
@@ -54,7 +57,10 @@ export function TripMap({ collection }: { collection?: MapFeatureCollection }) {
     if (!map || !collection) return;
     const layer = L.geoJSON(collection as GeoJSON.FeatureCollection, {
       onEachFeature: (feature, l) => {
-        if (feature.geometry.type === "Point") l.bindPopup(popupFor(feature.properties));
+        if (feature.geometry.type !== "Point") return;
+        l.bindPopup(popupFor(feature.properties));
+        const stopId = String(feature.id);
+        l.on("click", () => navigate({ from: "/t/$slug", to: "/t/$slug/stops/$stopId", params: (p) => ({ ...p, stopId }) }));
       },
     }).addTo(map);
     if (collection.features.length) map.fitBounds(layer.getBounds(), { maxZoom: 12 });
@@ -62,7 +68,7 @@ export function TripMap({ collection }: { collection?: MapFeatureCollection }) {
     return () => {
       layer.remove();
     };
-  }, [collection]);
+  }, [collection, navigate]);
 
   return <div ref={containerRef} style={{ height: "50vh" }} />;
 }
