@@ -1,11 +1,20 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useGetMapApiTripsSlugMapGet } from "../api/gen/hooks/useGetMapApiTripsSlugMapGet";
+import { TripMap } from "../components/TripMap";
 
-// Trip home (spec Section 6, screen 2). Map and timeline land here in
-// t-frontend-map-pins-trail and t-frontend-timeline-feed.
+// Trip home (spec Section 6, screen 2). The timeline lands here in
+// t-frontend-timeline-feed.
 export const Route = createFileRoute("/t/$slug/")({
   component: TripHome,
 });
 
 function TripHome() {
-  return <main style={{ padding: 16 }} />;
+  const { slug } = Route.useParams();
+  const map = useGetMapApiTripsSlugMapGet({ slug });
+
+  return (
+    <main style={{ padding: 16 }}>
+      {map.isError ? <p>Map unavailable</p> : <TripMap collection={map.data} />}
+    </main>
+  );
 }

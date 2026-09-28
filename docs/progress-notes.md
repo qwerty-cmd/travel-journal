@@ -1205,6 +1205,28 @@ Frontend doc:
 Findings (filed, not fixed):
 - **ORDINARY DEBT**: until the server responds (while the request is pending, or after a network failure), the prompt decision uses `access` from the cached `btj.trip.<slug>` `TripOut`. That value is still the server's answer, just an earlier one. It only matters if a link's access level can change between visits, and nobody has checked whether the backend allows that. No promotion trigger today.
 
+## t-frontend-map-pins-trail
+
+**Closeout (done, QA PASS on all 8 ACs).** 68/68 tests pass. 13 of them are new in `frontend/src/components/TripMap.test.tsx` and assert on the Leaflet objects. `displayName.test.tsx` and `routing.test.tsx` only changed their fetch stubs: the trip home now fetches `/map`, so the stubs answer it with an empty FeatureCollection. No assertions changed. Validation is `cd frontend && npm run build && npm test`.
+
+Frontend doc:
+- **Design feature.** The trip home (`/t/$slug/`) shows a map with a pin per stop and the trail between them. It fits the view to the data, or shows Australia when there are no stops yet. Clicking a pin shows the stop name and its arrival time in the viewer's local time. If the map request fails, the page shows an inline "Map unavailable" message and the rest of the trip shell still works.
+- **Design format.**
+  - `components/TripMap.tsx` uses Leaflet directly, with no React wrapper. It takes one prop, `collection?: MapFeatureCollection`. The mount effect creates the map (50vh tall, centred on [-25, 134] at zoom 4, OSM tiles with the "© OpenStreetMap contributors" attribution). Its cleanup calls `map.remove()`.
+  - The collection effect adds one `L.geoJSON` layer. Leaflet converts GeoJSON's `[lng, lat]` order itself. Popups are built with `textContent`, never HTML, so a stop name cannot inject markup. A non-empty collection is fitted with `fitBounds` at `maxZoom` 12. Its cleanup removes only the feature layer, not the map.
+  - Marker icons: the PNGs are imported through Vite and merged into `L.Icon.Default`, and `_getIconUrl` is deleted so Leaflet does not rebuild the URLs itself. Vite inlines the PNGs as data URIs in the build.
+  - `routes/t.$slug.index.tsx` calls the generated hook and renders `<TripMap>` or the error message.
+- **APIs called.** `GET /api/trips/{slug}/map` → `MapFeatureCollection` (200, 404), through the generated hook `useGetMapApiTripsSlugMapGet({ slug })`.
+
+Known limits of the tests: jsdom has no real tiles or layout. `fitBounds` is checked by its call arguments, not by the zoom it produces. The build inlining the icons was checked by hand.
+
+Findings (filed, not fixed):
+- **ORDINARY DEBT**: removing the `delete L.Icon.Default.prototype._getIconUrl` line would not fail any test. The breakage only shows in a real browser with the Leaflet CSS loaded, so covering it needs a browser test. No promotion trigger today.
+- **TRIGGERED DEBT**: no test covers the map going back to the Australia view when a collection with stops becomes empty. The code handles it. Promotion event: a frontend stop-delete feature lands. No such task exists in `progress.json` yet.
+- **ORDINARY DEBT**: when a refetch returns changed map data, the map refits and throws away the viewer's pan and zoom. No AC covers this. No promotion trigger today.
+
+No `progress.json` rows were filed for these, following the other frontend closeouts. NO DECISION-LOG ENTRY: nothing was contested.
+
 ## t-offline-queue-core
 
 Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.

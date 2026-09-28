@@ -44,7 +44,11 @@ const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 beforeEach(() => {
   localStorage.clear();
   fetchMock.mockReset();
-  vi.stubGlobal("fetch", fetchMock);
+  // The trip home also requests GET /api/trips/{slug}/map; answer it with an empty
+  // collection so fetchMock (and its call counts) sees trip requests only.
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
+    String(input).endsWith("/map") ? Promise.resolve(json(200, { type: "FeatureCollection", features: [] })) : fetchMock(input, init),
+  );
   vi.stubGlobal("scrollTo", () => {}); // jsdom lacks it; the router calls it on navigation
 });
 afterEach(() => {

@@ -136,7 +136,7 @@
     { "id": "t-frontend-fetch-client", "storyId": "s-frontend-first-open", "title": "Custom Kubb client via importPath — Content-Type: application/json for JSON bodies only (never FormData), throw on non-2xx carrying the parsed ErrorEnvelope or a no-envelope error; regenerate", "status": "done", "agent": "dev", "blockers": ["t-frontend-test-runner"], "gate": "triggered" },
     { "id": "t-frontend-slug-routing", "storyId": "s-frontend-map-view", "title": "/t/$slug shell (decision-log 18) — TripOut via generated hook, persisted TripOut as initialData (decision-log 19), cold-start loading indicator, NOT_FOUND screen, / → lastSlug redirect or paste-link screen", "status": "done", "agent": "dev", "blockers": ["t-frontend-fetch-client"], "gate": "none" },
     { "id": "t-frontend-display-name-prompt", "storyId": "s-frontend-first-open", "title": "Display-name prompt, rider-only (decision-log 18), stored in localStorage", "status": "done", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
-    { "id": "t-frontend-map-pins-trail", "storyId": "s-frontend-map-view", "title": "Leaflet map from GET /map — pins + trail, [lng,lat] order, marker icon import under Vite", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
+    { "id": "t-frontend-map-pins-trail", "storyId": "s-frontend-map-view", "title": "Leaflet map from GET /map — pins + trail, [lng,lat] order, marker icon import under Vite", "status": "done", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
     { "id": "t-frontend-timeline-feed", "storyId": "s-frontend-map-view", "title": "Chronological timeline feed from GET /stops", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-slug-routing"], "gate": "none" },
     { "id": "t-frontend-stop-detail-gallery", "storyId": "s-frontend-timeline-gallery", "title": "/t/$slug/stops/$stopId — notes, timestamp, thumbnail grid (presigned full image + CSS object-fit), tap to enlarge", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-map-pins-trail", "t-frontend-timeline-feed"], "gate": "none" },
     { "id": "t-offline-queue-core", "storyId": "s-offline-queue", "title": "IndexedDB queue store + page drain + retry classification for stop creates (decision-log 19), dead-letter list with minimal rider notice; scripted network-loss + restart test", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-fetch-client"], "gate": "none" },
@@ -147,5 +147,5 @@
     { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T00:00:00Z"
+  "lastUpdated": "2026-09-29T12:00:00Z"
 }
