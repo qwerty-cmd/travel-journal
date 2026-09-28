@@ -13,12 +13,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
+from app.api.responses import error_responses
 from app.core.errors import ApiError
 from app.core.security import TripContext, require_rider_access
 from app.data.db import SessionDep
 from app.data.repositories.bikes import BikeIdOnAnotherTrip, create, patch
 from app.models.bike import BikeCreate, BikeOut, BikePatch
-from app.models.common import ErrorEnvelope
 
 # POST /trips/{slug}/bikes -- add a bike (rider-slug only, 403 on viewer slug).
 router = APIRouter(prefix="/trips/{slug}/bikes", tags=["bikes"])
@@ -42,23 +42,16 @@ ID_ALREADY_USED_MESSAGE = (
             "this trip, so nothing was created and the **stored** record is returned "
             "unchanged. Task `t-bikes-create-endpoint`.",
         },
-        HTTPStatus.FORBIDDEN: {
-            "model": ErrorEnvelope,
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
-        },
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug.",
-        },
-        HTTPStatus.CONFLICT: {
-            "model": ErrorEnvelope,
-            "description": "The `id` in the body already belongs to a bike on a **different** "
-            "trip. Nothing was created, nothing about the conflicting record is disclosed.",
-        },
-        HTTPStatus.UNPROCESSABLE_ENTITY: {
-            "model": ErrorEnvelope,
-            "description": "The body failed schema validation.",
-        },
+        **error_responses(
+            {
+                HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug.",
+                HTTPStatus.NOT_FOUND: "No trip has this slug.",
+                HTTPStatus.CONFLICT: "The `id` in the body already belongs to a bike on a "
+                "**different** trip. Nothing was created, nothing about the conflicting record "
+                "is disclosed.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+            }
+        ),
     },
     description="""
 **Context.** Bikes are registered per trip so the journal records who is riding
@@ -96,20 +89,14 @@ async def create_bike(
     "/{id}",
     summary="Update a bike on a trip",
     response_description="The bike after applying the patch.",
-    responses={
-        HTTPStatus.FORBIDDEN: {
-            "model": ErrorEnvelope,
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
-        },
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug, or no bike with this id exists on the trip.",
-        },
-        HTTPStatus.UNPROCESSABLE_ENTITY: {
-            "model": ErrorEnvelope,
-            "description": "The body failed schema validation.",
-        },
-    },
+    responses=error_responses(
+        {
+            HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug.",
+            HTTPStatus.NOT_FOUND: "No trip has this slug, or no bike with this id exists on "
+            "the trip.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+        }
+    ),
     description="""
 **Context.** Partial update of a bike registered on this trip. Only the fields
 present in the request body are changed — absent fields stay as they are.

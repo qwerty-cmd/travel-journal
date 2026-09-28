@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from pydantic import AwareDatetime
 
+from app.api.responses import PATH_PARAMETERS_422, error_responses
 from app.core.errors import ApiError
 from app.core.security import TripContext, require_rider_access, require_trip_access
 from app.data.db import SessionDep
@@ -25,7 +26,6 @@ from app.data.repositories.photos import (
     list_by_stop,
     stop_belongs_to_trip,
 )
-from app.models.common import ErrorEnvelope
 from app.models.photo import PhotoOut
 from app.storage.s3_client import BUCKET_NAME, get_s3_client
 
@@ -51,12 +51,13 @@ async def _verified_stop(context: TripContext, stop_id: str, session) -> None:
     "",
     summary="List a stop's photos",
     response_description="Every photo on this stop, each with a presigned URL.",
-    responses={
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug, or the stop id does not exist on this trip.",
-        },
-    },
+    responses=error_responses(
+        {
+            HTTPStatus.NOT_FOUND: "No trip has this slug, or the stop id does not exist on "
+            "this trip.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+        }
+    ),
     description="""
 **Context.** Photos attached to a single stop, each carrying a presigned URL
 into S3-compatible storage. The URL is generated fresh per request and never
@@ -95,22 +96,16 @@ router.add_api_route("", list_photos, methods=["HEAD"], include_in_schema=False)
             "description": "**A replay, not a second upload.** This id is already a photo on "
             "this stop, so nothing was created and the **stored** record is returned.",
         },
-        HTTPStatus.FORBIDDEN: {
-            "model": ErrorEnvelope,
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
-        },
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug, or the stop id does not exist on this trip.",
-        },
-        HTTPStatus.CONFLICT: {
-            "model": ErrorEnvelope,
-            "description": "The `id` field already belongs to a photo on a **different** stop.",
-        },
-        HTTPStatus.UNPROCESSABLE_ENTITY: {
-            "model": ErrorEnvelope,
-            "description": "A required form field is missing or invalid.",
-        },
+        **error_responses(
+            {
+                HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug.",
+                HTTPStatus.NOT_FOUND: "No trip has this slug, or the stop id does not exist on "
+                "this trip.",
+                HTTPStatus.CONFLICT: "The `id` field already belongs to a photo on a "
+                "**different** stop.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "A required form field is missing or invalid.",
+            }
+        ),
     },
     description="""
 **Context.** This is how a photo gets into the journal. Multipart: form fields

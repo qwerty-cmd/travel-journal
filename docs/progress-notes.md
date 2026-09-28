@@ -190,6 +190,17 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 - Current consumer: none.
 - Promotion trigger: the next route to land (`s-stop-crud`), where the shared `responses=` constant is decided once rather than improvised per route.
 
+PROMOTED — `gate: triggered` kept (records how it entered the pipeline); `agent: ba → dev`.
+- Trigger fired: `s-stop-crud` landed (and every other M2 route after it), each hand-copying `responses=` dicts. The Gate 3 condition was met long before anyone acted on it.
+- Ruling: architect ruling applied by the orchestrator — one shared constant, route-supplied descriptions, `422` declared on every parameterised operation (including the four GETs where it is unreachable), `405`/`500` never declared per operation. Recorded as `docs/decision-log.md` Entry 17.
+- Urgency: M3 starts with Kubb generation. Generated against the old document, every call site would have been typed `ErrorEnvelope | HTTPValidationError`, and the offline queue's branch-on-`code` premise would have been baked into the client wrong.
+
+CLOSEOUT 2026-09-28 — `done`. qa: all 7 acceptance criteria PASS.
+- Built: `backend/app/api/responses.py` (new) — `ERROR_RESPONSES` (403/404/409/422 → `ErrorEnvelope` + generic description; 405/500 absent on purpose), `PATH_PARAMETERS_422` (shared GET 422 text), and `error_responses({status: description})`: model always from the constant, description always from the route. All 8 schema-visible operations in `routes/{trips,stops,photos,bikes,map}.py` build their error entries through it; existing descriptions byte-identical; the four GETs gained `422`; the `200` replay entries on the three creates stay per-route; `ErrorEnvelope` is no longer imported by any route file.
+- Scope amendment (dev blocker, orchestrator-approved): the SPA fallback `@app.get("/{full_path:path}")` in `backend/app/main.py` (~L205) is registered only when `frontend/dist` exists, was not `include_in_schema=False`, and its auto-422 put `HTTPValidationError`/`ValidationError` back into `components.schemas`. `main.py` was added to scope for exactly one edit — `include_in_schema=False` on that route. Metadata only, same reason as the HEAD siblings (decision-log Entry 11): an undocumented route must not produce a Kubb hook. qa ran a mutant without that edit; the guard tests fail.
+- Tests: `backend/tests/test_openapi_error_responses.py` (test-writer, 18 tests) — whole-document criteria 4/5, no operation declares 405/500, per-operation status sets, the 200 replay entries, the GET 422 path-parameter wording. 6 of the 18 fail at HEAD. Full suite 567 passed (549 + 18), no existing test edited. qa diffed the spec HEAD vs patched: only additions are the GET 422s.
+- Findings, filed not fixed (ORDINARY DEBT, no promotion trigger): (1) 4 pre-existing `ruff check` errors — `tests/test_photo_endpoints.py` L40/46/180, `tests/unit/test_stop_model.py` L108; (2) `routes/photos.py` ~L190 fails `ruff format --check` — falls under the standing `t-ruff-format-gate` decision; (3) the brief's inline OpenAPI spot-check stops at its first `assert`, so it reports only one violation per run — the guard test file supersedes it.
+
 ## t-ruff-format-gate
 
 ruff format --check would reformat app/core/errors.py and three other files; ruff check alone doesn't cover formatting. Decide whether format joins the validation gate.

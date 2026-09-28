@@ -37,6 +37,7 @@ empirically disproves another.
 | 14 | A client-generated id that already exists under a *different* trip — the sixth `ErrorCode` | `models/common.py`, `core/errors.py`, `repositories/stops.py`, `api-contract.md` | `ba` escalated a second contract gap rather than inventing a code (Entry 6's rule, applied again); user ruled **`CONFLICT` / `409`**. Replay matches **`(parent, id)`**, never `id` alone, and the cross-parent branch is found **by a check, never a failed INSERT** (that renders `500` and the queue retries forever). Four readings rejected — the composite `(trip_id, id)` **primary key is rejected on cost, not correctness**: it cascades into `photos.stop_id` and the unbuilt photo-upload design. Entry 3 does **not** forbid `ON CONFLICT (id) DO NOTHING` here |
 | 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. The photo form's `takenAt` was explicitly **left open** here on an EXIF premise — **since ruled the same way by Entry 16, independently, after that premise was tested and failed**; do not cite this entry for it |
 | 16 | The photo form's `takenAt` must be timezone-aware — and `PhotoCreateForm` is deleted, not bound | `api-contract.md`, `routes/photos.py`, `models/photo.py` | Two losing arguments. (a) **The EXIF objection, disproved:** "`DateTimeOriginal` is naive by design so reject-naive may be unsatisfiable" — EXIF is never the wire source, the frontend composes the field and `getTimezoneOffset()` is always available. (b) **The gate classification was wrong:** filed TRIGGERED on "no route imports `PhotoCreateForm`" — true of the model, false of the behaviour, because `photos.py` re-declared `takenAt: datetime` inline. **"No route imports it" is not "no route implements it."** Measured: a naive value is resolved in the *host process's* zone by asyncpg, so the same upload stored `02:00Z` on a UTC+8 host and `10:00Z` in the container. Binding a form model was proven impossible on FastAPI 0.141.1 (`_should_embed_body_fields` returns `True` unconditionally past one body field), so the pre-authorised fallback shipped: model deleted, inline `Form(...)` params are the contract |
+| 17 | `ErrorEnvelope` in the OpenAPI document — the unreachable GET `422`, and the SPA catch-all | `api/responses.py`, `routes/*.py`, `main.py`, `api-contract.md` | Gate 3 item promoted before M3: its trigger (`s-stop-crud`) had fired and lapsed, and Kubb would have typed errors `ErrorEnvelope \| HTTPValidationError`. One constant (403/404/409/422; **405/500 never declared**), model from the constant, description from the route. **"Declare only reachable statuses" lost**: an undeclared `422` gets FastAPI's `HTTPValidationError`, so the four GETs declare an unreachable envelope `422` and deliberately differ from the contract table. The brief's "catch-alls out of scope" premise was disproved: the SPA fallback (registered only when `frontend/dist` exists) re-injected `HTTPValidationError` — `include_in_schema=False` added, qa mutant confirms |
 
 ---
 
@@ -1585,3 +1586,78 @@ this patch deleted, so the shipped title is **"`takenAt` on the photo upload for
 timezone-aware"** — which is what the route already cites. Not cosmetic: a heading naming a
 nonexistent model is how the four stale `PhotoCreateForm` references this patch also had to repair got
 there in the first place.
+
+---
+
+## 17. `ErrorEnvelope` in the OpenAPI document — promoting a Gate 3 item, declaring an unreachable `422`, and a catch-all the brief ruled out of scope
+
+**Task:** `t-openapi-error-responses` (2026-09-28). **Files:** `backend/app/api/responses.py` (new),
+`backend/app/api/routes/{trips,stops,photos,bikes,map}.py`, `backend/app/main.py`,
+`backend/tests/test_openapi_error_responses.py`, `docs/api-contract.md`.
+
+### (a) The promotion — the trigger had already fired
+
+`t-backlog-retro-triage` filed this as **TRIGGERED DEBT (Gate 3)** on 2026-09-15: at runtime every
+non-2xx already used the envelope, and the generated client was a *future* consumer — "could consume ≠
+currently consumes". That classification was right on the day. Its recorded trigger was "the next route
+to land (`s-stop-crud`)", so the shared `responses=` constant would be decided once rather than
+improvised per route. **The trigger fired and nothing acted on it**: every M2 route then landed with its
+own hand-copied `responses=` dict, and the four GETs each exposed FastAPI's auto-injected `422 ->
+HTTPValidationError`. The architect ruling (applied by the orchestrator) promoted it before M3, because
+M3 opens with Kubb generation: generated against that document, the client types every error as
+`ErrorEnvelope | HTTPValidationError`. `HTTPValidationError` has no `code`, and the offline queue's
+retry logic branches on `code` alone (api-contract.md, Error envelope) — the one-envelope premise
+would have shipped broken in the generated types while holding perfectly at runtime.
+
+**Transferable point:** a Gate 3 filing is only as good as someone checking its trigger when the
+triggering story closes. Here the trigger was specific and named, and still lapsed across four routes.
+
+### (b) The shape — and the argument that lost on the GET `422`s
+
+Ruled: one module-level constant, `ERROR_RESPONSES`, mapping **403/404/409/422 only** to
+`ErrorEnvelope` with a generic description; routes pick statuses through `error_responses({status:
+description})`, which takes the **model from the constant and the description from the route**, so no
+route can declare a non-2xx with any other schema. The `200` replay entries on the three creates stay
+per-route (they are success shapes, not errors). **`405` and `500` are not declared on any operation** —
+api-contract.md already rules them framework-level, and declaring them per-route would contradict the
+per-endpoint table.
+
+The losing position: **declare only reachable statuses**, so the OpenAPI document matches the contract's
+endpoint table exactly. On the four GETs the `422` is structurally unreachable — the only inputs are
+plain-string path parameters that Starlette's `[^/]+` converter has already validated (qa confirmed this
+earlier with 15 hostile inputs, all clean 404s). Declaring a status the server cannot produce is, on
+its face, a false statement in the contract. **Why it lost:** FastAPI injects its own `422 ->
+HTTPValidationError` on any operation with parameters that doesn't declare a `422` itself. "Declare
+only what's reachable" does not produce a document without a `422`; it produces one with the *wrong*
+`422`. The only way to keep `HTTPValidationError` out of `components.schemas` is to declare the `422`
+with the envelope. So the document and the table **deliberately differ** on those four rows, and the
+GET `422` description says the failure could only be on a path parameter and that it does not occur
+today (`PATH_PARAMETERS_422`) — it invents no body. Both rules are recorded in api-contract.md, under
+"What the OpenAPI document declares differs from the table below — deliberately".
+
+### (c) The brief's premise that was empirically wrong — the SPA fallback
+
+The brief listed "`include_in_schema=False` HEAD siblings **and catch-alls**" as out of scope, and put
+`main.py` out of scope. `dev` hit a blocker against that premise: the SPA fallback
+`@app.get("/{full_path:path}")` (`backend/app/main.py`, ~L205) is registered **only when
+`frontend/dist` exists**, was **not** `include_in_schema=False`, and — being a parameterised operation
+with no declared `422` — its auto-injected `422` put `HTTPValidationError`/`ValidationError` straight
+back into `components.schemas`. Acceptance criterion 4 could not be met with `main.py` untouched. The
+orchestrator added `main.py` to scope for **exactly one edit**: `include_in_schema=False` on that route.
+Metadata only, and for the same reason as the HEAD siblings in Entry 11 — an undocumented route must
+not produce a Kubb hook. **qa ran a mutant without that edit and the guard tests fail**, so this is
+measured, not argued.
+
+Why it is easy to miss: the route only exists in a tree that has a built frontend. A spec check run on a
+backend-only checkout would have passed and the problem would have reappeared the first time M3
+produced `frontend/dist`.
+
+### What guards it
+
+`backend/tests/test_openapi_error_responses.py` (18 tests) walks the **whole** document rather than a
+hard-coded route list — no `HTTPValidationError`/`ValidationError` in `components.schemas`, every
+declared non-2xx `$ref`s `ErrorEnvelope`, no operation declares `405`/`500` — plus the per-operation
+status sets, the `200` replay entries and the GET `422` wording. 6 of the 18 fail at the pre-patch
+HEAD. qa diffed the pre- and post-patch spec: existing descriptions are byte-identical, and the only
+additions are the four GET `422`s. The rationale for the constant sits in the docstring of
+`backend/app/api/responses.py`, which is where an agent would go to add a `405` or a non-envelope model.

@@ -18,11 +18,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
+from app.api.responses import PATH_PARAMETERS_422, error_responses
 from app.core.errors import ApiError
 from app.core.security import TripContext, require_rider_access, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.stops import StopIdOnAnotherTrip, create, list_by_trip
-from app.models.common import ErrorEnvelope
 from app.models.stop import StopCreate, StopOut
 
 # GET/POST /trips/{slug}/stops — list/create stops (POST is rider-slug only,
@@ -45,15 +45,15 @@ ID_ALREADY_USED_MESSAGE = (
     "",
     summary="List a trip's stops",
     response_description="Every stop on this trip, with its notes and how it was located.",
-    responses={
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug. Deliberately the same answer for a "
+    responses=error_responses(
+        {
+            HTTPStatus.NOT_FOUND: "No trip has this slug. Deliberately the same answer for a "
             "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
             "'Access control: 403 and 404 are different answers'. A trip that exists but "
             "has no stops yet is **not** this case: that is a `200` with `[]`.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
         }
-    },
+    ),
     description="""
 **Context.** The stops are the journal — where the rider got to, when, and what
 they wrote about it. `GET /api/trips/{slug}` is the header above this list;
@@ -132,33 +132,25 @@ router.add_api_route("", list_stops, methods=["HEAD"], include_in_schema=False)
             "error: the offline queue can resend a create it never saw confirmed, any number "
             "of times, and reconcile against whichever attempt landed.",
         },
-        HTTPStatus.FORBIDDEN: {
-            "model": ErrorEnvelope,
-            "description": "The slug resolved, but it is the trip's **viewer** slug — a "
-            "read-only link. Deliberately not a 404: the link genuinely works, just not for "
-            "writes. Nothing was created.",
-        },
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug. Deliberately the same answer for a "
-            "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
-            "'Access control: 403 and 404 are different answers'.",
-        },
-        HTTPStatus.CONFLICT: {
-            "model": ErrorEnvelope,
-            "description": "The `id` in the body already belongs to a stop on a **different** "
-            "trip, so this is not a replay. Nothing was created, and nothing about the "
-            "conflicting record is disclosed — not in the body, not in the message. "
-            "Never-retry for the offline queue: the same id will conflict on every future "
-            "attempt, so the stop needs a new one.",
-        },
-        HTTPStatus.UNPROCESSABLE_ENTITY: {
-            "model": ErrorEnvelope,
-            "description": "The body failed schema validation — a missing or mistyped field, "
-            "a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC "
-            "offset**. That last one is server-enforced only; the generated client types it "
-            "as a plain string and cannot catch it.",
-        },
+        **error_responses(
+            {
+                HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug "
+                "— a read-only link. Deliberately not a 404: the link genuinely works, just not "
+                "for writes. Nothing was created.",
+                HTTPStatus.NOT_FOUND: "No trip has this slug. Deliberately the same answer for a "
+                "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
+                "'Access control: 403 and 404 are different answers'.",
+                HTTPStatus.CONFLICT: "The `id` in the body already belongs to a stop on a "
+                "**different** trip, so this is not a replay. Nothing was created, and nothing "
+                "about the conflicting record is disclosed — not in the body, not in the "
+                "message. Never-retry for the offline queue: the same id will conflict on every "
+                "future attempt, so the stop needs a new one.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation — a missing "
+                "or mistyped field, a `locationSource` outside `gps`/`manual`, or an "
+                "`arrivedAt` with **no UTC offset**. That last one is server-enforced only; the "
+                "generated client types it as a plain string and cannot catch it.",
+            }
+        ),
     },
     description="""
 **Context.** This is how a stop gets into the journal, and the one write the app

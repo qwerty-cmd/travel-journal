@@ -11,10 +11,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.api.responses import PATH_PARAMETERS_422, error_responses
 from app.core.security import TripContext, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.stops import map_features
-from app.models.common import ErrorEnvelope
 from app.models.map import MapFeatureCollection
 
 router = APIRouter(prefix="/trips/{slug}/map", tags=["map"])
@@ -25,13 +25,13 @@ router = APIRouter(prefix="/trips/{slug}/map", tags=["map"])
     summary="GeoJSON map of a trip's stops and trail",
     response_description="A GeoJSON FeatureCollection with one Point per stop and an "
     "optional LineString trail connecting them chronologically.",
-    responses={
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug. Deliberately the same answer for a "
+    responses=error_responses(
+        {
+            HTTPStatus.NOT_FOUND: "No trip has this slug. Deliberately the same answer for a "
             "mistyped link, a revoked one and a guess.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
         }
-    },
+    ),
     description="""
 **Context.** This is what the Leaflet map renders: one pin per stop, plus a
 polyline trail connecting them in the order the rider arrived.  Either slug

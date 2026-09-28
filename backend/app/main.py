@@ -202,6 +202,6 @@ static_dir = Path(settings.static_files_dir)
 if static_dir.exists():
     app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
 
-    @app.get("/{full_path:path}")
+    @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str) -> FileResponse:
         return FileResponse(static_dir / "index.html")

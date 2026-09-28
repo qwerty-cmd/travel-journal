@@ -13,10 +13,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.api.responses import PATH_PARAMETERS_422, error_responses
 from app.core.security import TripContext, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.bikes import list_by_trip
-from app.models.common import ErrorEnvelope
 from app.models.trip import TripOut
 
 router = APIRouter(prefix="/trips", tags=["trips"])
@@ -26,14 +26,14 @@ router = APIRouter(prefix="/trips", tags=["trips"])
     "/{slug}",
     summary="Get a trip's metadata and its bikes",
     response_description="The trip, the bikes on it, and which kind of link was used.",
-    responses={
-        HTTPStatus.NOT_FOUND: {
-            "model": ErrorEnvelope,
-            "description": "No trip has this slug. Deliberately the same answer for a "
+    responses=error_responses(
+        {
+            HTTPStatus.NOT_FOUND: "No trip has this slug. Deliberately the same answer for a "
             "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
             "'Access control: 403 and 404 are different answers'.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
         }
-    },
+    ),
     description="""
 **Context.** The rider shares one trip through two unguessable links: a rider
 link that can write and a viewer link that can only read. This is the endpoint
