@@ -27,7 +27,7 @@
     { "id": "s-frontend-timeline-gallery", "milestoneId": "m3-frontend-pwa", "title": "Stop detail — photo gallery, notes, timestamp", "status": "done" },
     { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — IndexedDB FIFO drained from the page + SW app shell, queue-level upload retry (not S3 multipart, decision-log 20), HEIC→JPEG", "status": "done" },
 
-    { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "in_progress" },
+    { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "done" },
     { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN — declined, resolved by decision (decision-log 21), no code", "status": "done" },
     { "id": "s-offline-indicator", "milestoneId": "m4-polish-deploy", "title": "Offline indicator UI", "status": "done" },
     { "id": "s-real-device-testing", "milestoneId": "m4-polish-deploy", "title": "Real-device testing day", "status": "not_started" },
@@ -149,7 +149,7 @@
     { "id": "t-offline-indicator-pending", "storyId": "s-offline-indicator", "title": "QueueNotice shows queued/pending syncs (count by kind), not just failed and stuck ones", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
 
     { "id": "t-bikes-page-list", "storyId": "s-frontend-bikes-page", "title": "/t/$slug/bikes read-only list from TripOut.bikes, linked from trip home", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
-    { "id": "t-bikes-page-edit", "storyId": "s-frontend-bikes-page", "title": "Rider-only add/edit bike forms (online-only direct mutations, not queued)", "status": "not_started", "agent": "dev", "blockers": ["t-bikes-page-list"], "gate": "none" },
+    { "id": "t-bikes-page-edit", "storyId": "s-frontend-bikes-page", "title": "Rider-only add/edit bike forms (online-only direct mutations, not queued)", "status": "done", "agent": "dev", "blockers": ["t-bikes-page-list"], "gate": "none" },
     { "id": "t-deploy-cutover-runbook", "storyId": "s-deploy-cutover", "title": "Draft the human deploy-cutover runbook (no infra/.env changes)", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-handover-docs-draft", "storyId": "s-handover-docs", "title": "Draft user guide + architecture handover from the built code; prod URL/deploy sections TODO", "status": "not_started", "agent": "docs", "blockers": ["t-bikes-page-edit"], "gate": "none" }

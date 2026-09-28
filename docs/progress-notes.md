@@ -1536,3 +1536,36 @@ NO DECISION-LOG ENTRY: nothing was contested.
 - The queue kinds stay `stop | photo` (decision-log Entry 19).
 - Bikes are entered before the trip, while riders are online, so offline bike writes are not needed.
 - Adding a `bike` queue kind would reopen Entry 19. Anyone proposing it must read that entry first.
+
+**Closeout (done).** Files: `frontend/src/routes/t.$slug.bikes.tsx`, `frontend/src/bikes.test.tsx` (26 bike tests; replaced the list task's "rider has no write controls" test, which this task superseded). QA: PASS on ACs 1-7, build passes, 288/288 tests.
+
+**Design feature.** A rider can add and edit bikes on `/t/$slug/bikes`. A viewer gets no write UI. The rider check is `trip.data.access === "rider"`. Writes are online-only direct mutations and are not queued (Entry 19).
+
+**Design format.**
+- A local `BikeForm` serves both create and edit. Each bike card has an Edit button that swaps the card for the form; Cancel closes it. The "Add bike" form sits at the bottom.
+- Rider name, make and model are required text and are trimmed. Year is required: a number input that must be a whole number. Specs is an optional textarea and is sent untrimmed.
+- Submit is disabled while the form is invalid or a request is pending.
+- The create id is `crypto.randomUUID()`, fixed when the form mounts, so a retry after a failure replays the same idempotent id. After a success the form remounts via a key bump, which gives it a fresh id.
+- PATCH clearing semantics:
+  - The request sends only the fields that differ from the `BikeOut` the form opened with.
+  - An absent field means "leave it alone". The client never sends `null`.
+  - Clearing specs sends `""`.
+  - If nothing changed, no request is sent and the form closes.
+  - The backend accepts `""` for riderName/make/model, so the client enforces non-empty.
+- Error mapping (on `ApiError`), three ways:
+  - envelope present → `envelope.error.message`;
+  - no envelope and no status (fetch rejected) → exactly "You're offline — try again when connected.";
+  - status but no envelope (e.g. a 502) → "Couldn't save the bike — try again.".
+  - The form keeps the rider's input on every error.
+- Refetch placement: the trip invalidation (`getTripApiTripsSlugGetQueryKey({ slug })`) is in the hook-level `mutation.onSuccess`, not the per-`mutate()` callback. TanStack Query v5 skips per-call callbacks once the observer unmounts, so a Cancel or navigation while a request was pending would have left the list stale. QA found this as F1; fixed in this task, with two regression tests that fail when the invalidation is moved back into the per-`mutate()` callback. The rationale also lives as a comment beside the hook calls in `BikeForm`.
+
+**APIs called.**
+- `GET /api/trips/{slug}`, read from the cache the trip shell already loaded;
+- `POST /api/trips/{slug}/bikes` (`useCreateBikeApiTripsSlugBikesPost`);
+- `PATCH /api/trips/{slug}/bikes/{id}` (`usePatchBikeApiTripsSlugBikesIdPatch`).
+
+**Filed debt.**
+- F2 — ORDINARY DEBT: any whole number is accepted as a year, including 0 and negatives; neither the contract nor the backend limits it.
+- N1 — ORDINARY DEBT, predates this task: stderr stack traces from `queue.ts` `readAll` / `QueueNotice` appear in the Timeline, TripMap and routing tests.
+
+NO DECISION-LOG ENTRY: F1 was a QA finding that dev accepted and fixed, not a contested call.
