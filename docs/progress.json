@@ -2,7 +2,7 @@
   "milestones": [
     { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
     { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "in_progress" },
-    { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "in_progress" },
+    { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "done" },
     { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
   ],
   "stories": [
@@ -23,9 +23,9 @@
 
     { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "done" },
     { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map + timeline feed", "status": "done" },
-    { "id": "s-frontend-add-stop-flow", "milestoneId": "m3-frontend-pwa", "title": "Add-stop flow — camera, GPS, notes", "status": "in_progress" },
+    { "id": "s-frontend-add-stop-flow", "milestoneId": "m3-frontend-pwa", "title": "Add-stop flow — camera, GPS, notes", "status": "done" },
     { "id": "s-frontend-timeline-gallery", "milestoneId": "m3-frontend-pwa", "title": "Stop detail — photo gallery, notes, timestamp", "status": "done" },
-    { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — IndexedDB FIFO drained from the page + SW app shell, queue-level upload retry (not S3 multipart, decision-log 20), HEIC→JPEG", "status": "in_progress" },
+    { "id": "s-offline-queue", "milestoneId": "m3-frontend-pwa", "title": "Offline queue — IndexedDB FIFO drained from the page + SW app shell, queue-level upload retry (not S3 multipart, decision-log 20), HEIC→JPEG", "status": "done" },
 
     { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "not_started" },
     { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN", "status": "not_started" },
@@ -145,8 +145,8 @@
     { "id": "t-photo-capture-processing", "storyId": "s-offline-queue", "title": "Photo capture processing — createImageBitmap → 1600px JPEG 0.82, hand-parsed EXIF DateTimeOriginal/OffsetTimeOriginal from the original file", "status": "done", "agent": "dev", "blockers": ["t-frontend-test-runner"], "gate": "none" },
     { "id": "t-photo-exif-invalid-values", "storyId": "s-offline-queue", "title": "EXIF values that pass the format check but are not real dates/offsets flow into takenAt and 422 as never-retry", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-offline-queue-photos", "storyId": "s-offline-queue", "title": "Photo entries in the same queue store — blob persisted, marked uploaded only on 2xx, stop never-retry cascades to its photos; scripted mid-upload network-loss + restart test", "status": "done", "agent": "dev", "blockers": ["t-offline-queue-core", "t-photo-capture-processing", "t-photo-exif-invalid-values"], "gate": "none" },
-    { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "not_started", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" }
+    { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "done", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T22:00:00Z"
+  "lastUpdated": "2026-09-29T23:00:00Z"
 }

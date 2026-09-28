@@ -1451,3 +1451,28 @@ Frontend doc:
 - **APIs called.** `POST /api/trips/{slug}/stops/{stop_id}/photos` (multipart `id`, `uploadedBy`, `takenAt`, `file`) through the generated `uploadPhotoApiTripsSlugStopsStopIdPhotosPost`, never a hand-written fetch. A `200` replay of an already-uploaded photo counts as success. On success it invalidates the stop's photo list query.
 
 NO DECISION-LOG ENTRY: the design choices were orchestrator-approved ba decisions (above), not contested calls.
+
+## t-add-stop-photo-attach
+
+**Closeout (done, QA PASS on all 6 ACs, no CURRENTLY BROKEN findings).** Last M3 task: closing it closes `s-frontend-add-stop-flow`, `s-offline-queue` and milestone `m3-frontend-pwa`. `npm run build` exits 0; `npm test` passes 11 files / 259 tests, 10 of them new in `describe("photo attach")` in `frontend/src/addStop.test.tsx` (test-writer). The 21 existing tests there are unchanged apart from the `enqueueMock` type, widened to accept arrays. `src/offline/`, `src/photo.ts` and `package.json` are unchanged (`git diff --quiet`). The upload-call grep guard passes. QA killed 7/7 mutants: processing guard, ids generated at submit, per-item enqueue, no-op Remove, photos before stop, `capture` attribute, wrong `stopId`. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Files changed: `frontend/src/routes/t.$slug.add.tsx`, `frontend/src/addStop.test.tsx`. Docs pass also corrected `frontend/src/offline/README.md` (it claimed the queue resizes and converts HEIC; `photo.ts` does that before enqueue) and the route's header comment (photo id is fixed when processing finishes, not at the pick event).
+
+Frontend doc:
+- **Design feature.** The add-stop form gains a "Photos" picker. The rider can pick several photos at once, from the camera or the library (iOS offers both). Each photo is shrunk and converted to JPEG on the device and then listed by file name with a Remove button. A photo that cannot be read shows "Couldn't read photo <file name>" and is left out; the rest are kept. While any photo is still processing the page shows "Processing photos…" and "Save stop" is disabled. "Save stop" puts the stop and all listed photos into the offline queue together, then returns to the trip home. Nothing is uploaded from the form: the queue sends the stop first, then its photos, when it has signal.
+- **Design format.**
+  - `<input type="file" accept="image/*" multiple>` with no `capture` attribute, since `capture` would force the camera and hide the library on iOS.
+  - `pick()` clears the previous pick's errors, then runs each file through `processPhoto` (`src/photo.ts`). On success it appends `{ id: crypto.randomUUID(), fileName, blob, takenAt }` to the list; on any rejection it adds the error line. A `processing` counter drives the "Processing photos…" line and the submit guard (the button is disabled and `submit` also returns early).
+  - `submit` builds each photo as a `PhotoItem`: `{ kind: "photo", payload: { slug, stopId: <stop id>, stopName: <trimmed name>, data: { id, uploadedBy: getDisplayName(), takenAt } }, file: <processed blob> }`. With photos it calls `enqueue([stop, ...photoItems])`, one call and so one IndexedDB transaction (`t-offline-queue-photos` ba decision 2). With none it makes the unchanged single-item `enqueue(stop)` call.
+  - Idempotent resubmit: the stop id is fixed when the form opens and each photo id when its processing finishes, so a resubmit after a failed enqueue replays identical ids.
+  - Enqueue failure behaves as before: "Couldn't save the stop on this device", form and photo list kept.
+- **APIs called.** None directly. `POST /api/trips/{slug}/stops` and `POST /api/trips/{slug}/stops/{stop_id}/photos` are sent only by the queue drain (`t-offline-queue-core`, `t-offline-queue-photos`). No UI file calls the generated upload client. `GET /api/trips/{slug}` is read from the shell's cache, as in `t-frontend-add-stop-form`.
+
+Filed findings (ORDINARY DEBT, not fixed, no `progress.json` rows):
+1. `pick()` reports every `processPhoto` rejection as "Couldn't read photo X", not only `PhotoDecodeError`. It fails safe: nothing is added.
+2. The photo error list uses `key={m}`. Two failed files with the same name in one pick trigger a React duplicate-key warning in dev; both messages still show.
+3. Photos are listed and enqueued in processing-completion order, not pick order. The stop is always first.
+
+Not covered: a real phone picker and real HEIC (`processPhoto` is stubbed in these tests); real-browser IndexedDB (fake-indexeddb only). Both belong to `s-real-device-testing`.
+
+NO DECISION-LOG ENTRY: nothing was contested.
