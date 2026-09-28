@@ -1227,6 +1227,25 @@ Findings (filed, not fixed):
 
 No `progress.json` rows were filed for these, following the other frontend closeouts. NO DECISION-LOG ENTRY: nothing was contested.
 
+## t-frontend-timeline-feed
+
+**Closeout (done, QA PASS on all 6 ACs).** 82/82 tests pass. 14 of them are new in `frontend/src/components/Timeline.test.tsx`. QA mutation-tested 8 breakages and the tests caught all 8. `routing.test.tsx`, `displayName.test.tsx` and `TripMap.test.tsx` only changed their fetch stubs: the trip home now also fetches `/stops`, so the stubs answer it with `200 []`. No assertions changed. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Key notes:
+- The contract for `GET /stops` promises no order, so the client sorts. It sorts by instant (`Date.parse(arrivedAt)`), never by string, because `arrivedAt` is always timezone-aware (Entry 15) but stops can carry different UTC offsets. Ties are broken by `id`, so the order is stable.
+- Times are shown in the viewer's local time (`toLocaleString()`), the same as the map popups.
+
+Frontend doc:
+- **Design feature.** The trip home (`/t/$slug/`) shows the chronological stop feed below the map, oldest first. Each entry shows the stop name, its arrival time in the viewer's local time, " · approximate location" when the location was picked on the map rather than from GPS, and the notes if there are any. With no stops it shows "No stops yet." While the list loads it shows "Loading stops…". If the request fails it shows the server's error message, or "Couldn't load stops" when there is no error envelope. The map and the feed fail independently.
+- **Design format.**
+  - `components/Timeline.tsx` is presentational. It takes one prop, `stops: StopOut[]`, sorts a copy (the prop is not mutated), and renders an `<ol>` with one `<li key={stop.id}>` per stop: `<strong>` name, a line with the time and the `locationSource === "manual"` suffix, and a `<p>` for `notes` only when it is not `null`. Styling is inline.
+  - `routes/t.$slug.index.tsx` calls the generated hook and renders `<TripMap>`, then the pending, error or `<Timeline>` state.
+- **APIs called.** `GET /api/trips/{slug}/stops` → `StopOut[]`, through the generated hook `useListStopsApiTripsSlugStopsGet({ slug })`.
+
+Known limits of the tests: the order of stops with an invalid or empty `arrivedAt` is undefined (`NaN` in the comparator). This is out of scope because the contract requires a valid date-time. Styling is not checked in jsdom. There was no run against a live backend.
+
+No findings filed. NO DECISION-LOG ENTRY: nothing was contested.
+
 ## t-offline-queue-core
 
 Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.

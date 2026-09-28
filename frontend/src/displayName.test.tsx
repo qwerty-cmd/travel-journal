@@ -37,10 +37,14 @@ function submit(value: string) {
 beforeEach(() => {
   localStorage.clear();
   fetchMock.mockReset();
-  // The trip home also requests GET /api/trips/{slug}/map; answer it with an empty
-  // collection so fetchMock (and its call counts) sees trip requests only.
+  // The trip home also requests GET /api/trips/{slug}/map and /stops; answer them empty
+  // so fetchMock (and its call counts) sees trip requests only.
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
-    String(input).endsWith("/map") ? Promise.resolve(json({ type: "FeatureCollection", features: [] })) : fetchMock(input, init),
+    String(input).endsWith("/map")
+      ? Promise.resolve(json({ type: "FeatureCollection", features: [] }))
+      : String(input).endsWith("/stops")
+        ? Promise.resolve(json([]))
+        : fetchMock(input, init),
   );
   vi.stubGlobal("scrollTo", () => {});
 });

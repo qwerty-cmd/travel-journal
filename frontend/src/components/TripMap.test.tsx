@@ -163,7 +163,9 @@ test("AC7: map request failure shows 'Map unavailable' and the trip home still r
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) =>
     String(input).endsWith("/map")
       ? json(500, { error: { code: "INTERNAL_ERROR", message: "boom" } })
-      : json(200, TRIP),
+      : String(input).endsWith("/stops")
+        ? json(200, [])
+        : json(200, TRIP),
   );
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ["/t/abc"] }) });
   render(
