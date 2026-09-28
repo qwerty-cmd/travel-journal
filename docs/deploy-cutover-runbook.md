@@ -30,11 +30,11 @@ Tick each box as you go.
     problem, not a credentials problem.
 - [ ] **You. The migration runner has never run against Neon**, only against local Postgres 16. Treat the
   first run in step 4 as the test.
-- [ ] **You → ba. Nothing schedules the OneDrive sync.** `python -m app.storage.onedrive_sync` does one
-  pass and exits (see its module docstring), and no cron job, Container Apps job or other scheduler
-  exists in the repo. Decide how it will run in production, for example a Container Apps scheduled job or
-  a manual run from your laptop, and have `ba` scope that decision. This does not block the app itself,
-  because S3/R2 is the source of truth. It does mean nothing is archived until it is decided.
+- [x] **Decided (`t-onedrive-sync-scheduler`). The OneDrive sync runs as a scheduled Container Apps Job.**
+  `python -m app.storage.onedrive_sync` does one pass and exits. It is scheduled by the job defined in
+  `infra/azure/README.md` ("OneDrive sync job"): every 30 minutes (UTC), from the same image as the app,
+  one run at a time. The job is **defined but not yet provisioned**, and step 1 creates it. Until it
+  exists nothing is archived. That does not block the app, because S3/R2 is the source of truth.
 - [x] **Decided: the container registry is GitHub Container Registry (GHCR)**, by your choice. Azure
   Container Registry (ACR) is not used, because it has no free tier. If the GHCR package is private, the
   Container App needs a GHCR registry credential: a GitHub token with `read:packages`, stored as a secret
@@ -63,6 +63,10 @@ Tick each box as you go.
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
   (`allowInsecure: false`). Use **multiple-revision mode**, because the rollback in step 8 depends on it.
   The definition goes in `infra/azure/`, which needs your approval.
+- [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
+  Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
+  secret store**, separate from the app's, so set its secrets too. Use the same names and the same values
+  as the app (step 2).
 
 ## 2. Secrets and env vars (names only)
 
@@ -126,6 +130,9 @@ Only you do this, because it needs real `GRAPH_*` values.
 - [ ] If the uploaded filename looks wrong, check `t-onedrive-filename-url-encoding`. That one-line
   fix was meant to be folded into this task.
 - [ ] Run it again close to departure, so the refresh token is known to be healthy when the trip starts.
+- [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
+  could be active, because two passes at once can overlap. Either trigger the job itself with
+  `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
 
 ## 6. Deploy (following `.claude/skills/deploy/SKILL.md`)
 
@@ -134,6 +141,8 @@ devops runs these steps after you have confirmed the cutover.
 - [ ] Build the image from the repo-root `Dockerfile` (from the fresh clone).
 - [ ] Push it to GHCR (`ghcr.io/<owner>/<image>`) with a unique tag. Don't reuse `latest`.
 - [ ] Update the Container App to use the new tag.
+- [ ] Update the OneDrive sync job to the same image tag (`az containerapp job update --image`), so the
+  archive never runs older code than the app.
 - [ ] Note the revision name. It becomes the rollback target for the next deploy.
 
 ## 7. Post-deploy checks
@@ -175,4 +184,4 @@ goes through `ba` and the pipeline, or you decide to accept it.
 | `t-api-healthcheck-wiring` | Its trigger is `s-deploy-cutover` itself. Nothing probes `/api/health`. | Configure the Container Apps liveness probe on `/api/health` (the `infra/` part needs approval). **In the same patch**, dev must update the route's `description=` in `backend/app/main.py`, which currently says nothing is wired to it. |
 | `t-access-log-slug-exposure` | The uvicorn access log records trip slugs from request URLs. Container Apps sends stdout to Log Analytics by default, so the slugs become stored and searchable. | Accept it, turn off the Log Analytics destination, or add a uvicorn flag or logging config at startup (devops). **Don't** have the app reconfigure `uvicorn.access` at import time: that approach was rejected (decision-log Entries 7b and 13; `core/errors.py`). |
 | `t-dockerignore-route-tree` | A build from a dev working tree carries a stale `routeTree.gen.ts` into the image. | Build from a fresh clone (step 3). Add the file to `.dockerignore` if any CI or build step reads `frontend/src/` before `vite build`. |
-| `t-onedrive-preflight-check` | Nothing is known about whether Graph accepts the request until this runs. | Step 5. It also depends on the scheduling decision in step 0. |
+| `t-onedrive-preflight-check` | Nothing is known about whether Graph accepts the request until this runs. | Step 5. Scheduling is decided (step 0, `t-onedrive-sync-scheduler`), so once the job exists, follow step 5's caveat about overlapping runs. |

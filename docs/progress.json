@@ -153,7 +153,8 @@
     { "id": "t-deploy-cutover-runbook", "storyId": "s-deploy-cutover", "title": "Draft the human deploy-cutover runbook (no infra/.env changes)", "status": "done", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "done", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-handover-docs-draft", "storyId": "s-handover-docs", "title": "Draft user guide + architecture handover from the built code; prod URL/deploy sections TODO", "status": "done", "agent": "docs", "blockers": ["t-bikes-page-edit"], "gate": "none" },
-    { "id": "t-neon-sslmode-url", "storyId": "s-cloud-service-setup", "title": "normalize_database_url translates libpq sslmode/channel_binding for asyncpg", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" }
+    { "id": "t-neon-sslmode-url", "storyId": "s-cloud-service-setup", "title": "normalize_database_url translates libpq sslmode/channel_binding for asyncpg", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
   "lastUpdated": "2026-09-30T00:30:00Z"

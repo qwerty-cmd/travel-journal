@@ -10,12 +10,12 @@ Deployment target is Azure Container Apps (free tier), built from the repo-root 
 **One-time environment setup (Week 1, or whenever the environment doesn't exist yet):**
 1. Create the Container Apps environment (free tier — scales to zero).
 2. Set the low-threshold Azure budget alert (spec Section 13) as a tripwire, before anything else touches real cloud spend.
-3. Wire secrets via `az containerapp secret set` — `DATABASE_URL` (Neon), `S3_ENDPOINT_URL`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_BUCKET_NAME` (R2), `GRAPH_CLIENT_ID`/`GRAPH_CLIENT_SECRET`/`GRAPH_REFRESH_TOKEN`. Names must match `.env.example` — values never get committed anywhere.
+3. Wire secrets via `az containerapp secret set` — `DATABASE_URL` (Neon), `S3_ENDPOINT_URL`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`/`S3_BUCKET_NAME` (R2), `GRAPH_CLIENT_ID`/`GRAPH_CLIENT_SECRET`/`GRAPH_REFRESH_TOKEN`. Names must match `.env.example` — values never get committed anywhere. Container Apps secret names are the env var name in lower kebab case (`DATABASE_URL=secretref:database-url`); the app and the OneDrive sync job each hold their own copy under the same names.
 
 **Every deploy:**
 1. Build the image from the repo-root `Dockerfile` (multi-stage: builds the frontend, then the Python runtime serves both).
 2. Push to GitHub Container Registry (GHCR) — the user's choice; ACR has no free tier and is not used.
-3. Update the Container App to the new image tag.
+3. Update the Container App to the new image tag. Update the OneDrive sync Container Apps Job to the same tag (`az containerapp job update --image`), so it never runs a stale image against a newer schema — see `infra/azure/README.md`.
 4. Confirm `/api/health` responds and the SPA loads, before considering the deploy done.
 
 **Rollback:** Container Apps keeps prior revisions — route traffic back to the last known-good revision rather than rebuilding forward under pressure.

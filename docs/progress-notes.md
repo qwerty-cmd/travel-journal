@@ -991,6 +991,8 @@ The trigger was "Patch 2 running sweeps concurrently". Patch 2 as built is one p
 
 The trigger does not change. What fires it is still a *second concurrent sweep* — a scheduler that can overlap ticks, a replica count above 1, or an in-process worker pool — not merely the job existing. The one-clause fix (`AND one_drive_file_id IS NULL` on the update) is unchanged and still lands cleanly on the `rowcount` return.
 
+TRIGGER RE-EVALUATED AT `t-onedrive-sync-scheduler` 2026-09-29: **did not fire.** The scheduled job cannot overlap its own ticks (900 × (0+1) < 1800, parallelism 1). A person running it by hand during a scheduled run is covered by the runbook §5 caveat. Full reasoning is under that task.
+
 ## t-pending-archive-limit-validation
 
 ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigger today.
@@ -1036,6 +1038,7 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 - Gate classification: ORDINARY DEBT (Gate 4). Nothing is broken: qa verified the behaviour **correct by execution** in a scratch process. What is missing is regression protection, not correctness.
 - Current consumer: none. **Nothing schedules this job today** — no cron, no compose service, no container entrypoint. The only thing that runs it is a human typing `python -m app.storage.onedrive_sync`.
 - Promotion trigger: none recorded. Scheduling the job would make it worth having, but the honest classification today is ordinary debt.
+- 2026-09-29 (`t-onedrive-sync-scheduler`): the scheduled job is now defined but **not provisioned**. Re-classify once it is provisioned, because `main()` then has a real consumer. Not before.
 
 ## t-onedrive-per-photo-isolation
 
@@ -1614,3 +1617,31 @@ NO DECISION-LOG ENTRY: F1 was a QA finding that dev accepted and fixed, not a co
 - Gap: no live Neon connection has been verified. That is left to the cutover (runbook §4 is the first real connect).
 
 NO DECISION-LOG ENTRY: no contested call.
+
+## t-onedrive-sync-scheduler
+
+**Closeout (done).** Story `s-deploy-cutover`, agent `devops`, gate `none`. **Definition only, nothing provisioned.** Clears the runbook §0 blocker "Nothing schedules the OneDrive sync".
+
+**User approval.** On 2026-09-29 the user answered "yes" in chat to: "Should devops write the Container Apps Job in infra/, running every 30 minutes? Nothing gets provisioned until you run the deploy yourself." Creating the job in Azure still needs the user's approval at deploy time (runbook §1).
+
+**What was defined.** The definition lives in `infra/azure/README.md`, section "OneDrive sync job". It is a Container Apps Job created with `az containerapp job create`:
+- schedule: cron `*/30 * * * *` (UTC);
+- parallelism 1, `replica-retry-limit 0`, `replica-timeout 900`;
+- the same GHCR image as the app, with the command overridden to `sh -c "cd /app/backend && exec .venv/bin/python -m app.storage.onedrive_sync"`;
+- its own secret store, using the same secret names as the app.
+
+Every deploy also updates the job's image. The orchestrator changed step 3 of `.claude/skills/deploy/SKILL.md` to cover this, and runbook §6 has the matching step. Backoff is still "the next scheduled run" (see `t-onedrive-sync-job`). There is still no in-process scheduler.
+
+**Rejected alternatives.**
+- A loop inside the api container: the app scales to zero, so nothing would run while the app is idle.
+- A GitHub Actions cron: the `GRAPH_*`, database and S3 secrets would then have to live in a second place.
+
+**Overlap invariant.** 900 s timeout × (0 retries + 1 attempt) = 900 s, which is less than the 1800 s tick interval. A scheduled run is killed before the next one can start, and with parallelism 1 a single tick never runs two replicas. If anyone raises `replica-timeout`, `replica-retry-limit` or parallelism, or shortens the cron, they must re-check this inequality. Breaking it fires `t-mark-archived-overwrite-guard`.
+
+**Debt re-evaluations.**
+- `t-mark-archived-overwrite-guard` (trigger "a second concurrent sweep, including a scheduler that can overlap ticks"): **does not fire.** The job cannot overlap its own ticks, by the invariant above. The one remaining overlap path is a person running the job by hand (a laptop preflight) while a scheduled run is active. That is handled operationally by the runbook §5 caveat: use `az containerapp job start`, or run it just after a scheduled run finishes. It is not handled in code. The row stays `not_started`.
+- `t-onedrive-main-untested`: **don't re-classify now.** Once the job is provisioned, `main()` has a real consumer (the job) and should be re-triaged then. Defining the job is not the same as provisioning it.
+
+**Docs updated.** `docs/deploy-cutover-runbook.md` (§0, §1, §5, §6 and the triggered-debt table) and `docs/architecture-diagram.md` (the sync edge label, plus a note that the one-artifact invariant still holds because the job runs the same image).
+
+NO DECISION-LOG ENTRY: the user made the choice, and no two agents' positions conflicted.
