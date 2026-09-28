@@ -2,7 +2,7 @@
   "milestones": [
     { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
     { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "in_progress" },
-    { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "not_started" },
+    { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "in_progress" },
     { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
   ],
   "stories": [
@@ -21,7 +21,7 @@
     { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
 
-    { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "not_started" },
+    { "id": "s-frontend-first-open", "milestoneId": "m3-frontend-pwa", "title": "First-open display-name prompt", "status": "in_progress" },
     { "id": "s-frontend-map-view", "milestoneId": "m3-frontend-pwa", "title": "Trip home — Leaflet map + timeline feed", "status": "not_started" },
     { "id": "s-frontend-add-stop-flow", "milestoneId": "m3-frontend-pwa", "title": "Add-stop flow — camera, GPS, notes", "status": "not_started" },
     { "id": "s-frontend-timeline-gallery", "milestoneId": "m3-frontend-pwa", "title": "Stop detail — photo gallery, notes, timestamp", "status": "not_started" },
@@ -127,8 +127,10 @@
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
 
-    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": ["t-onedrive-sync-job"] }
+    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": ["t-onedrive-sync-job"] },
+
+    { "id": "t-frontend-kubb-client", "storyId": "s-frontend-first-open", "title": "Kubb-generated TS types + TanStack Query hooks for the eight contract operations from a committed OpenAPI snapshot", "status": "done", "agent": "dev", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-17T23:59:59Z"
+  "lastUpdated": "2026-09-28T00:00:00Z"
 }

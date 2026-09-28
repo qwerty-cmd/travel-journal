@@ -1,0 +1,1272 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Bike Trip Journal API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/trips/{slug}": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Get a trip's metadata and its bikes",
+        "description": "**Context.** The rider shares one trip through two unguessable links: a rider\nlink that can write and a viewer link that can only read. This is the endpoint\nboth of them open first, and for a viewer it is the whole journal header. It\nanswers three questions in one round trip \u2014 which trip is this, which bikes are\non it, and may I write to it \u2014 because the app is used on the Stuart Hwy where a\nsecond request is a second chance to be offline. Task `t-trip-metadata-endpoint`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches;\na viewer slug is a perfectly ordinary success here, not a 403, because this is a\nread. The dependency also derives `access` from the matched row, and that value\nis passed straight through to `TripOut.access` \u2014 the handler never recomputes\nit. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,\nfiltered to this trip; a trip with no bikes returns `\"bikes\": []`, which is a\nnormal trip and not a 404. Neither slug is in the response: `TripOut` has no\nslug field, and the slug is the credential.\n\n`access` is a **UI hint**, not the enforcement point. It tells the frontend\nwhether to render Add stop / upload photo / edit bikes. The write endpoints\nreject a viewer slug themselves regardless of what the UI chose to show.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits\nabove, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and\n`POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the\nrider-only writes behind the `bikes` list returned here.",
+        "operationId": "get_trip_api_trips__slug__get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "title": "Slug"
+            },
+            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trip, the bikes on it, and which kind of link was used.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess \u2014 see `docs/api-contract.md`, 'Access control: 403 and 404 are different answers'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trips/{slug}/stops": {
+      "get": {
+        "tags": [
+          "stops"
+        ],
+        "summary": "List a trip's stops",
+        "description": "**Context.** The stops are the journal \u2014 where the rider got to, when, and what\nthey wrote about it. `GET /api/trips/{slug}` is the header above this list;\nthis is the body. It is also the **only** endpoint that serves `notes` and\n`locationSource`: `GET /api/trips/{slug}/map` deliberately omits both so the\nsame data is not served from two places and given two chances to drift, and the\nfrontend resolves a clicked pin back to its full stop from this list by `id`.\nTask `t-stops-list-endpoint`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches; a\nviewer slug is an ordinary success here, not a 403, because this is a read. The\nstops are fetched by `data/repositories/stops.list_by_trip`, filtered on the\n`trip_id` the dependency resolved rather than on anything the caller typed, so\nno other trip's stops can appear. **A trip with no stops is a `200` with `[]`** \u2014\nan empty collection, not a missing one, and never a 404. Neither slug is in the\nresponse: `StopOut` has no slug field, and the slug is the credential.\n\nThe list comes back ordered by `arrivedAt` then `id`, but that is for response\nstability only and is **not** part of the contract \u2014 match stops by `id`, never\nby position. The map endpoint's chronological trail is established by the map\nhandler itself and does not read its ordering guarantee from here.\n\n**Related APIs.** `GET /api/trips/{slug}` for the trip header and its bikes,\n`POST /api/trips/{slug}/stops` to add a stop (rider slug only),\n`GET /api/trips/{slug}/stops/{id}/photos` for one stop's photos, and\n`GET /api/trips/{slug}/map` for the same stops as GeoJSON.",
+        "operationId": "list_stops_api_trips__slug__stops_get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "title": "Slug"
+            },
+            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every stop on this trip, with its notes and how it was located.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StopOut"
+                  },
+                  "title": "Response List Stops Api Trips  Slug  Stops Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess \u2014 see `docs/api-contract.md`, 'Access control: 403 and 404 are different answers'. A trip that exists but has no stops yet is **not** this case: that is a `200` with `[]`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "stops"
+        ],
+        "summary": "Add a stop to a trip",
+        "description": "**Context.** This is how a stop gets into the journal, and the one write the app\nmakes most: the rider taps \"Add stop\" on the Stuart Hwy, often with no signal, so\nthe stop is captured on the device with an id the *client* generates and queued\nuntil there is a connection. Rider slug only \u2014 a viewer link can read this trip's\nstops but not add one. Task `t-stops-create-endpoint`.\n\n**How it works.** `{slug}` is resolved by `require_rider_access`, which raises a\n404 if no trip has this slug and a 403 if it is the trip's viewer slug; the stop\nis stored against the `trip_id` that dependency resolved, never against anything\nin the path or the body. `StopCreate.id` then decides one of **three** branches\n(`docs/api-contract.md`, \"Idempotency\"; decision-log Entry 14):\n\n- an **unseen** id creates the stop \u2014 `201`, body is the new stop;\n- an id **already on this trip** is a replay \u2014 `200`, body is the **stored**\n  record, and a body that differs from the stored one changes nothing;\n- an id that exists **on a different trip** is not a replay \u2014 `409` /\n  `CONFLICT`, nothing is created, and nothing about the other record is\n  disclosed.\n\nThe replay is matched on `(trip_id, id)` rather than on the id alone, so no\nother trip's stop can be returned through this trip's slug, and the third branch\nis decided by a check *before* the insert rather than by letting the insert fail\n\u2014 a driver error would render `500` / `INTERNAL_ERROR`, which the offline queue\nretries forever.\n\n`arrivedAt` is the time the rider arrived, not the time this request was\nreceived, and its **UTC offset is required**: a naive value is a `422`, because a\nrider crossing timezones has no offset worth guessing (decision-log Entry 15).\n\n**Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,\n`GET /api/trips/{slug}` is the trip header above it (its `access` field is the\nUI hint for whether to offer this write at all),\n`POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created\nhere, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.",
+        "operationId": "create_stop_api_trips__slug__stops_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "title": "Slug"
+            },
+            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stop as stored \u2014 the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second stop.** This id is already a stop on this trip, so nothing was created and the **stored** record is returned unchanged \u2014 even where this request's body differs from it. A success, not an error: the offline queue can resend a create it never saw confirmed, any number of times, and reconcile against whichever attempt landed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The slug resolved, but it is the trip's **viewer** slug \u2014 a read-only link. Deliberately not a 404: the link genuinely works, just not for writes. Nothing was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess \u2014 see `docs/api-contract.md`, 'Access control: 403 and 404 are different answers'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` in the body already belongs to a stop on a **different** trip, so this is not a replay. Nothing was created, and nothing about the conflicting record is disclosed \u2014 not in the body, not in the message. Never-retry for the offline queue: the same id will conflict on every future attempt, so the stop needs a new one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation \u2014 a missing or mistyped field, a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC offset**. That last one is server-enforced only; the generated client types it as a plain string and cannot catch it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trips/{slug}/stops/{stop_id}/photos": {
+      "get": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "List a stop's photos",
+        "description": "**Context.** Photos attached to a single stop, each carrying a presigned URL\ninto S3-compatible storage. The URL is generated fresh per request and never\nstored in the database. A stop with no photos is a `200` with `[]`.\n\n**How it works.** `{slug}` is resolved by `require_trip_access` (either slug\naccepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404\nif it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,\n`POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (rider slug\nonly).",
+        "operationId": "list_photos_api_trips__slug__stops__stop_id__photos_get",
+        "parameters": [
+          {
+            "name": "stop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Stop Id"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "title": "Slug"
+            },
+            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every photo on this stop, each with a presigned URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PhotoOut"
+                  },
+                  "title": "Response List Photos Api Trips  Slug  Stops  Stop Id  Photos Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug, or the stop id does not exist on this trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "photos"
+        ],
+        "summary": "Upload a photo to a stop",
+        "description": "**Context.** This is how a photo gets into the journal. Multipart: form fields\n(`id`, `uploadedBy`, `takenAt`) alongside the binary `file` part. Rider slug\nonly. Task `t-photo-upload-endpoint`.\n\n**How it works.** `{slug}` is resolved by `require_rider_access` (403 on viewer,\n404 on unknown). `{stop_id}` is verified to belong to the resolved trip.\nThe `id` form field decides the three-way idempotency branch: unseen -> 201,\nsame stop -> 200 replay, different stop -> 409. The file is stored in S3 with\nobject key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in\nthe database.\n\n**Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this\nendpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo\nattaches to.",
+        "operationId": "upload_photo_api_trips__slug__stops__stop_id__photos_post",
+        "parameters": [
+          {
+            "name": "stop_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Stop Id"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "title": "Slug"
+            },
+            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_photo_api_trips__slug__stops__stop_id__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The photo as stored -- the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second upload.** This id is already a photo on this stop, so nothing was created and the **stored** record is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug, or the stop id does not exist on this trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` field already belongs to a photo on a **different** stop.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A required form field is missing or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trips/{slug}/bikes": {
+      "post": {
+        "tags": [
+          "bikes"
+        ],
+        "summary": "Add a bike to a trip",
+        "description": "**Context.** Bikes are registered per trip so the journal records who is riding\nwhat. Rider slug only -- a viewer link can read bikes (via `GET /trips/{slug}`)\nbut not add one. Task `t-bikes-create-endpoint`.\n\n**How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`\n(decision-log Entry 14): unseen id creates the bike (201), id already on this\ntrip is a replay (200, stored record returned unchanged), id on a different trip\nis a 409 with nothing disclosed about the conflicting record.\n\n**Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,\n`PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.",
+        "operationId": "create_bike_api_trips__slug__bikes_post",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "title": "Slug"
+            },
+            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BikeCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The bike as stored -- the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second bike.** This id is already a bike on this trip, so nothing was created and the **stored** record is returned unchanged. Task `t-bikes-create-endpoint`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` in the body already belongs to a bike on a **different** trip. Nothing was created, nothing about the conflicting record is disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trips/{slug}/bikes/{id}": {
+      "patch": {
+        "tags": [
+          "bikes"
+        ],
+        "summary": "Update a bike on a trip",
+        "description": "**Context.** Partial update of a bike registered on this trip. Only the fields\npresent in the request body are changed \u2014 absent fields stay as they are.\nRider slug only. Task `t-bikes-patch-endpoint`.\n\n**How it works.** Last-write-wins: no conflict detection, no ETags, no version\nfield. Two concurrent patches both succeed; whichever one the database sees\nlast is the one that sticks (spec Section 4).\n\n**Related APIs.** `POST /api/trips/{slug}/bikes` creates the bike in the first\nplace. `GET /api/trips/{slug}` returns the current state in `TripOut.bikes`.",
+        "operationId": "patch_bike_api_trips__slug__bikes__id__patch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "title": "Slug"
+            },
+            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BikePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The bike after applying the patch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug, or no bike with this id exists on the trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/trips/{slug}/map": {
+      "get": {
+        "tags": [
+          "map"
+        ],
+        "summary": "GeoJSON map of a trip's stops and trail",
+        "description": "**Context.** This is what the Leaflet map renders: one pin per stop, plus a\npolyline trail connecting them in the order the rider arrived.  Either slug\naccepted -- it is a read.  Task `t-map-geojson-endpoint`.\n\n**How it works.** `{slug}` is resolved by `require_trip_access` (either slug,\n404 on unknown).  The repository fetches only the columns the map needs --\n`id`, `name`, `lat`, `lng`, `arrived_at` -- ordered chronologically, builds\nthe GeoJSON features (coordinates in `[longitude, latitude]` order per the\nGeoJSON spec), and appends the trail LineString when 2+ stops exist.  A trip\nwith no stops is a `200` with `features: []`.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` serves the full stop data\n(notes, locationSource) the frontend resolves a clicked pin against by id.\n`GET /api/trips/{slug}` for the trip header.",
+        "operationId": "get_map_api_trips__slug__map_get",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "title": "Slug"
+            },
+            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJSON FeatureCollection with one Point per stop and an optional LineString trail connecting them chronologically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapFeatureCollection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Intended as the liveness probe for the container host \u2014 nothing is wired to it yet (no `HEALTHCHECK`, no `docker compose` healthcheck on the `api` service). Answers `200` with a fixed `status: ok` body as soon as the ASGI app is accepting requests; it touches neither Postgres nor object storage, so it reports that the process is up, not that the trip data is reachable.",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Api Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Access": {
+        "type": "string",
+        "enum": [
+          "rider",
+          "viewer"
+        ],
+        "title": "Access"
+      },
+      "BikeCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Client-generated UUID4. Replaying the same id returns the existing bike (200) instead of creating a duplicate \u2014 see docs/api-contract.md 'Idempotency'."
+          },
+          "riderName": {
+            "type": "string",
+            "title": "Ridername",
+            "description": "Whose bike this is \u2014 free text, not tied to a user account."
+          },
+          "make": {
+            "type": "string",
+            "title": "Make",
+            "description": "Manufacturer, e.g. 'Honda'. Free text \u2014 not a fixed list."
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Model name, e.g. 'Africa Twin'. Free text \u2014 not a fixed list."
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year",
+            "description": "Model year of the bike, as a four-digit year, e.g. 2019."
+          },
+          "specs": {
+            "type": "string",
+            "title": "Specs",
+            "description": "Free text: engine, suspension, tyres, etc.",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "riderName",
+          "make",
+          "model",
+          "year"
+        ],
+        "title": "BikeCreate",
+        "description": "POST /trips/{slug}/bikes body. Rider-slug only."
+      },
+      "BikeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The bike's id \u2014 the same client-generated UUID4 that was sent on create, so the device's local copy and the server's record share one identifier. Match bikes by this, never by their position in a list."
+          },
+          "riderName": {
+            "type": "string",
+            "title": "Ridername",
+            "description": "Whose bike this is \u2014 free text, not tied to a user account. Stored as `bikes.rider_name`; the camelCase spelling here is the wire name."
+          },
+          "make": {
+            "type": "string",
+            "title": "Make",
+            "description": "Manufacturer, e.g. 'Honda'. Free text \u2014 not a fixed list."
+          },
+          "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Model name, e.g. 'Africa Twin'. Free text \u2014 not a fixed list."
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year",
+            "description": "Model year of the bike, as a four-digit year, e.g. 2019."
+          },
+          "specs": {
+            "type": "string",
+            "title": "Specs",
+            "description": "Free text: engine, suspension, tyres, etc. Empty string when nothing has been written yet \u2014 never null, so 'not filled in' has one representation."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "riderName",
+          "make",
+          "model",
+          "year",
+          "specs"
+        ],
+        "title": "BikeOut",
+        "description": "One bike as returned. Embedded in `TripOut.bikes`, and the response to both bike writes."
+      },
+      "BikePatch": {
+        "properties": {
+          "riderName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ridername",
+            "description": "Whose bike this is \u2014 free text, not tied to a user account. Omit the field to leave the stored name alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+          },
+          "make": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Make",
+            "description": "Manufacturer, e.g. 'Honda'. Free text \u2014 not a fixed list. Omit the field to leave the stored make alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model",
+            "description": "Model name, e.g. 'Africa Twin'. Free text \u2014 not a fixed list. Omit the field to leave the stored model alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year",
+            "description": "Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to leave the stored year alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+          },
+          "specs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Specs",
+            "description": "Free text: engine, suspension, tyres, etc. Omit the field to leave the stored specs alone; omitting is not the same as sending it explicitly as null. To clear specs send an empty string \u2014 that is how 'nothing written yet' is spelled, never null."
+          }
+        },
+        "type": "object",
+        "title": "BikePatch",
+        "description": "PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. All fields optional \u2014 only sent fields change."
+      },
+      "Body_upload_photo_api_trips__slug__stops__stop_id__photos_post": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Client-generated UUID4, assigned when the photo is captured (possibly offline, before upload succeeds). Replaying the same id -- same photo retried after a dropped connection -- returns the existing photo (200) instead of storing a duplicate. See docs/api-contract.md 'Idempotency'."
+          },
+          "uploadedBy": {
+            "type": "string",
+            "title": "Uploadedby",
+            "description": "Display name only, no auth -- see spec Section 6."
+          },
+          "takenAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Takenat",
+            "description": "When the photo was taken, as a timezone-aware ISO 8601 instant. Captured on the device, which may have been offline, so it is the capture time and not the time the upload reached the server. The UTC offset is **required** -- a naive value (no offset) is rejected with 422 / VALIDATION_ERROR rather than assumed to be UTC or server-local, because a rider crossing timezones has no offset worth guessing. EXIF `DateTimeOriginal` is naive, so the client composes this field: pair it with `OffsetTimeOriginal` when present, otherwise apply the device's current offset. The generated client cannot catch this; only the server rejects it."
+          },
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "The photo file."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "uploadedBy",
+          "takenAt",
+          "file"
+        ],
+        "title": "Body_upload_photo_api_trips__slug__stops__stop_id__photos_post"
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "FORBIDDEN",
+          "NOT_FOUND",
+          "VALIDATION_ERROR",
+          "CONFLICT",
+          "METHOD_NOT_ALLOWED",
+          "INTERNAL_ERROR"
+        ],
+        "title": "ErrorCode",
+        "description": "The complete set of error codes the API can return \u2014 six, no more.\n\nA client (notably the offline queue, which decides retry-vs-never-retry from\nthe body alone) can exhaustively match on these. Adding a code is a contract\nchange; a handler must never invent one, which is why `core/errors.py` maps\nevery unrecognised status onto INTERNAL_ERROR rather than improvising."
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "Human-readable \u2014 safe to show a rider directly."
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail"
+      },
+      "ErrorEnvelope": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope"
+      },
+      "LineStringGeometry": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "LineString",
+            "title": "Type",
+            "description": "GeoJSON geometry type discriminator. Always 'LineString' for the trail.",
+            "default": "LineString"
+          },
+          "coordinates": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "minItems": 2,
+            "title": "Coordinates",
+            "description": "Ordered list of [longitude, latitude] positions, one per stop, earliest arrivedAt first. At least 2 positions \u2014 a LineString with fewer is invalid GeoJSON, which is why a trip with 0 or 1 stops omits this feature entirely instead of emitting an empty trail."
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinates"
+        ],
+        "title": "LineStringGeometry",
+        "description": "GeoJSON LineString geometry \u2014 the trail connecting stops in chronological order."
+      },
+      "LocationSource": {
+        "type": "string",
+        "enum": [
+          "gps",
+          "manual"
+        ],
+        "title": "LocationSource"
+      },
+      "MapFeatureCollection": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "FeatureCollection",
+            "title": "Type",
+            "description": "GeoJSON object type. Always 'FeatureCollection'.",
+            "default": "FeatureCollection"
+          },
+          "features": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/StopFeature"
+                },
+                {
+                  "$ref": "#/components/schemas/TrailFeature"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Features",
+            "description": "One Point feature per stop, plus the single LineString trail feature when the trip has 2+ stops. Empty list for a trip with no stops \u2014 that's a valid 200, not an error."
+          }
+        },
+        "type": "object",
+        "required": [
+          "features"
+        ],
+        "title": "MapFeatureCollection",
+        "description": "`GET /trips/{slug}/map` response \u2014 one GeoJSON FeatureCollection, handed\nstraight to Leaflet. Works with either slug (spec Sections 4 and 5)."
+      },
+      "PhotoOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The photo's id \u2014 the same client-generated UUID4 that was sent on upload, so the device's local copy and the server's record share one identifier. Match photos by this, never by their position in a list."
+          },
+          "stopId": {
+            "type": "string",
+            "title": "Stopid",
+            "description": "The id of the stop this photo hangs off \u2014 the same value as the matching `StopOut.id`, so a photo resolves back to its stop without another lookup. Stored as `photos.stop_id`."
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "description": "Presigned GET URL into S3-compatible storage, generated at read time by the storage/ module \u2014 never stored in the database, and never a OneDrive URL (OneDrive is write-only archive, not a read path)."
+          },
+          "uploadedBy": {
+            "type": "string",
+            "title": "Uploadedby",
+            "description": "Display name only, no auth \u2014 see spec Section 6. Whoever the uploading device said it was; it is not tied to a user account and nothing verifies it. Stored as `photos.uploaded_by`."
+          },
+          "takenAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Takenat",
+            "description": "When the photo was taken, as a timezone-aware ISO 8601 instant \u2014 the device's capture time, not the time the upload reached the server, which can be much later if the rider was offline. Always carries an offset, because upload rejects a naive value (422 / VALIDATION_ERROR). Read back from `photos.taken_at`, a `timestamptz`, it is a **UTC** instant; the `201` upload response instead echoes the offset the device sent. Same instant, two spellings \u2014 compare these as datetimes, never as strings."
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "description": "True once the background OneDrive sync has landed this photo."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "stopId",
+          "url",
+          "uploadedBy",
+          "takenAt",
+          "archived"
+        ],
+        "title": "PhotoOut"
+      },
+      "PointGeometry": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Point",
+            "title": "Type",
+            "description": "GeoJSON geometry type discriminator. Always 'Point' for a stop pin.",
+            "default": "Point"
+          },
+          "coordinates": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Coordinates",
+            "description": "Position as [longitude, latitude] \u2014 note the order is reversed from the Stop model's lat/lng fields, per the GeoJSON spec."
+          }
+        },
+        "type": "object",
+        "required": [
+          "coordinates"
+        ],
+        "title": "PointGeometry",
+        "description": "GeoJSON Point geometry \u2014 the location of a single stop pin."
+      },
+      "StopCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Client-generated UUID4, assigned when the stop is captured (possibly offline). Replaying the same id returns the existing stop (200) instead of creating a duplicate \u2014 see docs/api-contract.md 'Idempotency'."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "What the rider called this stop, e.g. 'Daly Waters Pub'."
+          },
+          "lat": {
+            "type": "number",
+            "title": "Lat",
+            "description": "Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+          },
+          "lng": {
+            "type": "number",
+            "title": "Lng",
+            "description": "Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+          },
+          "locationSource": {
+            "$ref": "#/components/schemas/LocationSource",
+            "description": "How lat/lng were obtained \u2014 an automatic GPS fix, or a manual map tap (spec Section 6, 'Add stop' fallback when GPS is denied/unavailable)."
+          },
+          "arrivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Arrivedat",
+            "description": "When the rider arrived, as a timezone-aware ISO 8601 instant. Captured on the device, which may have been offline, so it is the arrival time and not the time the server received the stop. The UTC offset is **required** \u2014 a naive value (no offset) is rejected with 422 / VALIDATION_ERROR rather than assumed to be UTC or server-local, because a rider crossing timezones has no offset worth guessing. The generated client cannot catch this; only the server rejects it."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Whatever the rider wants to write about this stop. Optional \u2014 omit the field entirely or send **null**; both mean 'no notes' and are stored as SQL NULL."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "lat",
+          "lng",
+          "locationSource",
+          "arrivedAt"
+        ],
+        "title": "StopCreate",
+        "description": "POST /trips/{slug}/stops body. Rider-slug only."
+      },
+      "StopFeature": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Feature",
+            "title": "Type",
+            "description": "GeoJSON object type. Always 'Feature'.",
+            "default": "Feature"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The stop's id (Stop.id), carried in GeoJSON's own top-level Feature id member rather than duplicated into properties. This is what the frontend matches against the /stops list when a pin is clicked."
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/PointGeometry",
+            "description": "Where the pin sits \u2014 see PointGeometry for the [lng, lat] order."
+          },
+          "properties": {
+            "$ref": "#/components/schemas/StopFeatureProperties",
+            "description": "Pin label data: name and arrival time only."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "geometry",
+          "properties"
+        ],
+        "title": "StopFeature",
+        "description": "GeoJSON Feature for one stop \u2014 a map pin."
+      },
+      "StopFeatureProperties": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Stop name, shown as the pin's label/popup title."
+          },
+          "arrivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Arrivedat",
+            "description": "When the rider arrived at this stop; also the trail's sort key."
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "arrivedAt"
+        ],
+        "title": "StopFeatureProperties",
+        "description": "Properties carried by a stop's Point feature \u2014 exactly the two values the\nmap needs to label a pin.\n\nDeliberately does NOT include `notes` or `locationSource`. On pin click the\nfrontend looks the full stop up by id in the already-fetched `/stops` list\n(spec Section 5), so duplicating those fields here would mean the same data\nserved by two endpoints, with two chances to drift."
+      },
+      "StopOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The stop's id \u2014 the same client-generated UUID4 that was sent on create, so the device's local copy and the server's record share one identifier. Match stops by this, never by their position in the list. It is also what `GET /trips/{slug}/map` puts on each Point feature's top-level `id`, so a clicked pin resolves back to the full stop here."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "What the rider called this stop, e.g. 'Daly Waters Pub'."
+          },
+          "lat": {
+            "type": "number",
+            "title": "Lat",
+            "description": "Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+          },
+          "lng": {
+            "type": "number",
+            "title": "Lng",
+            "description": "Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+          },
+          "locationSource": {
+            "$ref": "#/components/schemas/LocationSource",
+            "description": "How lat/lng were obtained \u2014 'gps' for an automatic fix, 'manual' where the rider tapped a point on the map because geolocation was denied or unavailable. Always present; there is no 'unknown' third value. It lets a viewer tell an exact fix from an approximate tap. Stored as `stops.location_source`."
+          },
+          "arrivedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Arrivedat",
+            "description": "When the rider arrived, as a timezone-aware ISO 8601 instant. Captured on the device, which may have been offline, so it is the arrival time and not the time the server received the stop. Stored as `stops.arrived_at`."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Whatever the rider wrote about this stop, or **null** when they wrote nothing \u2014 unlike `BikeOut.specs`, this column is nullable and null is the empty case. This endpoint is the only one that serves it; the map endpoint omits it."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "lat",
+          "lng",
+          "locationSource",
+          "arrivedAt",
+          "notes"
+        ],
+        "title": "StopOut",
+        "description": "One stop as returned. The elements of `GET /trips/{slug}/stops`."
+      },
+      "TrailFeature": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "Feature",
+            "title": "Type",
+            "description": "GeoJSON object type. Always 'Feature'.",
+            "default": "Feature"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry",
+            "description": "The route line through every stop, earliest arrivedAt first."
+          },
+          "properties": {
+            "$ref": "#/components/schemas/TrailFeatureProperties",
+            "description": "Always an empty object \u2014 the trail carries no metadata of its own."
+          }
+        },
+        "type": "object",
+        "required": [
+          "geometry"
+        ],
+        "title": "TrailFeature",
+        "description": "GeoJSON Feature for the trail \u2014 the polyline auto-connecting the trip's\nstops in chronological order. Present only when the trip has 2+ stops.\n\nHas no top-level `id`: it isn't a stored entity, it's derived from the\nstops each time the endpoint is called."
+      },
+      "TrailFeatureProperties": {
+        "properties": {},
+        "type": "object",
+        "title": "TrailFeatureProperties",
+        "description": "Properties of the trail feature \u2014 intentionally empty.\n\nGeoJSON requires a `properties` member on every Feature, but the trail\ncarries no metadata of its own: it's derived entirely from the stop\nfeatures in the same collection."
+      },
+      "TripOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The trip's id. Stable, and safe to show or log \u2014 it is not a credential and cannot be used to reach the trip. Neither slug appears anywhere in this response."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The trip's display name, as the rider titled it."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "title": "Startdate",
+            "description": "The day the trip starts, as an ISO 8601 date (YYYY-MM-DD). A date with no time and no timezone: it is the calendar day the journal opens on, not an instant, so it reads the same wherever the viewer is."
+          },
+          "bikes": {
+            "items": {
+              "$ref": "#/components/schemas/BikeOut"
+            },
+            "type": "array",
+            "title": "Bikes",
+            "description": "The bikes on **this** trip, embedded so the app's first load is one request rather than two. Empty list when no bikes have been added yet \u2014 that is a normal trip, not an error. Order is not part of the contract; match bikes by `id`."
+          },
+          "access": {
+            "$ref": "#/components/schemas/Access",
+            "description": "Which kind of slug was used to make this request \u2014 'rider' or 'viewer'. The frontend uses this, not a stored user role, to decide whether to show write UI (Add stop, upload photo, edit bikes)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "startDate",
+          "bikes",
+          "access"
+        ],
+        "title": "TripOut",
+        "description": "GET /trips/{slug} response. Works with either slug."
+      }
+    }
+  }
+}

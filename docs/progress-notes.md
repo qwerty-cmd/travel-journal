@@ -1068,3 +1068,40 @@ NO ACCEPTANCE CRITERIA, DELIBERATELY. This is not an implementable task — it i
 BLOCKER SATISFIED, STATUS UNCHANGED. `t-onedrive-sync-job` is now `done`, so the one blocker named in `ba`'s original scoping is discharged — the task is unblocked. It stays `not_started` anyway, because what it actually depends on is `s-cloud-service-setup`'s app registration and OAuth consent, neither of which exist. That story is `not_started` and — per its own note above — needs explicit human approval per CLAUDE.md's off-limits list (`GRAPH_*` env vars, OneDrive token handling) and **has zero scoped tasks today**, because every task under it would touch `.env`, `infra/`, or Graph tokens directly. There is nothing for `ba` to scope until a human does the app registration outside this pipeline.
 
 `t-onedrive-filename-url-encoding` names this row as the place to fold its one-line percent-encoding fix in, rather than shipping it separately — see that section above. That folding has not happened; this row still carries no implementation content of its own.
+
+## t-frontend-kubb-client
+
+COMPLETED 2026-09-28, qa PASS on all 9 acceptance criteria, nothing CURRENTLY BROKEN. First task under `s-frontend-first-open`; that story and `m3-frontend-pwa` move `not_started` -> `in_progress` because a `done` task now sits under them (same rule as the `s-local-dev-env` note). The story itself — the display-name prompt — is not built.
+
+**THE USAGE DOC IS `frontend/src/api/README.md`, NOT THIS NOTE.** It covers layout, the regenerate command, the eight hooks and the known gaps. This note carries only what was verified, why the config looks the way it does, and the debt.
+
+Files: `frontend/package.json` (six `@kubb/*` devDeps exact-pinned at 4.39.3 — cli, core, plugin-oas, plugin-ts, plugin-react-query, plugin-client — plus script `"generate:api": "kubb generate"`); `frontend/package-lock.json` (axios appears only as optional-peer metadata, it is not installed); `frontend/kubb.config.ts` (new); `frontend/openapi.json` (new, the committed snapshot); `frontend/src/api/gen/**` (new, 50 generated files); `backend/tests/test_openapi_snapshot.py` (new, `test-writer` — parsed-equality comparison of `app.openapi()` against the snapshot, failure message prints the regenerate command).
+
+WHY EACH NON-DEFAULT IN `kubb.config.ts` — recorded so none gets "cleaned up":
+- **Kubb v4, not v5.** v5's `plugin-client` is beta-only.
+- **`format`/`lint` off.** Determinism; and the default would lean on a transitively-installed prettier the project never declared.
+- **`extension: { '.ts': '' }`.** Kubb's default emits `.ts` import suffixes, which fail the project's `tsconfig` — and `tsconfig` was off-limits to this task.
+- **`suspense: false`.** Otherwise Kubb emits a second (suspense) hook per query.
+- **`/api/health` excluded by path.** It is the liveness probe, not a contract operation. An `operationId` exclude does not work: Kubb compares against its friendly-cased id, not the raw one.
+
+WHY THE SNAPSHOT IS COMMITTED: the Dockerfile's frontend-build stage has no Python, so it cannot dump the spec from the app; generation has to read a file. `backend/tests/test_openapi_snapshot.py` is the drift guard. qa confirmed the snapshot is identical with and without `frontend/dist` present (the SPA fallback route is `include_in_schema=False`), which matters given decision-log's lesson on behaviour conditional on a built `frontend/dist`.
+
+VALIDATION (qa): all 9 ACs PASS; backend suite **568 passed**; regeneration byte-deterministic after `npm ci`; `npm run build` and strict `tsc` pass. **AC5 (multipart photo upload) was verified by reading the generated code only — no runtime browser test.** Treat the upload hook as unexercised.
+
+CLAUDE.md IS NOW STALE — FLAGGED, NOT EDITED. Its "Regenerate frontend API client" command (`cd frontend && npx kubb generate`) is now step two of two; step one dumps the snapshot from the backend (exact command in `frontend/src/api/README.md`). The orchestrator owns `CLAUDE.md` (decision-log Entry 12), so docs did not touch it.
+
+TWO TRIGGERED DEBT FINDINGS FROM qa, **NEITHER IMPLEMENTED** — a finding from task X is not work for task X. **No `progress.json` rows were filed for them in this closeout** (scope was this task's row only); they need rows before either trigger fires.
+
+**(a) JSON bodies go out without `Content-Type: application/json`.**
+- The bundled `src/api/gen/.kubb/fetch.ts` never sets it, so the browser sends a string body as `text/plain`, FastAPI does not parse it as JSON, and `createStop` / `createBike` / `patchBike` get a 422.
+- Gate: TRIGGERED DEBT (Gate 3). No code calls any mutation hook today.
+- Promotion trigger: the first task that calls any of those three mutation hooks.
+- Fix constraint: a global `setConfig` header would also be sent on the photo upload, whose `FormData` body needs the browser-set multipart boundary. So fix per call, or via a custom Kubb client (`importPath`).
+
+**(b) Non-2xx responses resolve as success.**
+- `fetch.ts` never throws on `!response.ok`. An `ErrorEnvelope` comes back as resolved `data`, TanStack Query's error channel is never populated, and a 409 looks like success.
+- Gate: TRIGGERED DEBT (Gate 3). Data-integrity risk for the offline queue specifically: a queue that retires an item on "success" would drop a rejected write.
+- Promotion trigger: the first UI or offline-queue task that consumes any hook.
+- Likely fix: a custom Kubb client (`importPath`) that throws when `!response.ok`. That would also be the natural home for (a).
+
+No decision-log entry: nothing was contested between agents.
