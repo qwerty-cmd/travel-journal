@@ -15,9 +15,15 @@ export class PhotoDecodeError extends Error {
 }
 
 const DTO_RE = /^(?!0000)\d{4}:(0[1-9]|1[0-2]):(0[1-9]|[12]\d|3[01]) ([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
-const OFFSET_RE = /^[+-]\d\d:\d\d$/;
+// Offsets are bounded to ±14:00 (the real-world range; Python's AwareDatetime rejects >= 24h).
+const OFFSET_RE = /^[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)$/;
+// DTO_RE bounds each field; this rejects day overflow for the month (Feb 31, Feb 29 on a non-leap year).
+const isRealDate = (dto: string) => {
+  const [y, m, d] = dto.slice(0, 10).split(":").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDate() === d;
+};
 
-/** Reads EXIF DateTimeOriginal (0x9003) and OffsetTimeOriginal (0x9011) from JPEG bytes. Never throws; invalid tags are treated as absent. */
+/** Reads EXIF DateTimeOriginal (0x9003) and OffsetTimeOriginal (0x9011) from JPEG bytes. Never throws; invalid tags (bad format, impossible date, offset beyond ±14:00) are treated as absent, so composeTakenAt falls to the next ladder rung. */
 export function parseExifTimes(buf: ArrayBuffer): ExifTimes {
   try {
     const v = new DataView(buf);
@@ -73,7 +79,7 @@ export function parseExifTimes(buf: ArrayBuffer): ExifTimes {
     const exifIfd = u32(exifPtr + 8);
     const out: ExifTimes = {};
     const dto = ascii(findEntry(exifIfd, 0x9003));
-    if (dto && DTO_RE.test(dto)) out.dateTimeOriginal = dto;
+    if (dto && DTO_RE.test(dto) && isRealDate(dto)) out.dateTimeOriginal = dto;
     const off = ascii(findEntry(exifIfd, 0x9011));
     if (off && OFFSET_RE.test(off)) out.offsetTimeOriginal = off;
     return out;

@@ -130,6 +130,47 @@ describe("composeTakenAt — AC3 ladder", () => {
   });
 });
 
+// t-photo-exif-invalid-values: validation lives in parseExifTimes; invalid values are absent,
+// so composeTakenAt (fed the parsed output) drops to the next rung instead of emitting a 422-bound takenAt.
+describe("parseExifTimes — calendar/offset validity (t-photo-exif-invalid-values)", () => {
+  test.each(["2026:02:31 10:00:00", "2026:02:29 10:00:00", "2026:04:31 10:00:00", "2100:02:29 10:00:00", "2026:13:14 10:00:00", "2026:06:14 24:00:00"])(
+    "impossible DateTimeOriginal %j is absent",
+    (dto) => {
+      expect(parseExifTimes(jpeg({ dto, offset: null }))).toEqual({});
+    },
+  );
+  test.each(["2028:02:29 10:00:00", "2000:02:29 10:00:00", "2026:12:31 23:59:59", "2026:01:31 00:00:00"])(
+    "real DateTimeOriginal %j is kept",
+    (dto) => {
+      expect(parseExifTimes(jpeg({ dto, offset: null }))).toEqual({ dateTimeOriginal: dto });
+    },
+  );
+  test.each(["+14:00", "-14:00", "+13:59", "-00:00", "+00:00", "+05:45", "-09:30"])("offset %j is kept", (offset) => {
+    expect(parseExifTimes(jpeg({ offset }))).toEqual({ dateTimeOriginal: DTO, offsetTimeOriginal: offset });
+  });
+  test.each(["+14:01", "-14:30", "+15:00", "+24:00", "+05:60", "+99:99"])("offset %j is absent", (offset) => {
+    expect(parseExifTimes(jpeg({ offset }))).toEqual({ dateTimeOriginal: DTO });
+  });
+});
+
+describe("composeTakenAt fed from parseExifTimes — invalid values fall through the ladder", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  afterEach(() => vi.restoreAllMocks());
+
+  test.each(["+14:01", "+24:00", "+99:99", "+05:60"])("invalid offset %j -> rung (b) device offset", (offset) => {
+    vi.spyOn(now, "getTimezoneOffset").mockReturnValue(-570);
+    expect(composeTakenAt(parseExifTimes(jpeg({ offset })), now)).toBe("2026-06-14T10:00:00+09:30");
+  });
+  test.each(["2026:02:31 10:00:00", "2026:02:29 10:00:00"])("invalid date %j (valid offset) -> rung (c) now", (dto) => {
+    expect(composeTakenAt(parseExifTimes(jpeg({ dto })), now)).toBe(now.toISOString());
+  });
+  test("Feb 29 2028 + edge offset -14:00 -> rung (a)", () => {
+    expect(composeTakenAt(parseExifTimes(jpeg({ dto: "2028:02:29 23:59:59", offset: "-14:00" })), now)).toBe(
+      "2028-02-29T23:59:59-14:00",
+    );
+  });
+});
+
 describe("fitWithin — AC4", () => {
   test.each([
     [4000, 3000, 1600, 1200],
