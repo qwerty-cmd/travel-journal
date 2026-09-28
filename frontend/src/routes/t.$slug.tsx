@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { DisplayNamePrompt } from "../components/DisplayNamePrompt";
+import { getDisplayName } from "../localStore";
 import { isTripNotFound, useTrip } from "../trip";
 
 // Trip shell for every /t/$slug screen (decision-log Entry 18): trip header,
@@ -11,6 +14,7 @@ export const Route = createFileRoute("/t/$slug")({
 function TripShell() {
   const { slug } = Route.useParams();
   const trip = useTrip(slug);
+  const [hasName, setHasName] = useState(() => getDisplayName() !== null);
 
   if (isTripNotFound(trip.error)) return <p style={{ padding: 16 }}>Trip not found</p>;
 
@@ -21,7 +25,12 @@ function TripShell() {
           <h1 style={{ margin: 0 }}>{trip.data.name}</h1>
           <p style={{ margin: 0 }}>Starts {trip.data.startDate}</p>
         </header>
-        <Outlet />
+        {/* Rider-only (Entry 18): decided by the server's access, never device storage. */}
+        {trip.data.access === "rider" && !hasName ? (
+          <DisplayNamePrompt onSaved={() => setHasName(true)} />
+        ) : (
+          <Outlet />
+        )}
       </>
     );
   }

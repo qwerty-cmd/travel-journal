@@ -1188,6 +1188,23 @@ Findings (filed, not fixed):
 
 Rider-only, which deliberately departs from spec §6.1's literal wording (Entry 18). The name only fills `uploadedBy`.
 
+**Closeout (done, QA PASS on all 5 ACs).** 55/55 tests pass across 4 files. 7 of them are new in `frontend/src/displayName.test.tsx`: AC1-5, plus a case where the server's `viewer` answer overrides a cached `rider` `TripOut`. QA mutation-tested 5 breakages and the tests caught all 5. Validation is `cd frontend && npm run build && npm test`, with the build first (see `t-frontend-slug-routing`).
+
+Key notes:
+- Whether to prompt depends on `TripOut.access`, never on anything stored on the device. Viewers are never prompted.
+- The name is a label for the future `uploadedBy`. It is not authentication.
+- The name is stored under `btj.displayName`, through `localStore.setDisplayName`. `TripShell` counts any non-null stored value as "has a name".
+
+Frontend doc:
+- **Design feature.** On a rider link with no stored display name, the trip shell asks "Your name" before it shows the trip home. The header (trip name and start date) stays visible. After Save, the prompt is replaced by the normal `<Outlet/>` and does not come back on this device. On a viewer link the prompt never appears.
+- **Design format.**
+  - `components/DisplayNamePrompt.tsx` is a `<form>` with one input labelled "Your name" and a Save button. It trims the input. An empty or whitespace-only value shows an inline `role="alert"` message, "Please enter your name.", and stores nothing. Otherwise it calls `setDisplayName(trimmed)` and then `onSaved()`.
+  - `routes/t.$slug.tsx` (`TripShell`) holds `hasName` state, initialised from `getDisplayName() !== null`. When `trip.data.access === "rider" && !hasName`, it renders the prompt in place of `<Outlet/>`. `onSaved` sets `hasName` to true.
+- **APIs called.** None new. It reads `access` from the existing `GET /api/trips/{slug}` → `TripOut`, through `useTrip`. Before the server responds, that is the cached `TripOut`.
+
+Findings (filed, not fixed):
+- **ORDINARY DEBT**: until the server responds (while the request is pending, or after a network failure), the prompt decision uses `access` from the cached `btj.trip.<slug>` `TripOut`. That value is still the server's answer, just an earlier one. It only matters if a link's access level can change between visits, and nobody has checked whether the backend allows that. No promotion trigger today.
+
 ## t-offline-queue-core
 
 Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.
