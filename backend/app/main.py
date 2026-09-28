@@ -204,4 +204,25 @@ if static_dir.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str) -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        """
+        A real file at the dist root (sw.js, registerSW.js, manifest.webmanifest,
+        icons) is served as itself; anything else gets index.html. Without the
+        file branch the service worker script came back as HTML and never
+        registered, so there was no offline shell.
+
+        Trust boundary: `full_path` is attacker-controlled and already
+        percent-decoded, so `..`, `%2e%2e`, `%2f` and absolute paths all arrive
+        here as plain path text. The candidate is resolved (normalising `..`
+        and following symlinks) and must still sit inside the resolved
+        static root — otherwise it falls through to index.html, never a 404
+        that would confirm a file exists elsewhere.
+        """
+        root = static_dir.resolve()
+        try:
+            candidate = (root / full_path).resolve()
+        except (ValueError, OSError):
+            # e.g. `%00` -> "embedded null character" on Linux: not a file.
+            candidate = None
+        if candidate is not None and candidate.is_relative_to(root) and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(root / "index.html")

@@ -17,6 +17,12 @@ export default defineConfig({
         // service worker here only handles asset caching for installability —
         // the queue itself is app-level logic, not a Workbox strategy.
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
+        // Cold open of any deep link (/t/$slug...) offline renders the
+        // precached shell. /api is denylisted so API calls always hit the
+        // network — no runtimeCaching for the API, TanStack Query's persisted
+        // cache is the offline read path.
+        navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/api\//],
       },
       manifest: {
         name: "Bike Trip Journal",
