@@ -3,8 +3,8 @@
 * Do not edit manually.
 */
 
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
 import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422 } from "../types/GetMapApiTripsSlugMapGet";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { getMapApiTripsSlugMapGet } from "../clients/getMapApiTripsSlugMapGet";

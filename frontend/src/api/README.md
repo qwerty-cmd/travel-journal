@@ -1,26 +1,5 @@
 # API client
 
-> **Known gaps before first use — read before calling any hook.**
-> The bundled fetch client (`gen/.kubb/fetch.ts`) has two defects, filed as
-> triggered debt under `t-frontend-kubb-client` in `docs/progress-notes.md`:
->
-> 1. **No `Content-Type: application/json` on JSON bodies.** The browser sends
->    them as `text/plain`, FastAPI does not parse them as JSON, and
->    `createStop` / `createBike` / `patchBike` return **422**. Do not fix this
->    with a global `setConfig` header: that header would also go on the photo
->    upload, whose `FormData` body needs the multipart boundary the browser sets
->    itself. Fix it per call, or with a custom Kubb client (`importPath`).
-> 2. **Non-2xx responses resolve as success.** The client never throws on
->    `!response.ok`, so an `ErrorEnvelope` comes back as `data` and TanStack
->    Query's `error` is never set. A 409 looks like success. For the offline
->    queue this is a data-integrity risk, because a rejected write would be
->    removed from the queue as if it had been sent. The likely fix is a custom
->    Kubb client (`importPath`) that throws on `!response.ok`, which can fix (1)
->    at the same time.
->
-> Fix both in the first task that calls a mutation hook, or the first UI or
-> offline-queue task that uses any hook.
-
 ## Design feature
 
 This is a typed client for every operation in the API contract: TypeScript
@@ -51,6 +30,36 @@ only the second step regenerates from a stale snapshot. The output is
 byte-deterministic after `npm ci`, so a regenerate with no backend change
 should produce no diff.
 
+### Errors and request bodies
+
+Every generated call goes through `src/api/client.ts`, a hand-written fetch
+client (the one file here that is not generated).
+
+- JSON bodies are sent with `Content-Type: application/json`. `FormData` bodies
+  get no Content-Type from the client, so the browser can set the multipart
+  boundary. Calls without a body get no Content-Type.
+- Every failure throws `ApiError` (exported from `client.ts`), which has
+  `status?: number` and `envelope?: ErrorEnvelope`:
+  - **`envelope` set**: the server sent an `ErrorEnvelope`. Classify by
+    `envelope.error.code`. `message` is `envelope.error.message`, which is safe
+    to show to a rider.
+  - **`envelope` undefined, `status` set**: a non-2xx response with no
+    envelope, such as a 502 HTML page. Retry, per the contract.
+  - **Both undefined**: a network failure. The original error is in `cause`.
+    Retry.
+  - An `AbortError` is re-thrown unchanged, not wrapped.
+- `ResponseErrorConfig<T>` is `ApiError`, so every hook's `error` is typed
+  `ApiError | null`.
+- `setConfig` / `getConfig` / `mergeConfig` are exported from `client.ts`.
+  `setConfig` and `getConfig` are also properties of the default export.
+
+**Known limitation (TRIGGERED DEBT; see `t-frontend-fetch-client` in
+`docs/progress-notes.md`, promoted by `t-offline-queue-core`):** on a 2xx, the
+body is passed to `response.json()` whenever it is non-null. Three cases throw
+a raw `SyntaxError`/`TypeError` instead of `ApiError`: a 200 with an empty
+body, a captive-portal HTML page, and a connection drop partway through the
+body. At runtime, treat any error that is not an `ApiError` as retryable.
+
 ## Design format
 
 Everything generated lives in `src/api/gen/`. **Never hand-edit it.**
@@ -62,14 +71,15 @@ writes it again.
 | `gen/types/` | One file per schema (`TripOut`, `StopCreate`, `ErrorEnvelope`, ...) and one per operation (request/response/error types) |
 | `gen/clients/` | One plain async function per operation, which calls the fetch client |
 | `gen/hooks/` | One TanStack Query hook per operation |
-| `gen/.kubb/fetch.ts` | The fetch client Kubb bundles. `setConfig({ baseURL, headers, ... })` sets defaults for every call; `getConfig` / `mergeConfig` are also exported. It has the two defects listed at the top of this file |
 | `gen/.kubb/config.ts` | `buildFormData`, used by the photo upload to turn the body into `FormData` |
 | `gen/index.ts` | Barrel file that re-exports all of the above |
+| `client.ts` (outside `gen/`) | The fetch client every call in `gen/clients/` and `gen/hooks/` imports (see "Errors and request bodies"). It lives outside `gen/` because `clean: true` would delete it. Kubb wires it in with `importPath: '../../client'`. That string is emitted verbatim, and it resolves from both `gen/clients/` and `gen/hooks/` |
 
 Why `frontend/kubb.config.ts` differs from the defaults (leave these as they are):
 - Kubb **v4** (all `@kubb/*` pinned at 4.39.3). v5's `plugin-client` is only available as a beta.
 - `format` and `lint` are off. This keeps output deterministic, and the defaults would depend on a prettier the project never declared.
 - `extension: { '.ts': '' }`. Kubb's default `.ts` import suffixes fail the project's `tsconfig`.
+- `importPath: '../../client'` replaces `client: 'fetch'` and `bundle: true`. Kubb v4 does not allow them together: it types `client?: never` when `importPath` is set.
 - `suspense: false`. Without it, Kubb emits a second suspense hook for every query.
 - `/api/health` is excluded **by path**. It is the liveness probe, not a contract operation. Excluding it by `operationId` does not work, because Kubb compares against its friendly-cased id.
 
@@ -91,12 +101,10 @@ Mutations:
 
 | Hook | Operation |
 |---|---|
-| `useCreateStopApiTripsSlugStopsPost` | `POST /api/trips/{slug}/stops`: JSON body, **affected by gap 1** |
+| `useCreateStopApiTripsSlugStopsPost` | `POST /api/trips/{slug}/stops`: JSON body |
 | `useUploadPhotoApiTripsSlugStopsStopIdPhotosPost` | `POST /api/trips/{slug}/stops/{stop_id}/photos`: multipart `FormData` |
-| `useCreateBikeApiTripsSlugBikesPost` | `POST /api/trips/{slug}/bikes`: JSON body, **affected by gap 1** |
-| `usePatchBikeApiTripsSlugBikesIdPatch` | `PATCH /api/trips/{slug}/bikes/{id}`: JSON body, **affected by gap 1** |
-
-Gap 2 affects all eight hooks.
+| `useCreateBikeApiTripsSlugBikesPost` | `POST /api/trips/{slug}/bikes`: JSON body |
+| `usePatchBikeApiTripsSlugBikesIdPatch` | `PATCH /api/trips/{slug}/bikes/{id}`: JSON body |
 
 The photo upload hook was checked only by reading the generated code. It has
 not been run in a browser. Note also that the backend upload is a single

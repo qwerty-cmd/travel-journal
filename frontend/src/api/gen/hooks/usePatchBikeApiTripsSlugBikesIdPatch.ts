@@ -3,8 +3,8 @@
 * Do not edit manually.
 */
 
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
 import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
 import { mutationOptions, useMutation } from "@tanstack/react-query";
 import { patchBikeApiTripsSlugBikesIdPatch } from "../clients/patchBikeApiTripsSlugBikesIdPatch";

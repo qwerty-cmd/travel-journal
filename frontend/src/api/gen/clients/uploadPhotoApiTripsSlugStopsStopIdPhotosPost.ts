@@ -3,10 +3,10 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 import { buildFormData } from "../.kubb/config";
-import { fetch } from "../.kubb/fetch";
 
 function getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }: { stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"]; slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/stops/${stop_id}/photos` as const }

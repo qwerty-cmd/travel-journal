@@ -3,9 +3,9 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422 } from "../types/CreateBikeApiTripsSlugBikesPost";
-import { fetch } from "../.kubb/fetch";
 
 function getCreateBikeApiTripsSlugBikesPostUrl({ slug }: { slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/bikes` as const }

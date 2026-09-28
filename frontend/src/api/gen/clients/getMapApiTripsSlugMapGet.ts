@@ -3,9 +3,9 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422 } from "../types/GetMapApiTripsSlugMapGet";
-import { fetch } from "../.kubb/fetch";
 
 function getGetMapApiTripsSlugMapGetUrl({ slug }: { slug: GetMapApiTripsSlugMapGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/map` as const }

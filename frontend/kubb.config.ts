@@ -17,16 +17,17 @@ export default defineConfig({
   plugins: [
     pluginOas({ generators: [] }),
     pluginTs({ output: { path: './types' }, exclude }),
+    // importPath: every generated call uses src/api/client.ts (emitted verbatim, resolved from
+    // gen/clients/ and gen/hooks/). Kubb v4 types `client` and `bundle` as `never` alongside it.
     pluginClient({
       output: { path: './clients' },
-      client: 'fetch',
-      bundle: true,
+      importPath: '../../client',
       paramsType: 'object',
       exclude,
     }),
     pluginReactQuery({
       output: { path: './hooks' },
-      client: { client: 'fetch', bundle: true },
+      client: { importPath: '../../client' },
       paramsType: 'object',
       suspense: false,
       exclude,

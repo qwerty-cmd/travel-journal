@@ -3,9 +3,9 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
-import { fetch } from "../.kubb/fetch";
 
 function getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"]; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/stops/${stop_id}/photos` as const }

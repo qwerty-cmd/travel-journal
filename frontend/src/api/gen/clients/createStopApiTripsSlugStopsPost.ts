@@ -3,9 +3,9 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422 } from "../types/CreateStopApiTripsSlugStopsPost";
-import { fetch } from "../.kubb/fetch";
 
 function getCreateStopApiTripsSlugStopsPostUrl({ slug }: { slug: CreateStopApiTripsSlugStopsPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/stops` as const }

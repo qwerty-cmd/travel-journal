@@ -3,9 +3,9 @@
 * Do not edit manually.
 */
 
-import type { Client, RequestConfig, ResponseErrorConfig } from "../.kubb/fetch";
+import fetch from "../../client";
+import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
 import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
-import { fetch } from "../.kubb/fetch";
 
 function getPatchBikeApiTripsSlugBikesIdPatchUrl({ id, slug }: { id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"]; slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"] }) {
   const res = { method: 'PATCH', url: `/api/trips/${slug}/bikes/${id}` as const }

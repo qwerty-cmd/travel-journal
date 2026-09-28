@@ -1148,6 +1148,15 @@ KNOWN LIMITS, accepted rather than scoped:
 
 Promoted from `t-frontend-kubb-client` findings (a) and (b). TRIGGERED, and the trigger is next: the first hook consumer is `t-frontend-slug-routing`. The client throws a typed error carrying the parsed `ErrorEnvelope`, or a distinct no-envelope error for network or non-JSON failures. The queue relies on that split: no envelope means retry (api-contract.md, Error envelope).
 
+**Closeout (done, QA PASS on all 10 ACs).** Shipped `frontend/src/api/client.ts`, a custom Kubb client wired in through `importPath: '../../client'`. It sets `Content-Type: application/json` on JSON bodies only (never on FormData), and it throws `ApiError` (`status?`, `envelope?`, `cause`) on any non-2xx or network failure. AbortError is re-thrown unchanged. `ResponseErrorConfig` is `ApiError`. There are 22 tests in `client.test.ts`. `gen/` was regenerated and `gen/.kubb/fetch.ts` is gone. Usage is in `frontend/src/api/README.md`.
+
+Deviation: `client: 'fetch'` was also removed from `kubb.config.ts`, not just `bundle: true`. Kubb 4.39.3 types `client?: never` when `importPath` is set. QA confirmed that the generated output is byte-identical either way.
+
+Findings (filed, not fixed):
+- **TRIGGERED DEBT**: on a 2xx, the client calls `response.json()` whenever the body is non-null. This behaviour is unchanged from the bundled Kubb client, because AC 4 required 2xx handling to stay the same. Three cases throw a raw `SyntaxError`/`TypeError` instead of `ApiError`: a 200 with an empty-string body, a 200 HTML captive-portal page, and a connection drop partway through the body. So a hook's `error` can be something other than an `ApiError` at runtime, even though `ResponseErrorConfig = ApiError`. **Promotion trigger: `t-offline-queue-core`.** The first code that classifies thrown errors against the retry rule must either treat a non-`ApiError` as retry, or the client must wrap it.
+- **ORDINARY DEBT**: the AC 8 type assertions in `client.test.ts` only take effect under `tsc` (`npm run build`), not under `vitest run` (no `--typecheck`). The validation command enforces them today.
+- **ORDINARY DEBT**: `parseEnvelope` accepts any string `error.code`, exactly as AC 5 specifies. A code outside the six `ErrorCode` values, or an envelope with no message, would still be typed as a valid envelope. The server cannot emit such a code.
+
 ## t-frontend-slug-routing
 
 Implements Entry 18 (routes, `/` behaviour, paste screen accepting a full URL or a bare slug) and the cold-open half of Entry 19 (after each successful `GET /trips/{slug}`, persist `TripOut` to localStorage keyed by slug and pass it as `initialData`).
@@ -1159,6 +1168,8 @@ Rider-only, which deliberately departs from spec §6.1's literal wording (Entry 
 ## t-offline-queue-core
 
 Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.
+
+Inherited TRIGGERED DEBT (see `t-frontend-fetch-client` closeout): a 2xx with a non-JSON body, or a connection drop partway through the body, throws a raw `SyntaxError`/`TypeError`, not `ApiError`. Retry classification must treat any non-`ApiError` as retry, or the client must wrap it.
 
 ## t-photo-capture-processing
 
