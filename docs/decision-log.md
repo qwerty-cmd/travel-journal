@@ -41,6 +41,7 @@ empirically disproves another.
 | 18 | M3 URL shape and first open: `/t/$slug`, and the paste-link screen at `/` | `frontend/src/routes/`, `vite.config.ts` (manifest), `docs/user-guide.md` | **Architect ruling (delegated by user, final).** Trip routes are `/t/$slug`. `/` redirects to localStorage `lastSlug`, or shows a one-field "paste your trip link" screen. Reason: an installed iOS web app has storage isolated from Safari and opens at `start_url` `/`, so `lastSlug` is empty on first launch. The same isolation applies to IndexedDB, so the user guide must say "capture from the installed app". The display-name prompt shows **only for `access === "rider"`**, which departs from the literal wording of spec §6.1. Rejected: `/$slug`, a per-trip dynamic manifest, and omitting `start_url`. **MEDIUM confidence on iOS `start_url`**, to verify on a real device in M4 |
 | 19 | M3 offline queue: one IndexedDB store drained FIFO from the page, with retry classification | `frontend/src/` (queue module), `api-contract.md` | **Architect ruling (delegated by user, final).** One auto-increment store holding `{kind, payload, blob?, attempts, lastError}`. A stop is always enqueued before its photos, so FIFO order replaces a dependency graph. The page drains the queue (**never SW Background Sync, which iOS lacks**) and stops at the first retryable failure, with backoff from 5s doubling to a 5min cap. Offline cold open works from TripOut persisted per slug and passed as `initialData`. Rejected: per-entity stores, Background Sync, and persisting the whole Query cache. The contract adds `403`/`404` as never-retry, treats no-envelope failures as retry, and keeps a failed item (blob included) until the rider dismisses it |
 | 20 | Photo upload is one idempotent request; the "resumable multipart" requirement is amended | `routes/photos.py`, `api-contract.md`, spec §4, `CLAUDE.md` Stack | **Architect ruling (delegated by user, final). Changes a sentence in CLAUDE.md's locked Stack section**, but not the technology (still S3), so it is flagged for the user's morning review. S3/R2 multipart parts must be ≥5 MiB except the last. A ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Spec §4's two lines cannot both hold, and compression wins. Resumability lives in the queue: the blob persists in IndexedDB, and a replay is `200` with no storage write, over a deterministic key. Rejected: presigned direct multipart and backend-proxied multipart (both still can't resume <5 MiB). **Supersedes** `t-photo-s3-multipart-upload`'s Gate 1 filing |
+| 21 | Write-PIN declined; the rider link stays the only write gate | spec §8, `offline/queue.ts`, `seed_trip.py`, `progress.json` | **Architect ruling (HIGH confidence, no escalation), flagged for the user's morning review because it closes spec §8's open item.** Spec calls the PIN optional everywhere. The rider slug is 256 random bits, so the only threat is a forwarded link, and a PIN is usually forwarded with it. **The PIN lost on cost:** `FORBIDDEN` is never-retry, so a wrong or rotated PIN would permanently fail every queued stop and photo. A safe version needs a 7th `ErrorCode`, a paused-queue state, a prompt UI, per-origin storage and a brute-force policy, all in the top-rigor queue. Mitigation instead: rotate `rider_slug` with one SQL `UPDATE`. Reopen trigger and reopen design are in the body. Spec file left untouched (Entry 20 policy) |
 
 ---
 
@@ -1814,3 +1815,66 @@ same `id`.
 - **Rationale beside the code:** anyone reopening this would do it in `routes/photos.py`. When
   `t-photo-upload-stream-to-s3` touches that block, the comment there should cite this entry, so that
   "add resumable multipart here" is not re-proposed without the 5 MiB constraint in view.
+
+---
+
+## 21. Write-PIN declined — the rider link stays the only write gate
+
+**Ruling:** architect, 2026-09-29, HIGH confidence, **no escalation**. This resolves the open item in
+spec §8 ("Write-PIN or trust the rider link as-is"). The answer is: trust the rider link.
+
+> **FLAG FOR THE USER'S MORNING REVIEW:** this closes an open item you listed in spec §8. The spec file
+> is **deliberately left untouched**, the same policy as Entry 20: this entry is what supersedes the
+> spec. `s-write-pin` is closed as `done`, resolved by decision, with no code.
+
+**Who disagreed:** the spec's optional PIN (spec L50 "Optional: a write-PIN on top of the rider link, in
+case it gets forwarded past the trip group"; L86 "write-PIN if wanted"; §8 L93) vs the architect.
+Declining it violates nothing, because the spec calls it optional in every place it appears.
+
+### The position that lost: add a write-PIN
+
+The case for it is fair. A rider link forwarded outside the group gives full write access, and a PIN
+would be a second factor that a forwarded link alone would not carry.
+
+### Why it lost
+
+- **The threat it covers is small.** The rider slug is `secrets.token_urlsafe(32)`
+  (`backend/app/data/seed_trip.py` ~L429), 256 bits, so it cannot be guessed. The only way in is a
+  forwarded link. A PIN helps only if it is *not* forwarded along with the link, and in a small group
+  chat it usually is.
+- **The cost lands in the offline queue, the highest-rigor area.** `FORBIDDEN` is never-retry
+  (`api-contract.md` ~L124; `isNeverRetry` in `frontend/src/offline/queue.ts`). A wrong or rotated PIN
+  would therefore **permanently fail every queued stop and its photos**. A safe version needs all of
+  these: a 7th `ErrorCode`, a paused-queue state, a PIN prompt UI, PIN storage per origin (the iOS
+  storage isolation in Entry 18), and a brute-force policy.
+
+### Mitigation instead: rotate the slug
+
+If a rider link leaks, rotate `trips.rider_slug` with one SQL `UPDATE`. The seed script's "cannot be
+rotated" note is about the script, not the schema. After rotation:
+
+- the old slug returns `404 NOT_FOUND`, which is never-retry;
+- queued items made under the old slug fail visibly, with their blobs kept until the rider dismisses
+  them (the contract's "never-retry is not a silent drop");
+- riders open the new link.
+
+### Reopen trigger
+
+Reopen this only if **a leaked rider link is actually seen in use outside the group**, or the user
+wants writes gated **per person**.
+
+### Design if reopened
+
+Do not re-derive this. The agreed shape is:
+
+- `trips.write_pin_hash`: hashed and nullable. Set by a migration plus a seed-script argument, **not an
+  env var**.
+- An `X-Write-Pin` header on **every** rider write. A header works for both JSON and multipart bodies.
+- A new `PIN_REQUIRED` / `401` `ErrorCode`. The queue treats it as **pause the drain and prompt**,
+  never as a failure. This is the part that avoids the never-retry loss above.
+- The UI learns a PIN is needed from `TripOut.pinRequired`.
+- The PIN is stored per origin in `localStorage`.
+- A rate limit or lockout per slug.
+
+**Rationale beside the code:** a PIN would be added in `frontend/src/offline/queue.ts`
+(retry classification) and the rider write routes. Anyone reopening it should start from this entry.

@@ -1503,3 +1503,15 @@ Filed findings (ORDINARY DEBT, no promotion trigger, no `progress.json` rows):
 2. The section's `aria-label` is still "Unsent stops", though the section now counts pending photos too.
 
 NO DECISION-LOG ENTRY: nothing was contested.
+
+## s-write-pin
+
+**Closed as done: resolved by decision, no code.** Write-PIN was declined by an architect ruling. See decision-log **Entry 21** for the reasoning, the reopen trigger and the design to use if it is reopened. Spec §8's open item is answered by that entry. The spec file is left untouched on purpose (Entry 20 policy). Flagged for the user's morning review.
+
+## t-bikes-page-edit
+
+**Scoping decision: bike writes are online-only direct mutations, not queued.** The add and edit forms call the generated `useCreateBike` / `usePatchBike` hooks directly. They do not go through the offline queue.
+
+- The queue kinds stay `stop | photo` (decision-log Entry 19).
+- Bikes are entered before the trip, while riders are online, so offline bike writes are not needed.
+- Adding a `bike` queue kind would reopen Entry 19. Anyone proposing it must read that entry first.
