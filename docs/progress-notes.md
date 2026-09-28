@@ -34,7 +34,7 @@ STATUS REVERTED `done` -> `in_progress` 2026-09-16: the compose/Dockerfile/backe
 
 ## s-cloud-service-setup
 
-Touches OneDrive/.env/deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list. Known trap, empirically confirmed by QA: Neon's console connection string includes ?sslmode=require, which asyncpg rejects (it takes ssl=, not libpq's sslmode=). normalize_database_url in app/data/db.py passes the query string through untouched, so this fails at connect time with TypeError: connect() got an unexpected keyword argument 'sslmode' — which will look like a credentials problem and is not. Fix belongs in normalize_database_url when this story is picked up. Migration runner has only been exercised against local docker-compose Postgres 16, never Neon. The simple-query path is a wire-protocol feature rather than a vendor one so it should carry over, but that is untested.
+Touches OneDrive/.env/deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list. Known trap, empirically confirmed by QA, **now fixed by t-neon-sslmode-url**: Neon's console connection string includes ?sslmode=require (and channel_binding=require), which asyncpg rejects (it takes ssl=, not libpq's sslmode=). normalize_database_url in app/data/db.py used to pass the query string through untouched, which failed at connect time with TypeError: connect() got an unexpected keyword argument 'sslmode'. That error looks like a credentials problem and is not one. It now translates sslmode to ssl and drops channel_binding, so the Neon string can be pasted as-is. Neon connectivity itself is still untested live. Migration runner has only been exercised against local docker-compose Postgres 16, never Neon. The simple-query path is a wire-protocol feature rather than a vendor one so it should carry over, but that is untested.
 
 ## s-seed-trip-record
 
@@ -1591,3 +1591,26 @@ Things the drafts state that differ from what a reader might assume:
 - N1 — ORDINARY DEBT, predates this task: stderr stack traces from `queue.ts` `readAll` / `QueueNotice` appear in the Timeline, TripMap and routing tests.
 
 NO DECISION-LOG ENTRY: F1 was a QA finding that dev accepted and fixed, not a contested call.
+
+## t-neon-sslmode-url
+
+**Closeout (done).** Gate `triggered`, promoted by the user ahead of the cutover. Fixes the Neon sslmode trap recorded under s-cloud-service-setup.
+
+**What changed.** `normalize_database_url` in `backend/app/data/db.py` now rewrites the query string as well as the scheme:
+- libpq `sslmode=<mode>` becomes asyncpg `ssl=<mode>`;
+- `channel_binding` is dropped, because asyncpg 0.31.0's `connect()` has no such kwarg;
+- every other parameter is kept as-is. The scheme rewrite is unchanged. The function's docstring describes the new behaviour.
+
+**Why.** Neon's console string ends in `?sslmode=require&channel_binding=require`. SQLAlchemy's asyncpg dialect passes query params straight to `asyncpg.connect()` as kwargs, so the untranslated string failed at connect time with `TypeError: connect() got an unexpected keyword argument 'sslmode'`, which looks like a credentials problem. The Neon string can now go into `DATABASE_URL` unedited.
+
+**Tests.** `backend/tests/unit/test_normalize_database_url.py`, 15 tests. One runs the normalised URL through SQLAlchemy's asyncpg dialect `create_connect_args` and asserts that every resulting kwarg is a real `asyncpg.connect` parameter. Full suite: 594 passed.
+
+**QA.** PASS, no CURRENTLY BROKEN findings.
+
+**Filed, not implemented.**
+- TRIGGERED DEBT: a password containing an unencoded `?` or `#` now breaks `normalize_database_url`. `urlsplit` splits at the first `?`/`#`: a raw `?` makes `make_url` raise `ValueError`, and a raw `#` leaves `sslmode` untouched. Before this task, SQLAlchemy's lenient parser accepted a raw `?` in the password. No current URL has one: the compose password is `bike_trip`, and Neon passwords are `npg_` plus alphanumerics. **Trigger:** a `DATABASE_URL` whose password contains a raw `?` or `#`, for example a hand-set or rotated password. **Fix when it fires:** split the query after the last `@`, or require percent-encoded passwords in the runbook.
+- ORDINARY DEBT: URLs for other drivers (e.g. `postgresql+psycopg://...?sslmode=require`) also get `sslmode` rewritten to `ssl`, which psycopg rejects. psycopg is not used.
+- Note, pre-existing and not caused by this task: other libpq-only params (`connect_timeout`, `application_name`) still reach asyncpg as kwargs it rejects. No current `DATABASE_URL` carries them.
+- Gap: no live Neon connection has been verified. That is left to the cutover (runbook §4 is the first real connect).
+
+NO DECISION-LOG ENTRY: no contested call.

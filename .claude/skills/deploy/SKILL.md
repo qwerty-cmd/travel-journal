@@ -14,7 +14,7 @@ Deployment target is Azure Container Apps (free tier), built from the repo-root 
 
 **Every deploy:**
 1. Build the image from the repo-root `Dockerfile` (multi-stage: builds the frontend, then the Python runtime serves both).
-2. Push to a registry Container Apps can pull from.
+2. Push to GitHub Container Registry (GHCR) — the user's choice; ACR has no free tier and is not used.
 3. Update the Container App to the new image tag.
 4. Confirm `/api/health` responds and the SPA loads, before considering the deploy done.
 

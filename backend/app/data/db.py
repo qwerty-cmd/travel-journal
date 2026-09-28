@@ -6,6 +6,7 @@
 
 from collections.abc import AsyncIterator
 from typing import Annotated
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -15,7 +16,8 @@ from app.core.config import get_settings
 
 def normalize_database_url(url: str) -> str:
     """
-    Force a DATABASE_URL onto the asyncpg driver.
+    Force a DATABASE_URL onto the asyncpg driver, and translate libpq-only
+    query params into what asyncpg accepts.
 
     Both the local docker-compose Postgres and Neon hand out (and .env.example
     carries) a plain ``postgresql://`` URL — the standard libpq form that every
@@ -29,15 +31,35 @@ def normalize_database_url(url: str) -> str:
     requirement an implementation detail of data/ — which is the only module
     allowed to know what it's talking to (spec Section 4, portability).
 
-    A URL that already names a driver (``postgresql+asyncpg://``) is returned
-    untouched, so an explicit choice is never overridden.
+    A URL that already names a driver (``postgresql+asyncpg://``) keeps its
+    scheme, so an explicit choice is never overridden — but its query string
+    is still fixed below.
+
+    Neon's console string ends ``?sslmode=require&channel_binding=require``.
+    SQLAlchemy's asyncpg dialect passes query params straight through as
+    ``asyncpg.connect()`` kwargs, and asyncpg (0.31) takes neither: it spells
+    the SSL option ``ssl=`` and has no ``channel_binding`` at all. Left alone,
+    connecting fails with ``TypeError: connect() got an unexpected keyword
+    argument 'sslmode'`` — which reads like a credentials problem and is not.
+    So ``sslmode=<mode>`` becomes ``ssl=<mode>`` (asyncpg accepts the libpq
+    mode strings disable/allow/prefer/require/verify-ca/verify-full for
+    ``ssl``) and ``channel_binding`` is dropped. Every other param is kept.
     """
     if url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url[len("postgresql://") :]
-    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+    elif url.startswith("postgres://"):
         # Some providers still emit the legacy `postgres://` alias.
-        return "postgresql+asyncpg://" + url[len("postgres://") :]
-    return url
+        url = "postgresql+asyncpg://" + url[len("postgres://") :]
+
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    query = [
+        ("ssl" if key == "sslmode" else key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key != "channel_binding"
+    ]
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 
 _settings = get_settings()

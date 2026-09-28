@@ -124,7 +124,7 @@ These are triggered items: not started, and waiting for a specific event. Each o
 - `t-bare-409-envelope-bypass`: a bare `HTTPException(409)` skips `ApiError.conflict`.
 - `t-schema-type-drift-check`, `t-bike-order-collation`, `t-head-route-kwarg-divergence`: test-strength gaps.
 - `t-qa-mutation-hook`: agent tooling. Nothing enforces the qa scratch-tree rule.
-- Not yet filed as a task: the Neon `sslmode` handling in `normalize_database_url` (runbook §0; recorded under `s-cloud-service-setup`).
+- Neon's `sslmode`/`channel_binding` URL params: fixed in `normalize_database_url` (`t-neon-sslmode-url`); a password containing a raw `?` or `#` would now break the URL (triggered debt in that task's notes).
 
 ## Deploy and operations
 

@@ -19,14 +19,15 @@ Tick each box as you go.
 
 ## 0. Blockers to clear before starting
 
-- [ ] **You → dev (scoped by ba). The Neon `sslmode` trap.** Neon's console connection string ends in
-  `?sslmode=require`. asyncpg rejects that parameter, and `normalize_database_url` in
-  `backend/app/data/db.py` passes the query string through unchanged. The result is
-  `TypeError: connect() got an unexpected keyword argument 'sslmode'`, which looks like a credentials
-  problem but isn't one. See the `s-cloud-service-setup` note in `progress-notes.md`. The fix belongs in
-  `normalize_database_url`. Until it lands, the only workaround is to edit the secret value by hand. Neon
-  also adds a `channel_binding=` parameter, and asyncpg is likely to reject that too. Neither workaround
-  has been tested against Neon.
+- [x] **Fixed (`t-neon-sslmode-url`). The Neon `sslmode` trap.** Neon's console connection string ends in
+  `?sslmode=require&channel_binding=require`. asyncpg rejects both parameters. `normalize_database_url` in
+  `backend/app/data/db.py` now turns `sslmode` into asyncpg's `ssl` and drops `channel_binding`, so
+  **paste the Neon console string into `DATABASE_URL` as-is.** Don't edit it by hand. Caveats:
+  - A live Neon connection has still not been tested. Step 4 is the first real connect.
+  - If you ever set or rotate the password by hand, it must not contain a raw `?` or `#`.
+    Percent-encode those characters (`t-neon-sslmode-url` filed debt).
+  - If you still see `TypeError: connect() got an unexpected keyword argument ...`, that is a parameter
+    problem, not a credentials problem.
 - [ ] **You. The migration runner has never run against Neon**, only against local Postgres 16. Treat the
   first run in step 4 as the test.
 - [ ] **You → ba. Nothing schedules the OneDrive sync.** `python -m app.storage.onedrive_sync` does one
@@ -34,9 +35,10 @@ Tick each box as you go.
   exists in the repo. Decide how it will run in production, for example a Container Apps scheduled job or
   a manual run from your laptop, and have `ba` scope that decision. This does not block the app itself,
   because S3/R2 is the source of truth. It does mean nothing is archived until it is decided.
-- [ ] **You. Pick a container registry.** Azure Container Registry has no free tier. A free registry
-  such as GHCR also works; a private one needs a registry credential on the Container App. Approve the
-  choice before step 6.
+- [x] **Decided: the container registry is GitHub Container Registry (GHCR)**, by your choice. Azure
+  Container Registry (ACR) is not used, because it has no free tier. If the GHCR package is private, the
+  Container App needs a GHCR registry credential: a GitHub token with `read:packages`, stored as a secret
+  and never pasted into an agent session. A public package needs no credential.
 
 ## 1. Cloud service setup (story `s-cloud-service-setup`)
 
@@ -69,7 +71,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
 
 | Name | Kind | Source |
 |---|---|---|
-| `DATABASE_URL` | secret | Neon (see the sslmode blocker in step 0) |
+| `DATABASE_URL` | secret | Neon console string, pasted as-is (sslmode is handled, see step 0) |
 | `S3_ENDPOINT_URL` | secret | R2 account endpoint |
 | `S3_ACCESS_KEY_ID` | secret | R2 token |
 | `S3_SECRET_ACCESS_KEY` | secret | R2 token |
@@ -130,7 +132,7 @@ Only you do this, because it needs real `GRAPH_*` values.
 devops runs these steps after you have confirmed the cutover.
 
 - [ ] Build the image from the repo-root `Dockerfile` (from the fresh clone).
-- [ ] Push it to the registry you chose, with a unique tag. Don't reuse `latest`.
+- [ ] Push it to GHCR (`ghcr.io/<owner>/<image>`) with a unique tag. Don't reuse `latest`.
 - [ ] Update the Container App to use the new tag.
 - [ ] Note the revision name. It becomes the rollback target for the next deploy.
 
