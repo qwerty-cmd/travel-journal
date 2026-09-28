@@ -14,11 +14,26 @@ import { ApiError } from '../api/client'
 import { createStopApiTripsSlugStopsPost } from '../api/gen/clients/createStopApiTripsSlugStopsPost'
 import { listStopsApiTripsSlugStopsGetQueryKey } from '../api/gen/hooks/useListStopsApiTripsSlugStopsGet'
 import { getMapApiTripsSlugMapGetQueryKey } from '../api/gen/hooks/useGetMapApiTripsSlugMapGet'
+import { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from '../api/gen/clients/uploadPhotoApiTripsSlugStopsStopIdPhotosPost'
+import { listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey } from '../api/gen/hooks/useListPhotosApiTripsSlugStopsStopIdPhotosGet'
 import type { StopCreate } from '../api/gen/types/StopCreate'
+import type { BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost } from '../api/gen/types/BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost'
 
-// Photos join this union in t-offline-queue-photos.
 export type QueueItem = { kind: 'stop'; payload: { slug: string; data: StopCreate } }
-export type QueueEntry = QueueItem & { attempts: number; lastError: string | null; failed: boolean }
+type PhotoPayload = {
+  slug: string
+  stopId: string
+  stopName: string
+  data: Omit<BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost, 'file'>
+}
+/** A photo as handed to `enqueue`: `file` is the processed JPEG. */
+export type PhotoItem = { kind: 'photo'; payload: PhotoPayload; file: Blob }
+/**
+ * A photo is stored with its bytes as an ArrayBuffer (always image/jpeg), not a
+ * Blob — Blob-in-IndexedDB is unreliable in old Safari and in jsdom.
+ */
+type Meta = { attempts: number; lastError: string | null; failed: boolean }
+export type QueueEntry = (QueueItem | { kind: 'photo'; payload: PhotoPayload; blob: ArrayBuffer }) & Meta
 export type QueueRecord = QueueEntry & { key: number }
 
 const DB_NAME = 'btj-queue'
@@ -68,6 +83,25 @@ function readAll(): Promise<QueueRecord[]> {
 }
 
 const putEntry = ({ key, ...entry }: QueueRecord) => inTx('readwrite', (s) => void s.put(entry, key))
+
+/**
+ * Marks a never-retry stop failed and, in the same transaction, every pending
+ * photo of that stop — a photo whose stop was never created can never succeed,
+ * so it is failed without being sent.
+ */
+const failStop = ({ key, ...entry }: QueueRecord & { kind: 'stop' }) =>
+  inTx('readwrite', (s) => {
+    s.put(entry, key)
+    s.openCursor().onsuccess = (ev) => {
+      const cursor = (ev.target as IDBRequest<IDBCursorWithValue | null>).result
+      if (!cursor) return
+      const v = cursor.value as QueueEntry
+      if (v.kind === 'photo' && !v.failed && v.payload.stopId === entry.payload.data.id) {
+        cursor.update({ ...v, failed: true, lastError: `Not sent: stop "${entry.payload.data.name}" failed` })
+      }
+      cursor.continue()
+    }
+  })
 const deleteEntry = (key: number) => inTx('readwrite', (s) => void s.delete(key))
 
 // --- change notification -------------------------------------------------
@@ -89,10 +123,21 @@ export function subscribe(listener: Listener): () => void {
 
 // --- enqueue / dismiss ---------------------------------------------------
 
-/** Stores the item; resolves once the write has committed, then starts a drain. */
-export async function enqueue(item: QueueItem): Promise<void> {
-  const entry: QueueEntry = { ...item, attempts: 0, lastError: null, failed: false }
-  await inTx('readwrite', (s) => void s.add(entry))
+/**
+ * Stores the item(s) in one transaction — so a stop and its photos land
+ * together — and resolves once it has committed, then starts one drain.
+ */
+export async function enqueue(items: QueueItem | PhotoItem | (QueueItem | PhotoItem)[]): Promise<void> {
+  const meta: Meta = { attempts: 0, lastError: null, failed: false }
+  // Bytes are read before the transaction opens: an await inside it would let it auto-commit.
+  const entries: QueueEntry[] = await Promise.all(
+    [items].flat().map(async (item): Promise<QueueEntry> => {
+      if (item.kind === 'stop') return { ...item, ...meta }
+      const { file, ...rest } = item
+      return { ...rest, blob: await file.arrayBuffer(), ...meta }
+    }),
+  )
+  await inTx('readwrite', (s) => entries.forEach((e) => s.add(e)))
   trigger()
   await emit()
 }
@@ -140,15 +185,29 @@ function trigger(): void {
 async function drainOnce(): Promise<void> {
   for (const entry of await readAll()) {
     if (entry.failed) continue
-    const { slug, data } = entry.payload
+    const { slug } = entry.payload
     try {
-      await createStopApiTripsSlugStopsPost({ slug, data })
+      if (entry.kind === 'stop') {
+        await createStopApiTripsSlugStopsPost({ slug, data: entry.payload.data })
+      } else {
+        const { stopId, data } = entry.payload
+        const file = new Blob([entry.blob], { type: 'image/jpeg' })
+        await uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ slug, stop_id: stopId, data: { ...data, file } })
+      }
     } catch (err) {
       const attempts = entry.attempts + 1
       if (isNeverRetry(err)) {
-        await putEntry({ ...entry, attempts, failed: true, lastError: (err as ApiError).envelope!.error.message })
+        const failedEntry = { ...entry, attempts, failed: true, lastError: (err as ApiError).envelope!.error.message }
+        if (failedEntry.kind === 'photo') {
+          await putEntry(failedEntry)
+          await emit()
+          continue
+        }
+        await failStop(failedEntry)
         await emit()
-        continue
+        // This pass's snapshot still shows the cascaded photos as pending: re-read.
+        again = true
+        return
       }
       await putEntry({ ...entry, attempts, lastError: err instanceof Error ? err.message : String(err) })
       await emit()
@@ -160,6 +219,12 @@ async function drainOnce(): Promise<void> {
     failures = 0
     await deleteEntry(entry.key)
     await emit()
+    if (entry.kind === 'photo') {
+      queryClient?.invalidateQueries({
+        queryKey: listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ slug, stop_id: entry.payload.stopId }),
+      })
+      continue
+    }
     queryClient?.invalidateQueries({ queryKey: listStopsApiTripsSlugStopsGetQueryKey({ slug }) })
     queryClient?.invalidateQueries({ queryKey: getMapApiTripsSlugMapGetQueryKey({ slug }) })
   }

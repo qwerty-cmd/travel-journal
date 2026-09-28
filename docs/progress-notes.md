@@ -1420,3 +1420,34 @@ ba photo decisions (orchestrator-approved):
 1. **Photo bytes are stored as an ArrayBuffer.** The IndexedDB `blob` field holds an ArrayBuffer, and the type is always `image/jpeg`. At send time it is rebuilt with `new Blob([bytes], { type: "image/jpeg" })`. Reasons: Blob structured-clone is unreliable in jsdom, and this avoids old Safari bugs with Blobs in IndexedDB. If a cross-realm issue shows up, wrap the bytes in a `Uint8Array`.
 2. **A stop and its photos are enqueued in one transaction.** `enqueue` accepts an array. This means a stop that fails never-retry cannot be sent before its photos are stored. The cascade marks the photos failed in the same transaction.
 3. **Ladder rung (b) uses the device offset at pick time** (`now.getTimezoneOffset()`). Known limit: an old photo taken across a DST change is off by 1h.
+
+**Closeout (done, QA PASS on all 8 ACs, no CURRENTLY BROKEN findings).** `npm run build` exits 0; `npm test` passes 11 files / 249 tests, 18 of them in the new `frontend/src/offline/queuePhotos.test.tsx`. `queue.test.tsx` is unmodified (43 pass). `client.ts` and `package.json` are unchanged. The upload-call grep guard passes: no generated upload client call outside `src/api/gen` and `src/offline`, tests excluded. Validation is `cd frontend && npm run build && npm test`, with the build first.
+
+Files changed:
+- `frontend/src/offline/queue.ts`. Photo entries live in the same `btj-queue`/`entries` store. New exported input type `PhotoItem`: `{ kind: "photo", payload: { slug, stopId, stopName, data: { id, uploadedBy, takenAt } }, file: Blob }`. It is stored with `blob: ArrayBuffer` (always `image/jpeg`) plus `attempts`, `lastError` and `failed`. `enqueue` accepts a `QueueItem`, a `PhotoItem`, or an array of them.
+- `frontend/src/offline/QueueNotice.tsx`. Photo entries are labelled `Photo for <stopName>` in both the failed and the still-trying lists.
+- `frontend/src/offline/queuePhotos.test.tsx` (new, test-writer).
+
+Behaviour notes:
+- `enqueue` reads every photo's bytes **before** the transaction opens, because an `await` inside an IndexedDB transaction auto-commits it. All entries are then added in one readwrite transaction; `enqueue` resolves after the commit and triggers one drain.
+- The drain is FIFO by store key across both kinds. A photo is rebuilt as `new Blob([blob], { type: "image/jpeg" })` and sent through the generated `uploadPhotoApiTripsSlugStopsStopIdPhotosPost`. Retry classification and backoff are the same path as stops (`isNeverRetry`, 5s doubling to 5min).
+- A photo 2xx (`201`, or `200` on replay) deletes the entry and invalidates `listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ slug, stop_id })`.
+- A stop that fails never-retry goes through `failStop`: one transaction marks the stop failed and cursors the store, marking that stop's not-yet-failed photos failed with `lastError` `Not sent: stop "<name>" failed`. The current drain pass then ends and makes another pass (`again`), because its snapshot still listed those photos as pending. dev's own smoke check caught this before the tests did.
+
+Scope notes: the exported `QueueItem` deliberately stays the stop-only type. Widening it to a union broke type-checking of the out-of-scope `src/addStop.test.tsx`, whose `enqueue` mock is typed `(item: QueueItem)`. `PhotoItem` sits beside it. `t-add-stop-photo-attach` will call `enqueue([stopEntry, ...photoEntries])`. Known limits: tests run on jsdom with fake-indexeddb only, so there is no real-browser test of IndexedDB byte storage; no test targets "bytes read before the transaction opens" directly (it is caught indirectly); backoff is not re-tested for photos, since the path is shared.
+
+QA mutation run: 34 valid mutants, 29 killed at first. test-writer then closed two test gaps, the cascade's `stopId` scope (mutant a6) and the continuation of a single triggered pass past a never-retry failure (mutants c5 and a3); all three are now killed. Survivors: d6 (a photo 2xx also invalidating the `/stops` and `/map` keys; harmless over-invalidation, close to equivalent) and e4 (killed by `queue.test.tsx`).
+
+Filed findings (ORDINARY DEBT, not fixed, no `progress.json` rows):
+- Mutant a3 (no re-read after a stop fails) is not killed by `queue.test.tsx` for stop-only queues. It is harmless there, and `queuePhotos.test.tsx` covers it for photos.
+- `QueueItem` naming: it is the stop item, while `PhotoItem` sits beside it. Renaming to a union means touching `addStop.test.tsx`; the natural moment is `t-add-stop-photo-attach`.
+- Pre-existing F3 from `t-offline-queue-core`: about 31 "indexedDB is not defined" stderr lines from tests that render the real root.
+
+Frontend doc:
+- **Design feature.** Photos go through the same offline queue as stops, so a photo taken with no signal survives a reload or app restart and uploads when the connection returns. A photo is sent after its stop (FIFO), and it is removed from the device only once the server confirms it. If its stop is rejected for good, the photo is never sent: it shows in the notice as failed ("Photo for <stop name>") with the reason `Not sent: stop "<name>" failed`, and the rider can dismiss it.
+- **Design format.**
+  - `offline/queue.ts`: `enqueue(item | item[])` takes stop items (`QueueItem`) and photo items (`PhotoItem`, carrying the processed JPEG `Blob` from `photo.ts`). Photo bytes are stored as an `ArrayBuffer` and rebuilt as an `image/jpeg` Blob at send time (ba decision 1). A stop and its photos enqueued together share one transaction (ba decision 2). The cascade on a failed stop happens in one transaction in `failStop`.
+  - `offline/QueueNotice.tsx`: photo entries are labelled `Photo for <stopName>`; stop entries are unchanged.
+- **APIs called.** `POST /api/trips/{slug}/stops/{stop_id}/photos` (multipart `id`, `uploadedBy`, `takenAt`, `file`) through the generated `uploadPhotoApiTripsSlugStopsStopIdPhotosPost`, never a hand-written fetch. A `200` replay of an already-uploaded photo counts as success. On success it invalidates the stop's photo list query.
+
+NO DECISION-LOG ENTRY: the design choices were orchestrator-approved ba decisions (above), not contested calls.

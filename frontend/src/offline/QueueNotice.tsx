@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { dismiss, subscribe, type QueueRecord } from "./queue";
 
+const label = (e: QueueRecord) => (e.kind === "photo" ? `Photo for ${e.payload.stopName}` : e.payload.data.name);
+
 /**
  * The rider's view of queued writes that need attention (docs/api-contract.md,
  * Error envelope): every failed entry until dismissed, and every entry still
@@ -19,7 +21,7 @@ export function QueueNotice() {
       <ul>
         {failed.map((e) => (
           <li key={e.key}>
-            <strong>{e.payload.data.name}</strong> could not be sent: {e.lastError}{" "}
+            <strong>{label(e)}</strong> could not be sent: {e.lastError}{" "}
             <button type="button" onClick={() => dismiss(e.key).catch(console.error)}>
               Dismiss
             </button>
@@ -27,7 +29,7 @@ export function QueueNotice() {
         ))}
         {stuck.map((e) => (
           <li key={e.key}>
-            <strong>{e.payload.data.name}</strong> still trying: {e.lastError}
+            <strong>{label(e)}</strong> still trying: {e.lastError}
           </li>
         ))}
       </ul>
