@@ -1328,6 +1328,47 @@ Architect ruling R4. This needed no decision-log entry because nothing was conte
 - **Rejected:** a HEIC wasm library (>1 MB for a case iOS already handles), and the `exifr` dependency.
 - **Known limit:** a 48MP source is decoded at full size before downscaling, which costs memory on older phones.
 
+### Closeout (status done)
+
+qa passed all 6 acceptance criteria. test-writer wrote 38 tests in `frontend/src/photo.test.ts`. Files: `frontend/src/photo.ts`, `frontend/src/photo.test.ts`.
+
+Frontend doc:
+- **Design feature.** Photo capture processing (`frontend/src/photo.ts`, architect ruling R4). It turns a picked photo into an upload-ready JPEG and a `takenAt` that always has a timezone. It has no UI and no queue integration yet. t-offline-queue-photos and t-add-stop-photo-attach will call it.
+- **Design format.**
+  - `processPhoto(file, now = new Date())` returns `{ blob, takenAt }`. It runs in the browser only, in this order:
+    1. It reads the first 128 KiB of the **original** file with `file.slice(0, 131072)` and parses EXIF from it, because re-encoding strips EXIF.
+    2. It calls `createImageBitmap(file, { imageOrientation: "from-image" })`, which applies EXIF orientation.
+    3. It draws onto a canvas sized by `fitWithin`: at most 1600px on the long edge, never upscaled.
+    4. It calls `toBlob("image/jpeg", 0.82)`.
+  - It throws `PhotoDecodeError` if decoding fails (for example HEIC on desktop Chrome), if there is no 2D context, or if `toBlob` returns null. Callers show the error at pick time and do not queue. iOS already transcodes HEIC to JPEG with `<input accept="image/*">`.
+  - `parseExifTimes(buf)` is hand-written; exifr and a HEIC wasm library were rejected. It walks SOI, then APP1 "Exif", then the TIFF byte order (MM/II), then IFD0, then ExifIFD (`0x8769`), then `0x9003` DateTimeOriginal and `0x9011` OffsetTimeOriginal. It never throws. A tag in the wrong format or out of bounds counts as absent.
+  - `composeTakenAt(exif, now)` follows the contract ladder: (a) EXIF time + EXIF offset; (b) EXIF time + the device offset at pick time (`now.getTimezoneOffset()`); (c) `now.toISOString()`. Every output ends in `Z` or `±HH:MM`. The server rejects naive values, and Kubb types `takenAt` as a plain string, so nothing else on the client would catch a missing offset.
+  - `fitWithin(w, h, max = 1600)` returns integer dimensions, scaled down and never up.
+- **Known limits.**
+  - jsdom cannot check real decoding, EXIF orientation or JPEG output. `createImageBitmap` and canvas are stubbed, so the tests verify only the call arguments and sizes. This needs a manual check on a device.
+  - A 48MP source is decoded at full size.
+  - Rung (b) uses the current device offset, so an old photo taken across a DST change is off by 1h.
+  - EXIF is read only from the first 128 KiB.
+- **APIs called.** None directly. `takenAt` feeds `POST /api/trips/{slug}/stops/{id}/photos` (generated `uploadPhotoApiTripsSlugStopsStopIdPhotosPost`) through t-offline-queue-photos.
+
+Findings:
+1. TRIGGERED DEBT, filed as `t-photo-exif-invalid-values` (see that section).
+2. ORDINARY DEBT: `fitWithin(4000, 1)` returns `(1600, 0)`, so `toBlob` returns null and the caller gets a misleading `PhotoDecodeError`. No real camera produces that shape. Not filed as a task.
+
+## t-photo-exif-invalid-values
+
+Gate: TRIGGERED DEBT, found during t-photo-capture-processing.
+
+- **Problem.** Some EXIF values pass the format check but are not real dates or offsets, e.g. DateTimeOriginal `2026:02:31 10:00:00`, or offsets `+99:99` and `+24:00`. They pass through into `takenAt`. The server rejects them with 422 (`AwareDatetime`, `backend/app/api/routes/photos.py:152`), which is never-retry, so the photo is marked failed instead of falling through to the next rung of the ladder.
+- **Trigger.** t-offline-queue-photos wires `processPhoto` into upload.
+- **Fix.** In `frontend/src/photo.ts`, treat a date that is not a real calendar date, or an offset beyond ±14:00 or with minutes > 59, as absent. The ladder then falls through to the next rung.
+- **Promotion.** t-offline-queue-photos is the next task, so this is promoted now. It blocks t-offline-queue-photos.
+
 ## t-offline-queue-photos
 
 Same store as stops (Entry 19). The blob is persisted with the entry. An entry is marked uploaded only on a 2xx. If a stop fails never-retry, its photos fail with it and are never sent. Upload is one request per photo, retried in full with the same `id` (Entry 20).
+
+ba photo decisions (orchestrator-approved):
+1. **Photo bytes are stored as an ArrayBuffer.** The IndexedDB `blob` field holds an ArrayBuffer, and the type is always `image/jpeg`. At send time it is rebuilt with `new Blob([bytes], { type: "image/jpeg" })`. Reasons: Blob structured-clone is unreliable in jsdom, and this avoids old Safari bugs with Blobs in IndexedDB. If a cross-realm issue shows up, wrap the bytes in a `Uint8Array`.
+2. **A stop and its photos are enqueued in one transaction.** `enqueue` accepts an array. This means a stop that fails never-retry cannot be sent before its photos are stored. The cascade marks the photos failed in the same transaction.
+3. **Ladder rung (b) uses the device offset at pick time** (`now.getTimezoneOffset()`). Known limit: an old photo taken across a DST change is off by 1h.
