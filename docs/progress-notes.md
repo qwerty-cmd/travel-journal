@@ -1559,6 +1559,28 @@ NO DECISION-LOG ENTRY: nothing was contested.
   - The form keeps the rider's input on every error.
 - Refetch placement: the trip invalidation (`getTripApiTripsSlugGetQueryKey({ slug })`) is in the hook-level `mutation.onSuccess`, not the per-`mutate()` callback. TanStack Query v5 skips per-call callbacks once the observer unmounts, so a Cancel or navigation while a request was pending would have left the list stale. QA found this as F1; fixed in this task, with two regression tests that fail when the invalidation is moved back into the per-`mutate()` callback. The rationale also lives as a comment beside the hook calls in `BikeForm`.
 
+## t-deploy-cutover-runbook
+
+**Closeout (done).** docs/deploy-cutover-runbook.md: ordered human checklist, no secret values, each step marked You / devops (after approval) / dev. §0 blockers (Neon sslmode trap in normalize_database_url — already recorded under s-cloud-service-setup, fix when that story is picked up; nothing schedules `python -m app.storage.onedrive_sync` — ba must scope a scheduler, likely a Container Apps Job, infra needs approval; registry choice is a billing decision — ACR has no free tier, GHCR is free). §1 cloud setup (budget alert first; Neon; R2 — no CORS needed per Entry 20; Graph app + consent; Container Apps env in multiple-revision mode for traffic-shift rollback). §2 secret names table. §3 pre-deploy checks (fresh-clone build, both suites, client drift check, local prod-image smoke). §4 seed against Neon (migrate then seed_trip; slugs recovered by SQL, never delete-and-reseed). §5 t-onedrive-preflight-check. §6 deploy per the deploy skill. §7 post-deploy (HTTPS required for SW/geolocation/randomUUID; the offline cold-open check left open by t-offline-app-shell AC3; share links; "capture from the installed app"). §8 rollback (forward-only schema caveat; slug rotation for a leaked link). Closing table: triggered-debt items the cutover fires — t-api-healthcheck-wiring, t-access-log-slug-exposure, t-dockerignore-route-tree, t-onedrive-preflight-check — with options and the notes' warnings (a fired trigger is not approval; main.py description= changes in the same patch; don't reconfigure uvicorn.access at import time).
+
+s-deploy-cutover stays in_progress: the human cutover itself remains.
+
+## t-real-device-test-plan
+
+**Closeout (done).** docs/real-device-test-plan.md: 14 cases (steps, expected, pass/fail box); requires the prod HTTPS URL. iOS install/start_url + paste-link (Entry 18, MEDIUM); rider vs viewer; airplane-mode capture → close → reopen → resync; installed app vs Safari storage isolation; offline cold open; GPS denied → map tap "approximate location"; GPS allowed; two riders saving at once; HEIC/portrait (upright, ≤1600px JPEG, EXIF takenAt with offset); stuck 10+ attempts "still trying"; failed + Dismiss incl. stop→photo cascade; slug rotation drill (Entry 21, user runs SQL in Neon, can restore); bikes view/add/edit/offline message; viewer access control (403). Expected strings taken from current frontend source.
+
+s-real-device-testing stays in_progress: the testing day itself remains.
+
+## t-handover-docs-draft
+
+**Closeout (done as a draft).** docs/user-guide.md (riders and viewers) and docs/architecture-handover.md (maintainer), both written from the built source (routes, offline/queue.ts, QueueNotice, core/security.py, main.py, config.py), not the spec. The prod URL and the deploy/operations section are TODO. The handover points to deploy-cutover-runbook.md. **Spec §10 says to finalise the handover once the site is live**, so s-handover-docs stays in_progress until after the cutover.
+
+Things the drafts state that differ from what a reader might assume:
+- **Offline viewing is thin.** Only `TripOut` (trip name and bikes) is persisted. Stops, the map and photos need the network, so an offline cold open shows the header, then "Map unavailable" and a failed stop list. Adding a stop still works. The user guide says so plainly.
+- **The map-tap fallback has no tiles offline.** A rider whose GPS fails with no signal taps a blank map. This is noted in the user guide. Not filed as a finding: the spec accepts "approximate location", and the real-device plan covers GPS denied.
+- **Diagram drift.** architecture-diagram.md shows OneDrive sync as "timer-triggered", but nothing schedules it (runbook §0). The handover flags this. The diagram was not edited, because the scheduler is unscoped and the diagram describes the intended shape. Correct it when the scheduler task lands.
+- The open-debt list in the handover is a one-line skim of the not_started `gate: triggered` items, plus t-onedrive-preflight-check and the unfiled Neon sslmode trap.
+
 **APIs called.**
 - `GET /api/trips/{slug}`, read from the cache the trip shell already loaded;
 - `POST /api/trips/{slug}/bikes` (`useCreateBikeApiTripsSlugBikesPost`);

@@ -3,7 +3,7 @@
     { "id": "m1-foundations", "title": "Week 1 — Architecture, Local Dev Env & API Contract", "status": "in_progress" },
     { "id": "m2-core-api", "title": "Week 2 — Core API (stops, photos, bikes, map)", "status": "in_progress" },
     { "id": "m3-frontend-pwa", "title": "Week 3 — Frontend PWA (map view, add-stop, offline queue)", "status": "done" },
-    { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "not_started" }
+    { "id": "m4-polish-deploy", "title": "Week 4 — Bikes UI, write-PIN, polish, real-device testing, deploy cutover", "status": "in_progress" }
   ],
   "stories": [
     { "id": "s-session0-scaffolding", "milestoneId": "m1-foundations", "title": "Session 0 — architecture scaffolding", "status": "done" },
@@ -30,9 +30,9 @@
     { "id": "s-frontend-bikes-page", "milestoneId": "m4-polish-deploy", "title": "Bikes page", "status": "done" },
     { "id": "s-write-pin", "milestoneId": "m4-polish-deploy", "title": "Optional write-PIN — declined, resolved by decision (decision-log 21), no code", "status": "done" },
     { "id": "s-offline-indicator", "milestoneId": "m4-polish-deploy", "title": "Offline indicator UI", "status": "done" },
-    { "id": "s-real-device-testing", "milestoneId": "m4-polish-deploy", "title": "Real-device testing day", "status": "not_started" },
-    { "id": "s-deploy-cutover", "milestoneId": "m4-polish-deploy", "title": "Azure Container Apps production cutover", "status": "not_started" },
-    { "id": "s-handover-docs", "milestoneId": "m4-polish-deploy", "title": "Handover documentation", "status": "not_started" }
+    { "id": "s-real-device-testing", "milestoneId": "m4-polish-deploy", "title": "Real-device testing day", "status": "in_progress" },
+    { "id": "s-deploy-cutover", "milestoneId": "m4-polish-deploy", "title": "Azure Container Apps production cutover", "status": "in_progress" },
+    { "id": "s-handover-docs", "milestoneId": "m4-polish-deploy", "title": "Handover documentation", "status": "in_progress" }
   ],
   "tasks": [
     { "id": "t-session0-scaffolding", "storyId": "s-session0-scaffolding", "title": "Session 0 output", "status": "done", "agent": "orchestrator", "blockers": [] },
@@ -150,10 +150,10 @@
 
     { "id": "t-bikes-page-list", "storyId": "s-frontend-bikes-page", "title": "/t/$slug/bikes read-only list from TripOut.bikes, linked from trip home", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-bikes-page-edit", "storyId": "s-frontend-bikes-page", "title": "Rider-only add/edit bike forms (online-only direct mutations, not queued)", "status": "done", "agent": "dev", "blockers": ["t-bikes-page-list"], "gate": "none" },
-    { "id": "t-deploy-cutover-runbook", "storyId": "s-deploy-cutover", "title": "Draft the human deploy-cutover runbook (no infra/.env changes)", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },
-    { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },
-    { "id": "t-handover-docs-draft", "storyId": "s-handover-docs", "title": "Draft user guide + architecture handover from the built code; prod URL/deploy sections TODO", "status": "not_started", "agent": "docs", "blockers": ["t-bikes-page-edit"], "gate": "none" }
+    { "id": "t-deploy-cutover-runbook", "storyId": "s-deploy-cutover", "title": "Draft the human deploy-cutover runbook (no infra/.env changes)", "status": "done", "agent": "docs", "blockers": [], "gate": "none" },
+    { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "done", "agent": "docs", "blockers": [], "gate": "none" },
+    { "id": "t-handover-docs-draft", "storyId": "s-handover-docs", "title": "Draft user guide + architecture handover from the built code; prod URL/deploy sections TODO", "status": "done", "agent": "docs", "blockers": ["t-bikes-page-edit"], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T23:45:00Z"
+  "lastUpdated": "2026-09-29T23:59:00Z"
 }
