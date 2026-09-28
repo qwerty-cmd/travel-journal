@@ -38,6 +38,9 @@ empirically disproves another.
 | 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. The photo form's `takenAt` was explicitly **left open** here on an EXIF premise — **since ruled the same way by Entry 16, independently, after that premise was tested and failed**; do not cite this entry for it |
 | 16 | The photo form's `takenAt` must be timezone-aware — and `PhotoCreateForm` is deleted, not bound | `api-contract.md`, `routes/photos.py`, `models/photo.py` | Two losing arguments. (a) **The EXIF objection, disproved:** "`DateTimeOriginal` is naive by design so reject-naive may be unsatisfiable" — EXIF is never the wire source, the frontend composes the field and `getTimezoneOffset()` is always available. (b) **The gate classification was wrong:** filed TRIGGERED on "no route imports `PhotoCreateForm`" — true of the model, false of the behaviour, because `photos.py` re-declared `takenAt: datetime` inline. **"No route imports it" is not "no route implements it."** Measured: a naive value is resolved in the *host process's* zone by asyncpg, so the same upload stored `02:00Z` on a UTC+8 host and `10:00Z` in the container. Binding a form model was proven impossible on FastAPI 0.141.1 (`_should_embed_body_fields` returns `True` unconditionally past one body field), so the pre-authorised fallback shipped: model deleted, inline `Form(...)` params are the contract |
 | 17 | `ErrorEnvelope` in the OpenAPI document — the unreachable GET `422`, and the SPA catch-all | `api/responses.py`, `routes/*.py`, `main.py`, `api-contract.md` | Gate 3 item promoted before M3: its trigger (`s-stop-crud`) had fired and lapsed, and Kubb would have typed errors `ErrorEnvelope \| HTTPValidationError`. One constant (403/404/409/422; **405/500 never declared**), model from the constant, description from the route. **"Declare only reachable statuses" lost**: an undeclared `422` gets FastAPI's `HTTPValidationError`, so the four GETs declare an unreachable envelope `422` and deliberately differ from the contract table. The brief's "catch-alls out of scope" premise was disproved: the SPA fallback (registered only when `frontend/dist` exists) re-injected `HTTPValidationError` — `include_in_schema=False` added, qa mutant confirms |
+| 18 | M3 URL shape and first open: `/t/$slug`, and the paste-link screen at `/` | `frontend/src/routes/`, `vite.config.ts` (manifest), `docs/user-guide.md` | **Architect ruling (delegated by user, final).** Trip routes are `/t/$slug`. `/` redirects to localStorage `lastSlug`, or shows a one-field "paste your trip link" screen. Reason: an installed iOS web app has storage isolated from Safari and opens at `start_url` `/`, so `lastSlug` is empty on first launch. The same isolation applies to IndexedDB, so the user guide must say "capture from the installed app". The display-name prompt shows **only for `access === "rider"`**, which departs from the literal wording of spec §6.1. Rejected: `/$slug`, a per-trip dynamic manifest, and omitting `start_url`. **MEDIUM confidence on iOS `start_url`**, to verify on a real device in M4 |
+| 19 | M3 offline queue: one IndexedDB store drained FIFO from the page, with retry classification | `frontend/src/` (queue module), `api-contract.md` | **Architect ruling (delegated by user, final).** One auto-increment store holding `{kind, payload, blob?, attempts, lastError}`. A stop is always enqueued before its photos, so FIFO order replaces a dependency graph. The page drains the queue (**never SW Background Sync, which iOS lacks**) and stops at the first retryable failure, with backoff from 5s doubling to a 5min cap. Offline cold open works from TripOut persisted per slug and passed as `initialData`. Rejected: per-entity stores, Background Sync, and persisting the whole Query cache. The contract adds `403`/`404` as never-retry, treats no-envelope failures as retry, and keeps a failed item (blob included) until the rider dismisses it |
+| 20 | Photo upload is one idempotent request; the "resumable multipart" requirement is amended | `routes/photos.py`, `api-contract.md`, spec §4, `CLAUDE.md` Stack | **Architect ruling (delegated by user, final). Changes a sentence in CLAUDE.md's locked Stack section**, but not the technology (still S3), so it is flagged for the user's morning review. S3/R2 multipart parts must be ≥5 MiB except the last. A ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Spec §4's two lines cannot both hold, and compression wins. Resumability lives in the queue: the blob persists in IndexedDB, and a replay is `200` with no storage write, over a deterministic key. Rejected: presigned direct multipart and backend-proxied multipart (both still can't resume <5 MiB). **Supersedes** `t-photo-s3-multipart-upload`'s Gate 1 filing |
 
 ---
 
@@ -1661,3 +1664,153 @@ status sets, the `200` replay entries and the GET `422` wording. 6 of the 18 fai
 HEAD. qa diffed the pre- and post-patch spec: existing descriptions are byte-identical, and the only
 additions are the four GET `422`s. The rationale for the constant sits in the docstring of
 `backend/app/api/responses.py`, which is where an agent would go to add a `405` or a non-envelope model.
+
+---
+
+## 18. M3 URL shape and first open — `/t/$slug`, and what `/` does when there is no slug to go to
+
+**Ruling:** architect, 2026-09-28. The user was away overnight and delegated contentious calls to the
+architect, so this ruling is **final**. It records a contested design choice made before M3 was
+scoped: several plausible shapes competed, and one of them departs from the literal spec. No code
+exists yet. Recorded by `docs` together with the M3 task rows in `progress.json`.
+
+### The ruling
+
+- Trip routes live at **`/t/$slug`**. Stop detail is `/t/$slug/stops/$stopId`.
+- **`/`** redirects to the `lastSlug` stored in localStorage. If there is none, `/` shows a one-field
+  **"paste your trip link"** screen. It accepts either a full URL or a bare slug.
+- The **display-name prompt is shown only when `TripOut.access === "rider"`**. The name only fills
+  `uploadedBy`, and a viewer cannot write, so asking a viewer for it collects nothing. This is a
+  **deliberate departure from spec §6.1's literal wording**, which prompts on every first open.
+
+### Why `/` needs a screen at all: iOS storage isolation
+
+On iOS, a web app installed to the home screen does not share storage with Safari, and it opens at the
+manifest's `start_url`, which is `/`. So on the first launch after install, `lastSlug` is **empty**,
+even though the rider opened the trip link in Safari a minute earlier. Without the paste screen, that
+first launch would be a dead end. The paste screen exists for exactly that moment.
+
+**The same split applies to IndexedDB**, which means stops queued in Safari are not visible to the
+installed app, and the reverse is also true. `docs/user-guide.md` must tell riders to **capture from
+the installed app, not from Safari**.
+
+### Rejected
+
+- **`/$slug`**: this makes the root path namespace belong to the slug, so every future top-level route
+  (`/bikes`, or anything else) would collide with a possible slug.
+- **A dynamic per-trip manifest**, with the slug baked into `start_url`: this needs a new backend route
+  outside the eight contract endpoints. The client-side alternative, a blob-URL manifest, installs
+  unreliably.
+- **Omitting `start_url`**: Chrome will not offer to install the app.
+
+### Confidence and verification
+
+**MEDIUM on the iOS `start_url` behaviour.** The ruling rests on it, and it has not been observed on a
+real device. Verify it on `s-real-device-testing` (M4). If an installed app turns out to open at the
+page it was installed from, the paste screen becomes a rarely-seen fallback, and the ruling still holds.
+
+---
+
+## 19. M3 offline queue — one store, FIFO, drained from the page, with a retry classification
+
+**Ruling:** architect, 2026-09-28, delegated by the user, **final**. The competing designs were
+per-entity stores versus a single store, and a Service Worker sync versus a page drain. The ruling
+also closes gaps in the contract's retry rules that a queue implementation would otherwise have had to
+decide on its own.
+
+### The ruling
+
+- **One IndexedDB object store** with an auto-increment key, drained **FIFO, one entry at a time**.
+  Entry shape: `{kind: "stop" | "photo", payload, blob?, attempts, lastError}`.
+- **A stop is always enqueued before its photos**, so FIFO order already makes photos wait for their
+  stop. No dependency graph is needed.
+- **The page drains the queue, never a Service Worker via Background Sync**, because iOS does not
+  support Background Sync. A drain runs on app start, on `online`, on `visibilitychange` to visible,
+  and right after an enqueue. Only one drain runs per tab. If two tabs drain at once, nothing breaks,
+  because every replay is a `200`.
+- **The drain stops at the first retryable failure.** Backoff starts at 5s, doubles, and caps at 5min.
+  It resets on `online`. The drain does not check `navigator.onLine` first; it simply attempts.
+- **Offline cold open:** after each successful `GET /trips/{slug}`, the response (`TripOut`) is saved to
+  localStorage keyed by slug and passed to the query as `initialData`. vite-plugin-pwa precaches the
+  app shell. The app calls `navigator.storage.persist()` once.
+
+### Contract additions (now in `docs/api-contract.md`, Error envelope)
+
+- `FORBIDDEN` and `NOT_FOUND` are **never retry**. The client only queues a write under a slug it has
+  already seen resolve to `rider`, and a photo's stop is always sent first. So a `403` or `404` means
+  the trip or the parent stop is gone for good. If a stop fails with a never-retry code, its queued
+  photos fail with it and are never sent.
+- A failure with **no parseable envelope** is **retry**. This covers a network error, a timeout, or a
+  `502`/`503`/`504` HTML page from a proxy. Classification works on `code` alone, and a response with
+  no envelope has no code.
+- "Dequeued and surfaced" means the entry **moves to a failed state and stays in IndexedDB, blob
+  included, until the rider dismisses it**. It is never deleted automatically. After 10 or more failed
+  attempts, a still-retrying item is shown in the offline indicator along with its last error.
+
+### Rejected
+
+- **Per-entity stores** (stops, photos): these need ordering across stores to keep photos behind their
+  stop, which a single FIFO store gets for free.
+- **Service Worker Background Sync**: iOS does not support it, and iOS is the main capture device.
+- **Persisting the whole TanStack Query cache**: this needs a new dependency to restore one query that a
+  single localStorage key already covers.
+
+---
+
+## 20. Photo upload is one idempotent request — the "resumable multipart" requirement is amended
+
+**Ruling:** architect, 2026-09-28, delegated by the user, **final**. This ruling **contradicts two
+standing requirements**: spec §4 line 46 ("photo uploads use S3 multipart upload… resumes the multipart
+upload on the next attempt") and the Stack sentence in `CLAUDE.md` ("Multipart upload for photos
+(resumable on failure)"). It also overturns the Gate 1 (CURRENTLY BROKEN) classification recorded for
+`t-photo-s3-multipart-upload` on 2026-09-17.
+
+> **FLAG FOR THE USER'S MORNING REVIEW:** this changes a sentence in `CLAUDE.md`'s **locked Stack
+> section**. The technology does not change (still S3-compatible storage, MinIO locally, R2 in prod).
+> Only the upload mechanism changes. The orchestrator updates `CLAUDE.md` in the same patch. `docs` did
+> not edit it, and did not edit the spec.
+
+### Why the two spec lines cannot both be satisfied
+
+S3 and R2 require every multipart part **except the last to be at least 5 MiB**. Spec §4 also requires
+the client to compress photos to about 1600px on the long edge. A JPEG of that size is well **under
+1 MiB**, so it is always a single part. With one part, "resume from the parts already uploaded" has
+nothing to resume. The two lines cannot both hold. **Compression wins**, because it is what keeps
+uploads small on a weak mobile connection in the first place.
+
+### Where resumability actually lives
+
+Resumability moves from S3 parts to the offline queue:
+
+- The blob is stored in IndexedDB (Entry 19), so it survives an app restart.
+- A retry after the row already exists is a **replay**. It returns `200` and does not touch storage
+  (`backend/app/api/routes/photos.py`, the `find_existing` check at ~L170-174).
+- If the server crashes between the S3 put and the DB insert, an orphan object is left behind. The
+  retry overwrites it, because the object key `{trip_id}/{stop_id}/{photo_id}` is deterministic
+  (~L181-187).
+
+**Worst case, a dropped connection costs re-sending one photo under 1 MiB.**
+
+The `api-contract.md` photo upload notes now say this: one request per photo, retried in full with the
+same `id`.
+
+### Rejected
+
+- **Presigned direct-to-S3 multipart**: this needs bucket CORS in `infra/` (off-limits without
+  approval) and exposes provider upload ids and ETags to the client, which conflicts with the "only
+  `storage/` knows the provider" invariant. It still cannot resume anything under 5 MiB.
+- **Backend-proxied multipart**: this needs about three new endpoints (initiate, part, complete), which
+  breaks "Eight endpoints … No others". It has the same 5 MiB problem.
+
+### What follows from it
+
+- `t-photo-s3-multipart-upload` is closed as **superseded** (`progress.json` status `done`, and the
+  title says superseded).
+- The remaining real gap is memory, not resumability: the handler does `await file.read()` and holds
+  the whole body in memory. This is filed as `t-photo-upload-stream-to-s3` (TRIGGERED). It replaces the
+  read with `upload_fileobj`, which streams and switches to multipart automatically for large bodies.
+  Promotion event: a client path starts uploading uncompressed originals, or a request-size cap is
+  introduced.
+- **Rationale beside the code:** anyone reopening this would do it in `routes/photos.py`. When
+  `t-photo-upload-stream-to-s3` touches that block, the comment there should cite this entry, so that
+  "add resumable multipart here" is not re-proposed without the 5 MiB constraint in view.

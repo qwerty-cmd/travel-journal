@@ -815,6 +815,17 @@ STORY PLACEMENT. Filed under `s-offline-queue`, not `s-photo-upload-onedrive-syn
 
 BLOCKER. Not implementable until: (1) `s-offline-queue`'s IndexedDB/queue-state design exists, and (2) an `architect`/`ba` pre-flight picks backend-proxy vs. presigned-URL informed by that design. No acceptance criteria are written here on purpose — this task is not ready to be scoped for implementation.
 
+SUPERSEDED 2026-09-28 — closed `done` without implementation. The tracker has no `superseded` status, so the title says it. The architect ruling (delegated by the user, final) **amended the requirement** rather than scoping the design question above. S3/R2 multipart parts must be ≥5 MiB except the last. A client-compressed ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Resumability lives at the queue level instead: the blob persists in IndexedDB, a replay is `200` with no storage write, and the object key is deterministic. Both design options above (backend-proxy and presigned) were rejected. The Gate 1 classification above was right against the requirement as it was worded then. The requirement changed; the classification was not wrong. Full reasoning: `docs/decision-log.md` Entry 20. The in-memory `await file.read()` half of the EVIDENCE paragraph is still true, and is re-filed as `t-photo-upload-stream-to-s3`.
+
+## t-photo-upload-stream-to-s3
+
+FILED 2026-09-28 from the Entry 20 ruling. TRIGGERED DEBT (Gate 3).
+
+- Change: in `backend/app/api/routes/photos.py` (~L182-187), replace `file_bytes = await file.read()` + `s3.put_object(...)` with `s3.upload_fileobj(file.file, BUCKET_NAME, object_key)`, still run through `asyncio.to_thread`. This streams the body, and boto3 switches to multipart on its own for large bodies. The key stays deterministic, and the replay-before-upload order stays unchanged.
+- Why not now: every planned client sends a compressed JPEG under 1 MiB (R4, `t-photo-capture-processing`), so the memory held per request is small.
+- **Promotion event:** any client path starts uploading uncompressed originals, or a request-size cap is introduced.
+- When implemented, leave a comment at that block citing decision-log Entry 20. That block is where "add resumable multipart" would be re-proposed.
+
 ## t-photo-list-endpoint
 
 CLOSEOUT WRITTEN RETROACTIVELY 2026-09-16, same pass and same caveat as `t-photo-upload-endpoint`: no `dev`/`qa` report was recorded, this is read off the tree.
@@ -1105,3 +1116,45 @@ TWO TRIGGERED DEBT FINDINGS FROM qa, **NEITHER IMPLEMENTED** — a finding from 
 - Likely fix: a custom Kubb client (`importPath`) that throws when `!response.ok`. That would also be the natural home for (a).
 
 No decision-log entry: nothing was contested between agents.
+
+UPDATE 2026-09-28: (a) and (b) are now filed together as `t-frontend-fetch-client` (TRIGGERED, promoted). The trigger, "first hook consumer", is next in the M3 order.
+
+## s-offline-queue
+
+M3 SCOPED 2026-09-28 from the architect rulings (decision-log Entries 18-20). Tasks under this story: `t-offline-queue-core`, `t-offline-app-shell`, `t-photo-capture-processing`, `t-offline-queue-photos`. `t-photo-s3-multipart-upload` is closed as superseded.
+
+KNOWN LIMITS, accepted rather than scoped:
+- **Offline map tiles are out of scope.** An offline rider who falls back to placing a stop by map tap (`manual`) sees a blank map with no tiles. The tap still gives coordinates, but there are no visual landmarks.
+- **Secure context required.** The camera, geolocation and `crypto.randomUUID` only work in a secure context. Plain `http://<LAN-IP>` on a phone fails, and `localhost` on the dev machine works. This is a note for `s-real-device-testing`: test over HTTPS (a tunnel or a cert), not a bare LAN IP.
+- **Installed iOS app vs Safari storage is split** (Entry 18). A queue filled in Safari is invisible to the installed app. The user guide must say to capture from the installed app.
+
+## t-frontend-fetch-client
+
+Promoted from `t-frontend-kubb-client` findings (a) and (b). TRIGGERED, and the trigger is next: the first hook consumer is `t-frontend-slug-routing`. The client throws a typed error carrying the parsed `ErrorEnvelope`, or a distinct no-envelope error for network or non-JSON failures. The queue relies on that split: no envelope means retry (api-contract.md, Error envelope).
+
+## t-frontend-slug-routing
+
+Implements Entry 18 (routes, `/` behaviour, paste screen accepting a full URL or a bare slug) and the cold-open half of Entry 19 (after each successful `GET /trips/{slug}`, persist `TripOut` to localStorage keyed by slug and pass it as `initialData`).
+
+## t-frontend-display-name-prompt
+
+Rider-only, which deliberately departs from spec §6.1's literal wording (Entry 18). The name only fills `uploadedBy`.
+
+## t-offline-queue-core
+
+Entry 19 in full: one store, FIFO, page drain triggers, stop at the first retryable failure, backoff from 5s doubling to a 5min cap with a reset on `online`, and no `navigator.onLine` gate. Retry classification follows the api-contract.md Error envelope bullets, including `403`/`404` as never-retry and no-envelope failures as retry. Failed items stay in IndexedDB until dismissed.
+
+## t-photo-capture-processing
+
+Architect ruling R4. This needed no decision-log entry because nothing was contested with a standing requirement.
+
+- **Pipeline:** `createImageBitmap(file)` applies EXIF orientation, then draw to a canvas at 1600px on the long edge (**never upscale**), then `toBlob("image/jpeg", 0.82)`.
+- **HEIC:** iOS `<input accept="image/*">` already transcodes HEIC to JPEG. If decoding fails (for example HEIC on desktop Chrome), show the error **at pick time and do not queue**.
+- **EXIF, hand-parsed from the ORIGINAL file before re-encoding** (re-encoding strips it). Read `file.slice(0, 131072)`, then APP1, then the TIFF byte order, then IFD0, then ExifIFD (`0x8769`), then `0x9003` DateTimeOriginal and `0x9011` OffsetTimeOriginal. About 50 lines. Any parse failure falls through to the next rung of the contract's `takenAt` ladder (api-contract.md, "`takenAt` on the photo upload form must be timezone-aware").
+- **Test:** one unit test on a hand-built byte fixture.
+- **Rejected:** a HEIC wasm library (>1 MB for a case iOS already handles), and the `exifr` dependency.
+- **Known limit:** a 48MP source is decoded at full size before downscaling, which costs memory on older phones.
+
+## t-offline-queue-photos
+
+Same store as stops (Entry 19). The blob is persisted with the entry. An entry is marked uploaded only on a 2xx. If a stop fails never-retry, its photos fail with it and are never sent. Upload is one request per photo, retried in full with the same `id` (Entry 20).
