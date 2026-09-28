@@ -148,7 +148,7 @@
     { "id": "t-add-stop-photo-attach", "storyId": "s-frontend-add-stop-flow", "title": "Wire photo capture into the add-stop form", "status": "done", "agent": "dev", "blockers": ["t-frontend-add-stop-form", "t-offline-queue-photos"], "gate": "none" },
     { "id": "t-offline-indicator-pending", "storyId": "s-offline-indicator", "title": "QueueNotice shows queued/pending syncs (count by kind), not just failed and stuck ones", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
 
-    { "id": "t-bikes-page-list", "storyId": "s-frontend-bikes-page", "title": "/t/$slug/bikes read-only list from TripOut.bikes, linked from trip home", "status": "not_started", "agent": "dev", "blockers": [], "gate": "none" },
+    { "id": "t-bikes-page-list", "storyId": "s-frontend-bikes-page", "title": "/t/$slug/bikes read-only list from TripOut.bikes, linked from trip home", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-bikes-page-edit", "storyId": "s-frontend-bikes-page", "title": "Rider-only add/edit bike forms (online-only direct mutations, not queued)", "status": "not_started", "agent": "dev", "blockers": ["t-bikes-page-list"], "gate": "none" },
     { "id": "t-deploy-cutover-runbook", "storyId": "s-deploy-cutover", "title": "Draft the human deploy-cutover runbook (no infra/.env changes)", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "not_started", "agent": "docs", "blockers": [], "gate": "none" },

@@ -23,7 +23,10 @@ function TripHome() {
         <Link to="/t/$slug/add" params={{ slug }}>
           Add stop
         </Link>
-      )}
+      )}{" "}
+      <Link to="/t/$slug/bikes" params={{ slug }}>
+        Bikes
+      </Link>
       {map.isError ? <p>Map unavailable</p> : <TripMap collection={map.data} />}
       {stops.isPending ? (
         <p>Loading stops…</p>

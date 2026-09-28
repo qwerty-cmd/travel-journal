@@ -1508,6 +1508,27 @@ NO DECISION-LOG ENTRY: nothing was contested.
 
 **Closed as done: resolved by decision, no code.** Write-PIN was declined by an architect ruling. See decision-log **Entry 21** for the reasoning, the reopen trigger and the design to use if it is reopened. Spec §8's open item is answered by that entry. The spec file is left untouched on purpose (Entry 20 policy). Flagged for the user's morning review.
 
+## t-bikes-page-list
+
+**Closeout (done, QA PASS, all 9 ACs, no CURRENTLY BROKEN findings).** First of two tasks in `s-frontend-bikes-page`, so the story stays `in_progress` until `t-bikes-page-edit` is done. `cd frontend && npm run build && npm test`: build OK, 12 files / 274 tests pass. No backend or API change; no client regeneration.
+
+Files changed: `frontend/src/routes/t.$slug.bikes.tsx` (new), `frontend/src/routes/t.$slug.index.tsx`, `frontend/src/bikes.test.tsx` (new, test-writer).
+
+Frontend doc:
+- **Design feature.** Bikes page (spec Section 6) at `/t/$slug/bikes`, a child of the trip shell. It lists every bike on the trip, read-only. Rider and viewer see the same page with no write controls; add/edit comes in `t-bikes-page-edit`. The trip home (`t.$slug.index.tsx`) shows a "Bikes" link for both access values; the rider-only "Add stop" link is unchanged.
+- **Design format.**
+  - A "Back to trip" link, a "Bikes" heading, then one card per bike: rider name as the heading, then "make model (year)", then specs.
+  - Specs render in a `white-space: pre-wrap` paragraph so riders' line breaks are kept. When `specs` is `""` the paragraph is omitted entirely, not rendered empty.
+  - No bikes → "No bikes yet".
+  - **Sort order: the client sorts by `riderName.localeCompare`.** `TripOut.bikes` order is not contract: the `BikeOut.id` description says to "match bikes by id", so the server may return them in any order. Do not remove the sort on the assumption the API already orders them.
+- **APIs called.** No new request. The page calls `useGetTripApiTripsSlugGet({ slug }, { query: { refetchOnMount: false } })`, which reads the `GET /api/trips/{slug}` (`TripOut`) cache the trip shell's `useTrip` already loaded. Because the trip is persisted, the page works offline.
+
+Tests (`bikes.test.tsx`, 12 tests, AC1-8): QA ran 8 mutations; each was killed by at least one test. AC9 was verified by reading. One test-quality gap (the name-prompt test only asserted absence) was fixed in the test file during QA.
+
+Not tested: real-browser line-break rendering of specs. Only the inline `pre-wrap` style is asserted under jsdom. Covered by `s-real-device-testing`.
+
+NO DECISION-LOG ENTRY: nothing was contested.
+
 ## t-bikes-page-edit
 
 **Scoping decision: bike writes are online-only direct mutations, not queued.** The add and edit forms call the generated `useCreateBike` / `usePatchBike` hooks directly. They do not go through the offline queue.
