@@ -73,6 +73,9 @@ cd backend && uv run pytest
 # Frontend dev server (proxies /api to localhost:8000)
 cd frontend && npm install && npm run dev
 
+# Frontend tests (Vitest, jsdom)
+cd frontend && npm test
+
 # Regenerate frontend API client: dump the OpenAPI snapshot, then run Kubb on it
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api

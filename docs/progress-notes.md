@@ -1119,6 +1119,22 @@ No decision-log entry: nothing was contested between agents.
 
 UPDATE 2026-09-28: (a) and (b) are now filed together as `t-frontend-fetch-client` (TRIGGERED, promoted). The trigger, "first hook consumer", is next in the M3 order.
 
+## t-frontend-test-runner
+
+COMPLETED 2026-09-28, qa PASS on all 6 acceptance criteria, nothing CURRENTLY BROKEN. This unblocks `t-frontend-fetch-client` and `t-photo-capture-processing`. Story `s-frontend-first-open` stays `in_progress`.
+
+Files: `frontend/package.json` (script `"test": "vitest run"`; devDeps `vitest ^3.2.7`, `jsdom ^29.1.1`, `@testing-library/react ^16.3.3`), `frontend/package-lock.json`, `frontend/vitest.config.ts` (new), `frontend/src/smoke.test.tsx` (new).
+
+WHY A SEPARATE `vitest.config.ts` (do not fold it into `vite.config.ts`): Vitest prefers `vitest.config.ts` over `vite.config.ts`, so `tanstackRouter()` never loads during tests and test runs never regenerate `src/routeTree.gen.ts`. No React plugin is needed because esbuild compiles TSX using the tsconfig setting `jsx: react-jsx`. Globals are off, so `tsconfig` is untouched. Each test file therefore imports `test`/`expect` from `"vitest"` explicitly and calls `afterEach(cleanup)` itself. Later test tasks must follow the same pattern.
+
+VALIDATION (qa): `npm test` runs 1 test once and exits 0. `npm run build` (`vite build && tsc --noEmit`) passes, and it type-checks the test file. The `routeTree.gen.ts` hash and mtime are unchanged after a test run. `grep -r smoke dist/` finds nothing, so the test is not bundled. Mutating the asserted text, and separately the rendered text, each fails the test with `TestingLibraryElementError` (done in a scratch copy; the control run passes).
+
+CONTEXT, NOT A FINDING: jsdom environment setup takes about 26s of a roughly 34s run on the dev machine. Expect that fixed cost in later test tasks.
+
+ORDINARY DEBT, FILED NOT FIXED: `@testing-library/dom@10.4.2` is a required peer of RTL 16. npm installs it automatically (the lockfile marks it `"peer": true`), but `package.json` does not declare it. Promotion trigger: none. It only matters if the repo moves to a package manager or setting that does not auto-install peers (pnpm strict peers, `--legacy-peer-deps`). No `progress.json` row was filed.
+
+No decision-log entry: nothing was contested between agents.
+
 ## s-offline-queue
 
 M3 SCOPED 2026-09-28 from the architect rulings (decision-log Entries 18-20). Tasks under this story: `t-offline-queue-core`, `t-offline-app-shell`, `t-photo-capture-processing`, `t-offline-queue-photos`. `t-photo-s3-multipart-upload` is closed as superseded.
