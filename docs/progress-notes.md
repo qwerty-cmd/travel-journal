@@ -1931,6 +1931,8 @@ ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `a2a4579` review. Do not imple
 
 ## t-owner-compose-smoke-test
 
+DONE 2026-09-29 (owner). Section 1 of the owner checklist complete: `backend/.env` filled in, `docker compose up --build` working with the boto3 `minio-init`, a stop with a photo uploaded and shown locally, and the runbook §3 production-image smoke test (`docker build -t bike-trip-journal:smoke .` then `docker run` on the compose network, no bind mount) run by the owner.
+
 PARTIAL 2026-09-29 (owner). `docker compose up --build` now works end to end on the owner's machine: `minio-init` creates the bucket, the api starts, and a stop with a photo uploads through the app. The runbook §3 production-image smoke test (`docker build` + `docker run`, no bind mount) is still to do.
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production image locally with `docker run` against compose's Postgres and MinIO, as in runbook §3 (smoke test). Keep `-e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`, or photos won't load. Pass: `/api/health` `200`, `/` shows the paste-link screen, a local rider link renders the trip, and `docker ps` shows `(healthy)`.
