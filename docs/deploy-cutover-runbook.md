@@ -95,9 +95,13 @@ Tick each box as you go.
   The definition is drafted in `infra/azure/README.md` (`t-owner-container-app-definition`); running it
   needs your approval. Section "Container Apps environment and app", in order: the environment, the
   Container App (the step 2 secrets marked "App + Job"; no `GRAPH_*`; `--max-replicas 1`), then the
-  `/api/health` startup and liveness probes applied with the `az rest` merge-patch script
-  (`t-infra-container-apps-probe`, see the table at the end). Then check traffic and health on the
-  revisions, as that section says.
+  `/api/health` startup and liveness probes applied with the `az rest` script
+  (`t-infra-container-apps-probe`, see the table at the end). That script sends a plain
+  `application/json` PATCH; the call is long-running, so it answers `202` with no body and the script
+  proves the probes landed by re-reading the app until they appear (up to 3 minutes) rather than by
+  reading the response. Run it as a script file or inside `bash <<'EOF' ... EOF` — it exits non-zero on
+  failure, which would end a shell you pasted it into. Then check traffic and health on the revisions,
+  as that section says.
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
   secret store**, separate from the app's. Set the shared secrets with the same names and values as the
@@ -326,7 +330,7 @@ One item is waiting on you: it is drafted, and applying it is part of creating t
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The startup and liveness probes are drafted in `infra/azure/README.md` ("Container Apps environment and app"), applied with an `az rest` JSON merge-patch that keeps the whole containers array. | Run the probe script right after creating the app (step 1), then check the new revision's health and which revision has traffic. |
+| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The startup and liveness probes are drafted in `infra/azure/README.md` ("Container Apps environment and app"), applied with an `az rest` PATCH (plain `application/json`) that writes back the whole containers array. The call is long-running: `202`, no body, a new revision. The script checks `az`'s exit code, then polls the re-read until the probes appear. **The live round trip has not been run** (`t-probe-patch-script-defects`). | Run the probe script right after creating the app (step 1), then check the new revision's health and which revision has traffic. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,

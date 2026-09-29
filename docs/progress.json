@@ -132,6 +132,9 @@
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service — Dockerfile + compose done; the infra/ Container Apps probe is split out as t-infra-container-apps-probe", "status": "done", "agent": "devops", "blockers": [], "gate": "triggered" },
     { "id": "t-infra-container-apps-probe", "storyId": "s-deploy-cutover", "title": "infra/ — Liveness httpGet probe on /api/health:8000 for the Container App (Container Apps ignores Dockerfile HEALTHCHECK) — NEEDS THE USER (infra/ is off-limits)", "status": "done", "agent": "devops", "blockers": [], "gate": "triggered" },
+    { "id": "t-probe-patch-script-defects", "storyId": "s-deploy-cutover", "title": "fix the infra/azure/README.md probe patch script: CRLF-corrupted resource id, media type ARM rejects, env entries written back with both secretRef and value, and a success signal that reported success on failure", "status": "done", "agent": "devops", "blockers": [], "gate": "broken" },
+    { "id": "t-probe-script-residual-nits", "storyId": "s-deploy-cutover", "title": "probe patch script residual nits — an empty-string secretRef keeps both keys, a pre-existing Readiness probe survives the filter, the probe port is compared as an int, and a transient re-read failure prints a raw traceback", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
+    { "id": "t-infra-readme-sh-fences", "storyId": "s-deploy-cutover", "title": "the app-create and job-create blocks in infra/azure/README.md are still ```sh fences over bash-only syntax (read -rsp)", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
 
     { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-pwa-manifest-icons", "storyId": "s-frontend-first-open", "title": "Add 192/512/maskable manifest icons and an apple-touch-icon so the PWA meets Chrome installability (spec §4 Installable)", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
@@ -190,5 +193,5 @@
     { "id": "t-owner-handover-finish", "storyId": "s-handover-docs", "title": "Fill the handover's cutover TODOs — live URL, revision names, Graph token and client-secret mint/expiry dates", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-29T08:00:00Z"
+  "lastUpdated": "2026-09-29T18:00:00Z"
 }

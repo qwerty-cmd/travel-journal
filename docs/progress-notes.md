@@ -514,6 +514,8 @@ GATE RULING 2026-09-29 (orchestrator) — still `gate: triggered`. The promotion
 
 ## t-infra-container-apps-probe
 
+WORDING SUPERSEDED 2026-09-29 by `t-probe-patch-script-defects`: the script below is described as an "`az rest` JSON merge-patch" and is no longer one. ARM rejected `application/merge-patch+json` with `UnsupportedMediaType`; it is a plain `application/json` PATCH now, and three other defects in the same script were fixed. Read that task's note before relying on anything here about how the probes get applied. The probe *design* recorded below (startup + liveness, no readiness) is unchanged, and the probes are still **not applied to the live app**.
+
 DONE (drafted) 2026-09-29. The trigger fired when the owner approved drafting the Container App definition. Liveness (`/api/health`:8000, 10s initial delay, 30s period, 5s timeout, 3 failures) and startup (10s period, 10 failures, about 105s for a cold start) probes were first drafted as a YAML fragment for `az containerapp update --yaml`; on merge with the owner's own README version (`e0587bd`, option A) they moved into the owner's `az rest` JSON merge-patch script, which preserves the full containers array and fails loudly on a wrong container name. The startup probe was added to that script. There is deliberately no readiness probe, because `/api/health` checks no dependencies. Applying it is part of `t-owner-container-app-definition`. Unverified: the `az` CLI is not installed in the agent environment, and the startup-probe `failureThreshold` ceiling of 10 is from memory.
 
 FILED 2026-09-29, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
@@ -1978,3 +1980,50 @@ DONE 2026-09-29, from the final QA pass. On a fresh clone `npm test` failed 7 fi
 ## t-queue-backoff-tab-handoff
 
 ORDINARY DEBT, from the final QA pass (2026-09-29). The retry backoff timer lives only in the tab that held the drain lock. If that tab closes mid-backoff, a hidden background tab doesn't retry until its next trigger: becoming visible, the `online` event, or an enqueue broadcast. Nothing is lost, only delayed, and showing any tab drains the queue. No current consumer; no promotion trigger.
+
+## t-probe-patch-script-defects
+
+DONE 2026-09-29 (devops, two rounds). Story `s-deploy-cutover`, `gate: broken`. One file, `infra/azure/README.md`, the `bash`+`python`+`az rest` block that applies the startup and liveness probes (the CLI has no probe flags). Uncommitted at the time of writing; left in the working tree for the owner.
+
+**Why `broken`, not a hardening pass.** The orchestrator ran the *committed* version against the live app from Windows Git Bash and it failed three separate ways and applied no probes. The app was healthy throughout — these were broken committed instructions, not an outage.
+
+**The four original defects, each confirmed empirically.**
+1. **CRLF.** Windows Python emitted `\r\n`; splitting the two-line helper output on `$'\n'` left a trailing carriage return on `APP_RESOURCE_ID`, which landed inside the request URI and drew an IIS HTML `400 Bad Request - Invalid URL`. Measured with `od -c`: 140 bytes, 139 after stripping one `\r`. Fixed at source — `sys.stdout.reconfigure(newline="\n")` — rather than by scrubbing downstream. **For accuracy: an early hypothesis that `PATCH_BODY` was contaminated too was WRONG** — command substitution strips the trailing `\r\n`. The source-level fix covers both regardless, so the fix is right and half its first justification was not.
+2. **Wrong media type.** The script sent `application/merge-patch+json`; ARM answered `UnsupportedMediaType`. ARM PATCH already merges, so it is plain `application/json` now.
+3. **Invalid write shape.** `az containerapp show` reads secret-backed env entries back carrying **both** `secretRef` and an empty `value`; writing both back is not a valid write shape. The empty `value` is now stripped across **all** containers, with value-only entries untouched.
+4. **False success.** The run reported success *after* the HTTP 400 and had patched nothing.
+
+**Round two reversed round one's fix for defect 4, and that reversal is the point of this note.** Round one discarded `az rest`'s exit code with `|| true` and treated the *response body* as the success signal. Research proved that backwards:
+- The Container Apps `2026-07-01` spec declares `ContainerApps_Update` a **long-running operation**, `final-state-via: location`: **200 returns the resource, 202 returns no body.** A `properties.template` change provisions a new revision, so **202-with-empty-body is the normal success case**. Confirmed against the live app: the activity log recorded `Accepted (HTTP Status Code: 202)` and `az rest` printed nothing.
+- In az CLI 2.84.0 `rest_call` returns `None` for an empty response, so `json.loads("")` raised `ValueError`. The round-one script therefore **reported failure on a PATCH that had succeeded**, and exited before the re-read that would have proven it.
+- The premise behind `|| true` was itself false: `az rest` **does** exit non-zero on ARM errors (`send_raw_request` raises `HTTPError` when `not r.ok`). Reproduced locally — exit code 1 on the HTML 400.
+
+So round two **deleted the response check entirely**, replaced `|| true` with explicit `if ! az ...; then ...; exit 1; fi` on all three failure-relevant calls (**not** relying on `set -e`, whose behaviour was measured to differ between a script file and a pasted interactive session), and wrapped the probe assertion in a bounded retry — 18 attempts, 10 s apart — because re-reading immediately races the new revision's provisioning. The proof the patch took is the re-read, not the response.
+
+**Two things it deliberately does not poll**, both of which look like the obvious success signal:
+- `provisioningState` — the live app carries a stale `Failed` from the original create, so waiting for `Succeeded` would hang on a patch that worked.
+- `latestReadyRevisionName` — observed to lag.
+
+**Two qa findings fixed in the same round.** The stale-probe filter was case-**sensitive** while the verifier was case-**insensitive**: given lowercase input the script emitted four probes and still reported success. And the block was fenced ```sh over bash-only syntax (`$'\n'`, `<<<`), which under `dash` runs `az containerapp show` before dying — now ```bash.
+
+**Verification status — read this before trusting the script.** Everything above was proven offline against synthetic fixtures and local reproduction. **The live PATCH round trip is UNVERIFIED:** that ARM accepts the corrected body, and that the probes land on a new revision, needs the owner's approved run (`t-owner-container-app-definition`, runbook §1). Nothing here should be read as "the probes are applied" — the live app still has no probes at all.
+
+Residual debt from the qa pass is filed as `t-probe-script-residual-nits` and `t-infra-readme-sh-fences`. The `az containerapp update --yaml` alternative was investigated and rejected — decision-log **Entry 28**.
+
+## t-probe-script-residual-nits
+
+ORDINARY DEBT (Gate 4), filed 2026-09-29 from the qa pass on `t-probe-patch-script-defects`. Do not implement on sight. Four independent nits in the same script in `infra/azure/README.md`; one patch would carry all four if any is ever promoted. **All were provoked by synthetic fixtures and none has a current consumer — the live app has no probes at all.** No promotion trigger for any of them.
+- An **empty-string `secretRef`** keeps both keys: the strip tests truthiness (`if env_var.get("secretRef")`), so `{"secretRef": "", "value": ""}` survives intact. ARM has not been seen to emit one.
+- A **pre-existing `Readiness` probe survives the filter**, which drops only `liveness`/`startup`. The script never adds a readiness probe, so the deliberate startup+liveness design intent (`/api/health` checks no dependencies) still holds for anything the script itself wrote.
+- The **probe port is compared as an int** in the verifier (`== 8000`), so a string `"8000"` read back from ARM would false-fail the check. ARM's schema types the field `int32`, so this is defensive only.
+- A **transient failure on the re-read** surfaces a raw `json.load` traceback rather than a message. Cosmetic: the retry loop absorbs it and the run still ends in the right state.
+- Agent: `devops` (the file is `infra/`, off-limits without the owner's approval).
+
+## t-infra-readme-sh-fences
+
+TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the qa pass on `t-probe-patch-script-defects`. Do not implement on sight.
+- The probe script's fence was corrected to ```bash in that task. The **two other fences in `infra/azure/README.md` — the app-create and the job-create blocks — are still ```sh**, and both use bash-only syntax (`read -rsp`). Under `sh`/dash they would fail partway rather than cleanly, which is the same failure mode just fixed one block over.
+- Out of scope for `t-probe-patch-script-defects` deliberately: one task, one patch.
+- Current consumer: none. The owner has not run either block, and a fence label does not change what Git Bash does with a pasted block.
+- **Promotion trigger: anyone running those blocks under `sh`/dash** (a `sh infra-create.sh`, a CI step, or a non-bash default shell). Also fires if either block is lifted into a script file.
+- Agent: `devops`.
