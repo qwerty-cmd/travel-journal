@@ -3,8 +3,9 @@ The one-time Graph refresh-token helper -- ``app/storage/get_refresh_token.py``.
 
 Implementation-following tests (not a priority-tier module): they cover the
 pure pieces of the PKCE authorization-code flow -- building the authorize URL,
-parsing the single redirect, redeeming the code -- plus ``main()``'s refusal to
-start without client credentials.
+parsing the single redirect, redeeming the code -- plus ``main()``: its refusal to
+start without client credentials or with invalid settings, and one full
+success path (PKCE challenge derivation, stdout secrecy).
 
 **Nothing here opens a browser, binds a socket or reaches the network.** The
 token endpoint is faked at the wire with ``httpx.MockTransport``, and every test
@@ -17,15 +18,22 @@ search every ``SystemExit`` message for them.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import http.server
+import json
 from collections.abc import Callable
+from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import pydantic
 import pytest
 
 from app.core.config import Settings
 from app.storage import get_refresh_token as helper
-from app.storage.onedrive_sync import TOKEN_URL
+
+TOKEN_URL = helper.TOKEN_URL
 
 CLIENT_ID = "client-id-SENTINEL-4f1c"
 CLIENT_SECRET = "client-secret-SENTINEL-9b2e"
@@ -34,6 +42,8 @@ VERIFIER = "pkce-verifier-SENTINEL-1e8f"
 REFRESH_TOKEN = "refresh-token-SENTINEL-c05d"
 STATE = "state-SENTINEL-66aa"
 CHALLENGE = "challenge-SENTINEL-2b7c"
+
+ACCESS_TOKEN = "access-token-SENTINEL-a11e"
 
 SECRETS = (CLIENT_SECRET, AUTH_CODE, VERIFIER)
 
@@ -51,6 +61,18 @@ def _assert_no_secrets(message: object) -> None:
     text = str(message)
     for secret in SECRETS:
         assert secret not in text, f"SystemExit message leaked a secret: {text!r}"
+
+
+# --------------------------------------------------------------------------- #
+# TOKEN_URL
+# --------------------------------------------------------------------------- #
+
+
+def test_token_url_matches_onedrive_sync() -> None:
+    # Imported here only: onedrive_sync pulls in s3_client, which loads settings.
+    from app.storage import onedrive_sync
+
+    assert helper.TOKEN_URL == onedrive_sync.TOKEN_URL
 
 
 # --------------------------------------------------------------------------- #
@@ -237,6 +259,30 @@ def test_exchange_code_non_json_2xx_body_exits() -> None:
     _assert_no_secrets(exc.value.code)
 
 
+def test_exchange_code_non_dict_json_body_exits_cleanly() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1])
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    assert exc.value.code not in (0, None)
+    assert isinstance(exc.value.code, str)
+    _assert_no_secrets(exc.value.code)
+
+
+def test_exchange_code_non_dict_json_error_body_exits_cleanly() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=[1])
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    assert exc.value.code not in (0, None)
+    assert "400" in str(exc.value.code)
+    _assert_no_secrets(exc.value.code)
+
+
 def test_exchange_code_error_does_not_echo_secrets_graph_reflected_back() -> None:
     # The message carries only error/error_description -- any other field in
     # the body (even one that happens to echo request values) is dropped.
@@ -297,3 +343,163 @@ def test_main_exits_without_client_credentials(
     _assert_no_secrets(exc.value.code)
     out = capsys.readouterr()
     _assert_no_secrets(out.out + out.err)
+
+
+def test_main_invalid_settings_exits_with_field_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+    no_side_effects: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_secret = "postgresql://u:db-password-SENTINEL-5e5e@host/db"
+    s3_secret = "s3-secret-SENTINEL-8c8c"
+    monkeypatch.setenv("DATABASE_URL", db_secret)
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", s3_secret)
+    monkeypatch.setenv("GRAPH_CLIENT_SECRET", CLIENT_SECRET)
+    for name in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_BUCKET_NAME"):
+        monkeypatch.delenv(name, raising=False)
+
+    def failing_settings() -> Settings:
+        return Settings(_env_file=None)  # type: ignore[call-arg]
+
+    # Precondition: the real error's str() echoes env values (pydantic truncates
+    # the repr, but a sentinel still shows), so this test is meaningful only if
+    # main() avoids echoing it.
+    with pytest.raises(pydantic.ValidationError) as raw:
+        failing_settings()
+    assert "SENTINEL" in str(raw.value)
+
+    monkeypatch.setattr(helper, "get_settings", failing_settings)
+
+    with pytest.raises(SystemExit) as exc:
+        helper.main()
+
+    message = str(exc.value.code)
+    assert exc.value.code not in (0, None)
+    for field in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_BUCKET_NAME"):
+        assert field in message
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__
+    out = capsys.readouterr()
+    assert "SENTINEL" not in message
+    assert "SENTINEL" not in out.out + out.err
+    for secret in (db_secret, s3_secret, CLIENT_SECRET):
+        assert secret not in message
+
+
+def test_main_success_sends_s256_challenge_of_the_posted_verifier_and_prints_only_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opened: list[str] = []
+    posted: list[dict[str, str]] = []
+
+    def browser(url: str, *args: object, **kwargs: object) -> bool:
+        opened.append(url)
+        return True
+
+    def wait() -> str:
+        assert len(opened) == 1, "redirect awaited before the browser was opened"
+        state = parse_qs(urlsplit(opened[0]).query)["state"][0]
+        return f"/?code={AUTH_CODE}&state={state}"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == TOKEN_URL
+        posted.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        return httpx.Response(
+            200,
+            json={
+                "access_token": ACCESS_TOKEN,
+                "refresh_token": REFRESH_TOKEN,
+                "token_type": "Bearer",
+            },
+        )
+
+    real_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        return real_client(transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(helper, "get_settings", lambda: _settings())
+    monkeypatch.setattr(helper.webbrowser, "open", browser)
+    monkeypatch.setattr(helper, "_wait_for_redirect", wait)
+    monkeypatch.setattr(helper.httpx, "Client", mock_client)
+
+    assert helper.main() == 0
+
+    assert len(opened) == 1
+    assert len(posted) == 1
+    form = posted[0]
+    verifier = form["code_verifier"]
+    assert form["code"] == AUTH_CODE
+
+    challenge = parse_qs(urlsplit(opened[0]).query)["code_challenge"][0]
+    expected = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    assert challenge == expected
+    assert "=" not in challenge
+    assert challenge != verifier
+
+    out = capsys.readouterr()
+    printed = out.out + out.err
+    assert REFRESH_TOKEN in out.out
+    for secret in (ACCESS_TOKEN, CLIENT_SECRET, AUTH_CODE, verifier):
+        assert secret not in printed
+    assert json.dumps(REFRESH_TOKEN) not in printed  # no JSON body dump
+
+
+# --------------------------------------------------------------------------- #
+# _wait_for_redirect's request handler
+# --------------------------------------------------------------------------- #
+
+
+def _capture_handler_class(monkeypatch: pytest.MonkeyPatch) -> type:
+    """Run _wait_for_redirect against a fake HTTPServer that binds nothing.
+
+    ``Handler`` is a local class inside ``_wait_for_redirect``, so the only way
+    to reach it without restructuring the module is to intercept the server
+    constructor it is passed to.
+    """
+    captured: list[type] = []
+
+    class FakeServer:
+        def __init__(self, address: object, handler: type) -> None:
+            captured.append(handler)
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def handle_request(self) -> None:
+            return None
+
+    monkeypatch.setattr(helper.http.server, "HTTPServer", FakeServer)
+    assert helper._wait_for_redirect() == ""
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_redirect_handler_does_not_log_the_authorization_code(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    handler_cls = _capture_handler_class(monkeypatch)
+    assert issubclass(handler_cls, http.server.BaseHTTPRequestHandler)
+
+    handler = handler_cls.__new__(handler_cls)
+    path = f"/?code={AUTH_CODE}&state={STATE}"
+    handler.path = path
+    handler.requestline = f"GET {path} HTTP/1.1"
+    handler.request_version = "HTTP/1.1"
+    handler.command = "GET"
+    handler.client_address = ("127.0.0.1", 50000)
+
+    handler.log_request(200)
+    handler.log_message('"%s" %s %s', handler.requestline, "200", "-")
+
+    out = capsys.readouterr()
+    assert AUTH_CODE not in out.out + out.err
