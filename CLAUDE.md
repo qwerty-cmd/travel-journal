@@ -43,7 +43,7 @@ A finding from task X is not work for task X — one task → one patch → veri
 | `qa` | Independently verifies acceptance criteria; no edit access, reports findings to caller | Read/Bash/Grep |
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
 | `docs` | Writes per-task docs, closes out progress.json, owns decision-log | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
-| `designer` | Front-end UI/visual design: design system (tokens), per-screen specs, static HTML mockups in Figma/Canva handoff terms; reviews built UI against them. `dev` implements its specs | Read/Grep/Glob/Write/Edit + WebSearch/WebFetch — writes `docs/design/` only (hook-enforced) |
+| `designer` | Front-end UI/visual design: design system (tokens), per-screen specs, static HTML mockups in Figma/Canva handoff terms; generates with Google Stitch (owner's user-level Stitch MCP + stitch-skills); reviews built UI against specs. `dev` implements its specs | Read/Grep/Glob/Write/Edit + WebSearch/WebFetch + Skill (+ `mcp__stitch__*` once listed) — writes `docs/design/` only (hook-enforced) |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
