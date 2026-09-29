@@ -33,4 +33,6 @@ class PhotoOut(BaseModel):
         "offset the device sent. Same instant, two spellings — compare these as datetimes, "
         "never as strings."
     )
-    archived: bool = Field(description="True once the background OneDrive sync has landed this photo.")
+    archived: bool = Field(
+        description="True once the background OneDrive sync has landed this photo."
+    )

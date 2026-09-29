@@ -188,9 +188,7 @@ def fake_file(content: bytes = b"fake-jpeg-bytes", filename: str = "photo.jpg"):
 async def photo_rows_for_id(engine: AsyncEngine, photo_id: str) -> list[Any]:
     """Every photos row with this id, read straight from the table."""
     async with engine.connect() as conn:
-        result = await conn.execute(
-            tables.photos.select().where(tables.photos.c.id == photo_id)
-        )
+        result = await conn.execute(tables.photos.select().where(tables.photos.c.id == photo_id))
         return list(result.mappings())
 
 
@@ -662,9 +660,7 @@ class TestTakenAtIsOffsetAware:
         stop = seeded_stops[0]
         url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
 
-        response = await client.post(
-            url, data=upload_form(taken_at=taken_at), files=fake_file()
-        )
+        response = await client.post(url, data=upload_form(taken_at=taken_at), files=fake_file())
 
         assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
         assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR
@@ -750,9 +746,7 @@ class TestTakenAtIsOffsetAware:
         stop = seeded_stops[0]
         url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
 
-        submitted = datetime(
-            2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30))
-        )
+        submitted = datetime(2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30)))
         form = upload_form(taken_at=submitted.isoformat())
         created_photo_ids.append(form["id"])
 

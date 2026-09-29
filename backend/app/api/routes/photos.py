@@ -192,6 +192,11 @@ async def upload_photo(
     await asyncio.to_thread(partial(s3.upload_fileobj, file.file, BUCKET_NAME, object_key))
 
     photo = await insert(
-        session, stop_id, id, uploadedBy, takenAt, object_key,
+        session,
+        stop_id,
+        id,
+        uploadedBy,
+        takenAt,
+        object_key,
     )
     return photo

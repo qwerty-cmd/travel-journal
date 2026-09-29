@@ -181,9 +181,7 @@ async def patch(
     if fields:
         values = {_FIELD_TO_COLUMN[k]: v for k, v in fields.items()}
         await session.execute(
-            update(bikes)
-            .where(bikes.c.trip_id == trip_id, bikes.c.id == bike_id)
-            .values(**values)
+            update(bikes).where(bikes.c.trip_id == trip_id, bikes.c.id == bike_id).values(**values)
         )
         await session.commit()
 

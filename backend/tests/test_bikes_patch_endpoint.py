@@ -388,9 +388,7 @@ async def test_viewer_slug_is_forbidden(
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(trip.viewer_slug, bike.id), json={"make": "Ducati"}
-    )
+    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"make": "Ducati"})
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
     assert parse_envelope(response).code is ErrorCode.FORBIDDEN
@@ -406,9 +404,7 @@ async def test_viewer_slug_does_not_modify_bike(
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(trip.viewer_slug, bike.id), json={"make": "Ducati"}
-    )
+    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"make": "Ducati"})
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
 
     row = await db_row(migrated_engine, bike.id)
@@ -428,9 +424,7 @@ async def test_unknown_slug_is_not_found(
     """A slug no trip has is 404."""
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(UNKNOWN_SLUG, bike.id), json={"make": "Ducati"}
-    )
+    response = await client.patch(_url(UNKNOWN_SLUG, bike.id), json={"make": "Ducati"})
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
     assert parse_envelope(response).code is ErrorCode.NOT_FOUND
@@ -443,9 +437,7 @@ async def test_unknown_slug_is_never_forbidden(
     """An unknown slug must never be 403 -- that would be a slug-space oracle."""
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(UNKNOWN_SLUG, bike.id), json={"make": "Ducati"}
-    )
+    response = await client.patch(_url(UNKNOWN_SLUG, bike.id), json={"make": "Ducati"})
 
     assert response.status_code != HTTPStatus.FORBIDDEN, response.text
 
@@ -464,9 +456,7 @@ async def test_bad_year_type_is_422(
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(trip.rider_slug, bike.id), json={"year": "not a number"}
-    )
+    response = await client.patch(_url(trip.rider_slug, bike.id), json={"year": "not a number"})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
     assert parse_envelope(response).code is ErrorCode.VALIDATION_ERROR
@@ -482,9 +472,7 @@ async def test_bad_year_does_not_modify_bike(
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(trip.rider_slug, bike.id), json={"year": "not a number"}
-    )
+    response = await client.patch(_url(trip.rider_slug, bike.id), json={"year": "not a number"})
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
 
     row = await db_row(migrated_engine, bike.id)
@@ -544,9 +532,7 @@ async def test_viewer_slug_with_invalid_body_is_still_403(
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(trip.viewer_slug, bike.id), json={"year": "not a number"}
-    )
+    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"year": "not a number"})
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
 
@@ -558,8 +544,6 @@ async def test_unknown_slug_with_invalid_body_is_still_404(
     """The access guard runs before body validation -- unknown slug is 404 even with a bad body."""
     bike = bikes_for_patch[0]
 
-    response = await client.patch(
-        _url(UNKNOWN_SLUG, bike.id), json={"year": "not a number"}
-    )
+    response = await client.patch(_url(UNKNOWN_SLUG, bike.id), json={"year": "not a number"})
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text

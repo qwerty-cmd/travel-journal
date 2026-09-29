@@ -88,7 +88,9 @@ async def list_by_stop(session: AsyncSession, stop_id: str) -> list[PhotoOut]:
 
 
 async def find_existing(
-    session: AsyncSession, stop_id: str, photo_id: str,
+    session: AsyncSession,
+    stop_id: str,
+    photo_id: str,
 ) -> PhotoOut | None:
     """
     If this photo id already exists on this stop, return the stored PhotoOut.
@@ -121,8 +123,12 @@ async def check_id_conflict(session: AsyncSession, photo_id: str) -> bool:
 
 
 async def insert(
-    session: AsyncSession, stop_id: str, photo_id: str, uploaded_by: str,
-    taken_at, object_key: str,
+    session: AsyncSession,
+    stop_id: str,
+    photo_id: str,
+    uploaded_by: str,
+    taken_at,
+    object_key: str,
 ) -> PhotoOut:
     """
     Insert a new photo row. Caller must have already checked for replay/conflict.
@@ -173,7 +179,8 @@ class PendingArchivePhoto:
 
 
 async def list_pending_archive(
-    session: AsyncSession, limit: int,
+    session: AsyncSession,
+    limit: int,
 ) -> list[PendingArchivePhoto]:
     """
     Photos that have never been archived (``one_drive_file_id IS NULL``), across
@@ -202,7 +209,9 @@ async def list_pending_archive(
 
 
 async def mark_archived(
-    session: AsyncSession, photo_id: str, one_drive_file_id: str,
+    session: AsyncSession,
+    photo_id: str,
+    one_drive_file_id: str,
 ) -> int:
     """
     Record that this photo now exists in OneDrive, by setting its

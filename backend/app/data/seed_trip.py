@@ -120,7 +120,7 @@ _SLUG_RECOVERY_INSTRUCTIONS = (
     "\n"
     "    SELECT rider_slug, viewer_slug FROM trips;\n"
     "\n"
-    '  local:  psql "$DATABASE_URL" -c \'SELECT rider_slug, viewer_slug FROM trips;\'\n'
+    "  local:  psql \"$DATABASE_URL\" -c 'SELECT rider_slug, viewer_slug FROM trips;'\n"
     "  prod:   run the same query in the Neon console's SQL editor.\n"
     "\n"
     "Nothing in the application will show them: TripOut has no slug field, and the\n"
@@ -356,7 +356,9 @@ async def _existing_trip(conn: AsyncConnection) -> tuple[str, str, date] | None:
     for ``main()`` to report the existing trip at all: a value that never enters
     the process cannot be printed by mistake later.
     """
-    row = (await conn.execute(select(trips.c.id, trips.c.name, trips.c.start_date).limit(1))).first()
+    row = (
+        await conn.execute(select(trips.c.id, trips.c.name, trips.c.start_date).limit(1))
+    ).first()
     if row is None:
         return None
     return row.id, row.name, row.start_date
@@ -617,7 +619,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--name",
         required=True,
-        help="The trip's display name, e.g. \"Alps 2026\". Shown in the app as TripOut.name.",
+        help='The trip\'s display name, e.g. "Alps 2026". Shown in the app as TripOut.name.',
     )
     parser.add_argument(
         "--start-date",

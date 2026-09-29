@@ -212,9 +212,7 @@ async def archive_fixture(
     finally:
         async with migrated_engine.begin() as conn:
             await conn.execute(
-                tables.photos.delete().where(
-                    tables.photos.c.id.in_([p.id for p in seeded_photos])
-                )
+                tables.photos.delete().where(tables.photos.c.id.in_([p.id for p in seeded_photos]))
             )
             await conn.execute(
                 tables.stops.delete().where(tables.stops.c.id.in_([stop_one, stop_two]))
@@ -232,9 +230,7 @@ async def stored_one_drive_file_id(engine: AsyncEngine, photo_id: str) -> str | 
 async def stored_photo_row(engine: AsyncEngine, photo_id: str) -> dict:
     """Every column of one photo, read straight from the table."""
     async with engine.connect() as conn:
-        result = await conn.execute(
-            tables.photos.select().where(tables.photos.c.id == photo_id)
-        )
+        result = await conn.execute(tables.photos.select().where(tables.photos.c.id == photo_id))
         return dict(result.mappings().one())
 
 
@@ -426,15 +422,19 @@ class TestArchivedIsDerivedNotStored:
         target = archive_fixture.pending_first
         sibling = archive_fixture.pending_sibling
 
-        before = {photo.id: photo.archived for photo in
-                  await photos_repo.list_by_stop(session, target.stop_id)}
+        before = {
+            photo.id: photo.archived
+            for photo in await photos_repo.list_by_stop(session, target.stop_id)
+        }
         assert before[target.id] is False
         assert before[sibling.id] is False
 
         await photos_repo.mark_archived(session, target.id, "onedrive-file-derived")
 
-        after = {photo.id: photo.archived for photo in
-                 await photos_repo.list_by_stop(session, target.stop_id)}
+        after = {
+            photo.id: photo.archived
+            for photo in await photos_repo.list_by_stop(session, target.stop_id)
+        }
         assert after[target.id] is True, "the photo that was archived"
         assert after[sibling.id] is False, "the photo beside it, which was not"
 

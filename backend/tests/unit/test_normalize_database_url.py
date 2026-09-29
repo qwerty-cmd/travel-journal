@@ -26,7 +26,9 @@ def _query(url: str) -> list[tuple[str, str]]:
 
 def test_neon_url_translates_sslmode_and_drops_channel_binding():
     out = normalize_database_url(NEON)
-    assert out.startswith("postgresql+asyncpg://user:p%40ss@ep-x-123.eu-central-1.aws.neon.tech/neondb?")
+    assert out.startswith(
+        "postgresql+asyncpg://user:p%40ss@ep-x-123.eu-central-1.aws.neon.tech/neondb?"
+    )
     assert _query(out) == [("ssl", "require")]
 
 

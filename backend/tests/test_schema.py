@@ -133,7 +133,9 @@ async def test_columns_match_metadata(migrated_engine: AsyncEngine, table_name: 
         # the trip crosses a time zone, so it gets its own assertion.
         if isinstance(column.type, DateTime):
             assert column.type.timezone is True, f"{qualified}: declared without timezone"
-            assert live_column.type.timezone is True, f"{qualified}: database column is not timestamptz"
+            assert live_column.type.timezone is True, (
+                f"{qualified}: database column is not timestamptz"
+            )
 
 
 @pytest.mark.parametrize(

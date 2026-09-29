@@ -70,6 +70,9 @@ cd backend && uv sync && uv run uvicorn app.main:app --reload
 # Backend tests
 cd backend && uv run pytest
 
+# Backend lint + format gate (both must pass before a patch is done)
+cd backend && uv run ruff check . && uv run ruff format --check .
+
 # Frontend dev server (proxies /api to localhost:8000)
 cd frontend && npm install && npm run dev
 

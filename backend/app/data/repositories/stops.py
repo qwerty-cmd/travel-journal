@@ -267,9 +267,7 @@ async def map_features(session: AsyncSession, trip_id: str) -> MapFeatureCollect
     if len(rows) >= 2:
         features.append(
             TrailFeature(
-                geometry=LineStringGeometry(
-                    coordinates=[[row.lng, row.lat] for row in rows]
-                ),
+                geometry=LineStringGeometry(coordinates=[[row.lng, row.lat] for row in rows]),
             )
         )
 

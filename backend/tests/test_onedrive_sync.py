@@ -318,9 +318,7 @@ async def pending(
     finally:
         async with migrated_engine.begin() as conn:
             await conn.execute(
-                tables.photos.delete().where(
-                    tables.photos.c.id.in_([p.id for p in fixture.all])
-                )
+                tables.photos.delete().where(tables.photos.c.id.in_([p.id for p in fixture.all]))
             )
             await conn.execute(tables.stops.delete().where(tables.stops.c.id == stop_id))
         for photo in fixture.all:
@@ -647,9 +645,7 @@ class TestTokenRequest:
             token=lambda request, call: httpx.Response(400, json={"error": "invalid_grant"})
         )
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code != 0
         assert graph.uploads == []
@@ -823,9 +819,7 @@ class TestRecordingArchivedPhotos:
 
         graph = FakeGraph(upload=upload)
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code == 0
         stored = [await stored_file_id(migrated_engine, p.id) for p in pending.three]
@@ -917,14 +911,10 @@ class TestRecordingArchivedPhotos:
         assert await still_pending(session, pending.jpeg.id), "a crashed run leaves it owed"
 
         second = FakeGraph(
-            upload=lambda request, count: httpx.Response(
-                200, json={"id": "graph-replaced-item"}
-            )
+            upload=lambda request, count: httpx.Response(200, json={"id": "graph-replaced-item"})
         )
         async with second.client() as client:
-            code = await archive_photos(
-                client, [pending.jpeg], partial(mark_archived, session)
-            )
+            code = await archive_photos(client, [pending.jpeg], partial(mark_archived, session))
 
         assert code == 0
         assert first.uploaded_names == second.uploaded_names
@@ -966,9 +956,7 @@ class TestPerPhotoFailure:
 
         graph = FakeGraph(upload=upload)
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code != 0, "a failed photo is a failed run"
         assert len(graph.uploads) == 3, "the run continued to photo 3"
@@ -1002,9 +990,7 @@ class TestPerPhotoFailure:
 
         graph = FakeGraph(upload=upload)
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code != 0
         assert len(graph.uploads) == 3
@@ -1076,9 +1062,7 @@ class TestExpiredAccessToken:
 
         graph = FakeGraph(upload=upload)
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code == 0
         assert len(graph.token_requests) == 2, "exactly one refresh"
@@ -1121,9 +1105,7 @@ class TestExpiredAccessToken:
             )
         )
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code != 0
         assert len(graph.token_requests) == 2, "one initial token, one refresh, and no more"
@@ -1164,9 +1146,7 @@ class TestThrottlingAndUnavailable:
         graph = FakeGraph(upload=upload)
         started = time.monotonic()
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
         elapsed = time.monotonic() - started
 
         assert code != 0
@@ -1190,9 +1170,7 @@ class TestThrottlingAndUnavailable:
         """
         graph = FakeGraph(upload=lambda request, count: httpx.Response(429))
         async with graph.client() as client:
-            code = await archive_photos(
-                client, pending.three, partial(mark_archived, session)
-            )
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
 
         assert code != 0
         assert len(graph.uploads) == 1
