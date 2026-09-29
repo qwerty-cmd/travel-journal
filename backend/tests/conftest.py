@@ -11,26 +11,22 @@ docker-compose ``postgres`` service (or any ``DATABASE_URL``) to be up.
 from __future__ import annotations
 
 import secrets
-import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import pytest
-
-# backend/ — so `import app` works however pytest was invoked (the project is
-# not installed into the venv as a distribution).
-BACKEND_DIR = Path(__file__).resolve().parents[1]
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.core.config import get_settings
 from app.data import tables
 from app.data.db import normalize_database_url
 from app.data.migrate import run_migrations
+
+# backend/. `import app` itself comes from pyproject's `pythonpath`; this is kept
+# for tests that launch a subprocess from the backend directory.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="session")
@@ -264,3 +260,27 @@ async def seeded_bikes(
             await conn.execute(
                 tables.bikes.delete().where(tables.bikes.c.id.in_([b.id for b in seeded]))
             )
+
+
+@pytest.fixture
+def s3_bucket() -> None:
+    """
+    The photo bucket exists in the configured S3 endpoint (local MinIO).
+
+    The one definition every module with a storage leg shares — it was three
+    copies (t-s3-bucket-fixture-duplication). ``head_bucket`` first, and
+    ``create_bucket`` only on ``ClientError``: that is how boto3 reports "no such
+    bucket" (404) or "not yours" (403). Anything else — MinIO not running, bad
+    endpoint, bad credentials at the transport level — is a broken environment,
+    not a missing bucket, and propagates as a setup error naming the real cause
+    instead of a confusing ``create_bucket`` failure behind it.
+    """
+    from botocore.exceptions import ClientError
+
+    from app.storage.s3_client import BUCKET_NAME, get_s3_client
+
+    s3 = get_s3_client()
+    try:
+        s3.head_bucket(Bucket=BUCKET_NAME)
+    except ClientError:
+        s3.create_bucket(Bucket=BUCKET_NAME)

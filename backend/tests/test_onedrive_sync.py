@@ -249,7 +249,7 @@ class ArchiveFixture:
 
 @pytest.fixture
 async def pending(
-    migrated_engine: AsyncEngine, seeded_trips: list[SeededTrip]
+    migrated_engine: AsyncEngine, seeded_trips: list[SeededTrip], s3_bucket: None
 ) -> AsyncIterator[ArchiveFixture]:
     """
     Four unarchived photos with real bytes in MinIO, removed again on teardown.
@@ -262,15 +262,9 @@ async def pending(
     upload that sent the wrong object or a filename with the wrong extension
     cannot produce a passing request.
     """
-    from botocore.exceptions import ClientError
-
     from app.storage.s3_client import BUCKET_NAME, get_s3_client
 
     s3 = get_s3_client()
-    try:
-        s3.head_bucket(Bucket=BUCKET_NAME)
-    except ClientError:
-        s3.create_bucket(Bucket=BUCKET_NAME)
 
     prefix = secrets.token_urlsafe(8)
     stop_id = f"test-sync-stop-{prefix}"
@@ -429,6 +423,159 @@ def _subprocess_env() -> dict[str, str]:
         ";" + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
     return env
+
+
+# --------------------------------------------------------------------------
+# main(), configured: the wiring the entry point owns (t-onedrive-main-untested)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class MainHarness:
+    """What a configured ``main()`` run was wired to, for the assertions."""
+
+    graph: FakeGraph
+    limits: list[int] = field(default_factory=list)
+
+
+@pytest.fixture
+def main_harness(
+    monkeypatch: pytest.MonkeyPatch, migrated_engine: AsyncEngine
+) -> Callable[[set[str]], MainHarness]:
+    """
+    Point ``main()``'s three outside dependencies at test doubles, then hand back the record.
+
+    ``main()`` builds its own session, repository calls and HTTP client, so each
+    is replaced where ``main()`` looks it up, and nothing else is:
+
+    - ``app.data.db.async_session`` becomes a sessionmaker on the *test* engine
+      (the production one binds to whichever loop first used it —
+      ``app/data/db.py``). The session, ``mark_archived`` and its commit are real.
+    - ``list_pending_archive`` is wrapped, not replaced: the real query runs with
+      the limit ``main()`` passes, and its result is narrowed to the given ids so
+      a pending photo left by some other test cannot join the run (it would have
+      no bytes in MinIO). The limit is recorded, so passing the wrong one shows.
+    - The *real* ``httpx.AsyncClient`` ``main()`` constructs is kept; only its
+      transport's send is routed into a ``FakeGraph``. No request reaches Graph.
+    """
+    import app.data.db
+    import app.data.repositories.photos as photos_repository
+
+    real_list_pending = photos_repository.list_pending_archive
+
+    def install(photo_ids: set[str]) -> MainHarness:
+        harness = MainHarness(graph=FakeGraph())
+
+        async def list_pending_spy(session: AsyncSession, limit: int):
+            harness.limits.append(limit)
+            return [p for p in await real_list_pending(session, limit) if p.id in photo_ids]
+
+        async def to_fake_graph(self, request: httpx.Request) -> httpx.Response:
+            return harness.graph.handler(request)
+
+        monkeypatch.setattr(
+            app.data.db,
+            "async_session",
+            async_sessionmaker(migrated_engine, expire_on_commit=False),
+        )
+        monkeypatch.setattr(photos_repository, "list_pending_archive", list_pending_spy)
+        monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", to_fake_graph)
+        return harness
+
+    return install
+
+
+class TestMainConfigured:
+    """
+    ``main()`` with a refresh token set: real session, real repositories, faked wire.
+
+    The ``archive_photos`` tests above inject their own client and ``record``;
+    this is the only place the entry point's own wiring runs — which sessionmaker
+    it opens, which limit it selects with, that it records through
+    ``mark_archived`` on the session it opened (and so commits), and that the
+    exit code it returns is the one the run earned.
+    """
+
+    async def test_archives_every_pending_photo_and_exits_zero(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        main_harness: Callable[[set[str]], MainHarness],
+        migrated_engine: AsyncEngine,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """
+        Every pending photo is uploaded once and its Graph id is *committed* to its row.
+
+        Read back on a separate connection, so an update left uncommitted in
+        ``main()``'s session — lost when the process exits — reads as ``None``.
+        """
+        harness = main_harness({p.id for p in pending.all})
+
+        assert await main() == 0
+
+        assert harness.limits == [onedrive_sync.BATCH_LIMIT]
+        assert len(harness.graph.token_requests) == 1
+        assert sorted(harness.graph.uploaded_names) == sorted(
+            f"{p.id}{p.extension}" for p in pending.all
+        )
+        for photo in pending.all:
+            assert await stored_file_id(migrated_engine, photo.id) == (
+                f"graph-file-for-{photo.id}{photo.extension}"
+            ), f"{photo.id} was uploaded but its row does not say so"
+        TestNoSecretIsLogged.assert_clean(captured_logs)
+
+    async def test_a_failed_upload_exits_nonzero_and_leaves_that_photo_pending(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        main_harness: Callable[[set[str]], MainHarness],
+        migrated_engine: AsyncEngine,
+    ) -> None:
+        """
+        The exit code is the run's, and a failed photo stays owed while the rest are recorded.
+
+        A shell or scheduler sees only the exit code, so ``main()`` returning 0
+        after a failed upload would make a partial archive indistinguishable
+        from a complete one.
+        """
+        harness = main_harness({p.id for p in pending.three})
+        failed = f"{pending.png.id}{pending.png.extension}"
+
+        def upload(request: httpx.Request, count: int) -> httpx.Response:
+            if uploaded_filename(request) == failed:
+                return httpx.Response(500)
+            return httpx.Response(201, json={"id": f"graph-file-for-{uploaded_filename(request)}"})
+
+        harness.graph.upload = upload
+
+        assert await main() == 1
+
+        assert await stored_file_id(migrated_engine, pending.png.id) is None
+        for photo in (pending.jpeg, pending.heic):
+            assert await stored_file_id(migrated_engine, photo.id) == (
+                f"graph-file-for-{photo.id}{photo.extension}"
+            )
+
+    async def test_nothing_pending_exits_zero_without_touching_graph(
+        self,
+        graph_config: None,
+        main_harness: Callable[[set[str]], MainHarness],
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """
+        An empty sweep is a clean 0 with no token request — not a failed login on every tick.
+
+        Configured, so the query does run (the limit is recorded); nothing comes
+        back, so the job has no reason to spend a refresh-token redemption.
+        """
+        harness = main_harness(set())
+
+        assert await main() == 0
+
+        assert harness.limits == [onedrive_sync.BATCH_LIMIT]
+        assert harness.graph.requests == []
+        assert "no photos pending" in captured_logs.text.lower()
 
 
 # --------------------------------------------------------------------------

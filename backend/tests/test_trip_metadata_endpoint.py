@@ -57,6 +57,7 @@ import pytest
 from conftest import SeededBike, SeededTrip
 from fastapi import params
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.security import require_rider_access, require_trip_access
@@ -579,8 +580,8 @@ async def test_bikes_key_is_present_even_when_empty(
 # `list_by_trip` orders by `rider_name, id` so that two identical requests
 # produce identical JSON. That is a *stability* property, not an API guarantee:
 # the contract says nothing about the order of `bikes`, and nothing outside
-# these two tests may depend on a bike's position — every other test in this
-# file looks bikes up by id.
+# the tests in this section may depend on a bike's position — every other test
+# in this file looks bikes up by id.
 
 
 async def test_bike_order_is_stable_across_identical_requests(
@@ -602,28 +603,102 @@ async def test_bike_order_is_stable_across_identical_requests(
     assert first.text == second.text
 
 
+async def database_order(engine: AsyncEngine, bike_ids: list[str]) -> list[str]:
+    """
+    These bikes' ids in the order *the database* puts ``(rider_name, id)``.
+
+    The oracle for the ordering tests, and deliberately not Python's
+    ``sorted()`` (t-bike-order-collation). Python compares code points, which
+    agrees with a byte-order (``C``) collation by construction and with glibc or
+    ICU collations not at all — Neon orders ``alex, Alex, ALEX, Ana, Ána, Zoe``
+    where ``sorted()`` gives ``ALEX, Alex, Ana, Zoe, alex, Ána``. Asking Postgres
+    makes the expected sequence whatever the columns' collation says it is, so
+    the test states the repository's promise (``ORDER BY rider_name, id``)
+    without also asserting which collation the server happens to run.
+    """
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(tables.bikes.c.id)
+            .where(tables.bikes.c.id.in_(bike_ids))
+            .order_by(tables.bikes.c.rider_name, tables.bikes.c.id)
+        )
+        return [row.id for row in rows]
+
+
 async def test_bikes_are_ordered_by_rider_name_then_id(
-    client: AsyncClient, seeded_trips: list[SeededTrip], seeded_bikes: list[SeededBike]
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    seeded_bikes: list[SeededBike],
 ) -> None:
     """
     The declared order, including the id tiebreak between two bikes of one rider.
 
     The expected sequence is computed from the fixture's own rows rather than
-    written out, so it stays correct if the fixture changes. The fixture's rider
-    names differ in their first letter and its ids share a prefix with a numeric
-    suffix — both chosen so Python's ordering and Postgres's agree under any
-    collation, which a comparison of random tokens would not.
+    written out, so it stays correct if the fixture changes, and is ordered by
+    the database rather than by Python — see ``database_order``.
     """
     trip = seeded_trips[0]
-    expected = [
-        b.id
-        for b in sorted(
-            (b for b in seeded_bikes if b.trip_id == trip.id),
-            key=lambda b: (b.rider_name, b.id),
-        )
-    ]
+    expected = await database_order(
+        migrated_engine, [b.id for b in seeded_bikes if b.trip_id == trip.id]
+    )
+    assert len(expected) == 3, "the fixture's first-trip bikes are missing — nothing to order"
 
     body = (await client.get(TRIP_PATH.format(slug=trip.rider_slug))).json()
+
+    assert [bike["id"] for bike in body["bikes"]] == expected
+
+
+# Rider names that differ only in case or accent — the names on which a
+# byte-order collation and a linguistic one disagree. Inserted in an order that
+# matches neither, so insertion order cannot pass for the promised order.
+COLLATION_SENSITIVE_RIDERS = ["Zoe", "ALEX", "Ána", "alex", "Ana", "Alex"]
+
+
+@pytest.fixture
+async def collation_sensitive_bikes(
+    migrated_engine: AsyncEngine, trip_without_bikes: SeededTrip
+) -> AsyncIterator[list[str]]:
+    """Bike ids on the otherwise bikeless trip, one per ``COLLATION_SENSITIVE_RIDERS`` name."""
+    prefix = f"test-bike-coll-{secrets.token_urlsafe(8)}"
+    ids = [f"{prefix}-{index:02d}" for index in range(len(COLLATION_SENSITIVE_RIDERS))]
+
+    async with migrated_engine.begin() as conn:
+        for bike_id, rider in zip(ids, COLLATION_SENSITIVE_RIDERS, strict=True):
+            await conn.execute(
+                tables.bikes.insert().values(
+                    id=bike_id,
+                    trip_id=trip_without_bikes.id,
+                    rider_name=rider,
+                    make="Honda",
+                    model="XR650L",
+                    year=2020,
+                    specs="",
+                )
+            )
+    try:
+        yield ids
+    finally:
+        async with migrated_engine.begin() as conn:
+            await conn.execute(tables.bikes.delete().where(tables.bikes.c.id.in_(ids)))
+
+
+async def test_bike_order_holds_for_case_and_accent_variants(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    trip_without_bikes: SeededTrip,
+    collation_sensitive_bikes: list[str],
+) -> None:
+    """
+    The same promise on names where collations disagree, so it holds on Neon too.
+
+    The local compose Postgres collates byte-wise and Neon runs glibc/ICU; this
+    case passes on both because the oracle is the database's own ordering.
+    """
+    expected = await database_order(migrated_engine, collation_sensitive_bikes)
+    assert sorted(expected) == sorted(collation_sensitive_bikes)
+
+    body = (await client.get(TRIP_PATH.format(slug=trip_without_bikes.rider_slug))).json()
 
     assert [bike["id"] for bike in body["bikes"]] == expected
 

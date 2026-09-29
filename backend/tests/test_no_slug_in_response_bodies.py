@@ -127,6 +127,17 @@ CASES = [
     (method, path, kind) for method, path in TRIP_ROUTES for kind in ("rider", "viewer", "unknown")
 ]
 
+# The routes that write to object storage and so need the bucket to exist. Only
+# these request the `s3_bucket` fixture: every other case runs with MinIO down
+# (t-slug-audit-minio-overrequest). A new route with a storage leg that is not
+# added here fails with a missing-bucket error on its first run, not silently.
+STORAGE_ROUTES = {("POST", "/api/trips/{slug}/stops/{stop_id}/photos")}
+
+# The create routes — the only ones taking a client-generated id, and so the
+# only ones with a 200 replay and a 409 conflict body to leak-check
+# (t-slug-audit-replay-and-conflict-bodies). Derived from the plan, not listed.
+CREATE_ROUTES = sorted(key for key, row in EXPECTED_STATUS.items() if row is CREATE)
+
 
 # --------------------------------------------------------------------------
 # Fixtures
@@ -201,15 +212,53 @@ async def seeded_stop(
 
 
 @pytest.fixture
-async def s3_bucket() -> None:
-    """The MinIO bucket the photo upload writes into — the one case with a storage leg."""
-    from app.storage.s3_client import BUCKET_NAME, get_s3_client
+async def other_trip_stop(
+    migrated_engine: AsyncEngine, seeded_trips: list[SeededTrip]
+) -> AsyncIterator[SeededStop]:
+    """
+    A stop on the *second* seeded trip — the other parent a photo id can conflict on.
 
-    s3 = get_s3_client()
+    On another trip rather than a second stop on the same one, so the 409 is
+    evaluated against a row belonging to a different trip: the one case where a
+    request made with this trip's slug touches another trip's data.
+    """
+    stop = SeededStop(id=f"test-stop-{secrets.token_urlsafe(8)}", trip_id=seeded_trips[1].id)
+
+    async with migrated_engine.begin() as conn:
+        await conn.execute(
+            tables.stops.insert().values(
+                id=stop.id,
+                trip_id=stop.trip_id,
+                name="Mataranka Springs",
+                lat=-14.9230,
+                lng=133.1340,
+                location_source="manual",
+                arrived_at=datetime(2026, 6, 16, 9, 0, tzinfo=UTC),
+                notes=None,
+            )
+        )
+
     try:
-        s3.head_bucket(Bucket=BUCKET_NAME)
-    except Exception:  # noqa: BLE001 - any failure here means "no bucket yet"
-        s3.create_bucket(Bucket=BUCKET_NAME)
+        yield stop
+    finally:
+        async with migrated_engine.begin() as conn:
+            await conn.execute(tables.stops.delete().where(tables.stops.c.id == stop.id))
+
+
+@pytest.fixture
+def bucket_if_storage_route(request: pytest.FixtureRequest) -> None:
+    """
+    ``s3_bucket``, for the parametrised cases whose route is in ``STORAGE_ROUTES`` only.
+
+    With MinIO down, only those cases error at setup — not every case in the
+    module (t-slug-audit-minio-overrequest). A fixture rather than a
+    ``getfixturevalue`` in the test body so the outage still reports as a setup
+    *error*, not as a failure of the leak check; ``pytest.param`` cannot carry
+    ``usefixtures`` (pytest rejects it at collection — checked on 9.1.1).
+    """
+    params = request.node.callspec.params
+    if (params["method"], params["path"]) in STORAGE_ROUTES:
+        request.getfixturevalue("s3_bucket")
 
 
 # --------------------------------------------------------------------------
@@ -218,7 +267,7 @@ async def s3_bucket() -> None:
 
 
 def build_request(
-    method: str, path: str, slug: str, stop_id: str, bike_id: str
+    method: str, path: str, slug: str, stop_id: str, bike_id: str, record_id: str | None = None
 ) -> tuple[str, dict[str, Any]]:
     """
     A real URL and a real request body for one (method, path).
@@ -227,14 +276,16 @@ def build_request(
     before the handler ever ran, and a 422 envelope contains no slug for the same
     reason an unsent request does — which is the vacuity this module's status
     assertions exist to rule out. Ids are fresh per call so a create is a create
-    (201) and not an idempotent replay (200).
+    (201) and not an idempotent replay (200) — unless ``record_id`` pins one,
+    which is how the replay and conflict cases reach their 200 and 409.
     """
     url = path.format(slug=slug, stop_id=stop_id, id=bike_id)
+    new_id = record_id or str(uuid4())
 
     if path.endswith("/stops") and method == "POST":
         return url, {
             "json": {
-                "id": str(uuid4()),
+                "id": new_id,
                 "name": "Larrimah",
                 "lat": -15.5787,
                 "lng": 133.2137,
@@ -247,7 +298,7 @@ def build_request(
     if path.endswith("/photos") and method == "POST":
         return url, {
             "data": {
-                "id": str(uuid4()),
+                "id": new_id,
                 "uploadedBy": "Alex",
                 "takenAt": "2026-06-15T14:35:00+09:30",
             },
@@ -257,7 +308,7 @@ def build_request(
     if path.endswith("/bikes") and method == "POST":
         return url, {
             "json": {
-                "id": str(uuid4()),
+                "id": new_id,
                 "riderName": "Alex",
                 "make": "Yamaha",
                 "model": "Tenere 700",
@@ -360,7 +411,7 @@ async def test_no_slug_value_comes_back_from_any_route(
     seeded_trips: list[SeededTrip],
     seeded_bikes: list[SeededBike],
     seeded_stop: SeededStop,
-    s3_bucket: None,
+    bucket_if_storage_route: None,
     method: str,
     path: str,
     slug_kind: str,
@@ -403,3 +454,79 @@ async def test_no_slug_value_comes_back_from_any_route(
         f"the {leaked}. A slug is the credential — it cannot be rotated without re-issuing "
         f"every link. Response: {response.text[:300]!r}"
     )
+
+
+# --------------------------------------------------------------------------
+# 3. The two create answers the fresh-id cases never reach: replay and conflict
+# --------------------------------------------------------------------------
+
+
+def test_every_create_route_has_a_replay_and_conflict_case() -> None:
+    """
+    The replay/conflict cases below cover all three create endpoints the contract names.
+
+    ``CREATE_ROUTES`` is derived from the plan, so a derivation that went empty
+    would parametrise nothing and pass; the contract fixes the number at three
+    (stops, photos, bikes — ``docs/api-contract.md``, 409 row).
+    """
+    assert len(CREATE_ROUTES) == 3, CREATE_ROUTES
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    CREATE_ROUTES,
+    ids=[f"{method} {path}" for method, path in CREATE_ROUTES],
+)
+async def test_no_slug_value_comes_back_from_a_replay_or_a_conflict(
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    seeded_bikes: list[SeededBike],
+    seeded_stop: SeededStop,
+    other_trip_stop: SeededStop,
+    bucket_if_storage_route: None,
+    method: str,
+    path: str,
+) -> None:
+    """
+    The 200-replay body and the 409 body are leak-checked too.
+
+    Every case above mints a fresh id, so each create is a 201 and these two
+    responses — both in the contract — were never produced. One pinned id:
+    created on the first trip (201), sent again to the same parent (the 200
+    replay, which returns the *stored* record, a different code path from the
+    create), then sent under the *second* trip (the 409, the one response in the
+    app that a request about one trip evaluates against another trip's row).
+    Each status is asserted before its body, for the same fail-open reason as
+    above.
+    """
+    trip, other = seeded_trips
+    record_id = str(uuid4())
+    slugs = {
+        "rider slug (the WRITE credential)": trip.rider_slug,
+        "viewer slug": trip.viewer_slug,
+        "another trip's rider slug (the WRITE credential)": other.rider_slug,
+        "another trip's viewer slug": other.viewer_slug,
+    }
+
+    async def send(slug: str, stop_id: str) -> Response:
+        url, kwargs = build_request(
+            method, path, slug, stop_id, seeded_bikes[0].id, record_id=record_id
+        )
+        return await client.request(method, url, **kwargs)
+
+    created = await send(trip.rider_slug, seeded_stop.id)
+    assert created.status_code == HTTPStatus.CREATED, created.text[:300]
+
+    for label, response, expected in (
+        ("replay", await send(trip.rider_slug, seeded_stop.id), HTTPStatus.OK),
+        ("conflict", await send(other.rider_slug, other_trip_stop.id), HTTPStatus.CONFLICT),
+    ):
+        assert response.status_code == expected, (
+            f"{method} {path} {label} answered {response.status_code}, expected {int(expected)} — "
+            f"this case proves nothing until it reaches that response. Body: {response.text[:300]!r}"
+        )
+        leaked = find_leaked_slug(response, slugs)
+        assert leaked is None, (
+            f"{method} {path} {label} ({int(expected)}) returned a body or header containing "
+            f"the {leaked}. Response: {response.text[:300]!r}"
+        )

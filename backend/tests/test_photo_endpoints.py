@@ -35,7 +35,6 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from botocore.exceptions import ClientError
 from conftest import SeededTrip
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -166,18 +165,6 @@ async def created_photo_ids(migrated_engine: AsyncEngine) -> AsyncIterator[list[
     finally:
         async with migrated_engine.begin() as conn:
             await conn.execute(tables.photos.delete().where(tables.photos.c.id.in_(ids)))
-
-
-@pytest.fixture
-async def s3_bucket() -> None:
-    """Ensure the S3 bucket exists in MinIO before photo tests run."""
-    from app.storage.s3_client import BUCKET_NAME, get_s3_client
-
-    s3 = get_s3_client()
-    try:
-        s3.head_bucket(Bucket=BUCKET_NAME)
-    except ClientError:  # head_bucket's 404/403 when the bucket does not exist yet
-        s3.create_bucket(Bucket=BUCKET_NAME)
 
 
 def upload_form(
