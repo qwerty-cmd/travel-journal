@@ -129,6 +129,11 @@ async def upload_photo(
     session: SessionDep,
     stop_id: str,
     response: Response,
+    # Inline `Form(...)` params on purpose; don't fold them into a Pydantic form model.
+    # A model carrying `UploadFile` as a field does bind on FastAPI 0.141.1, but the
+    # OpenAPI document then declares `application/x-www-form-urlencoded`, not the
+    # `multipart/form-data` the contract promises, and the Kubb client follows it.
+    # Decision-log Entry 24 (won't-fix) and Entry 16.
     id: Annotated[
         str,
         Form(
@@ -179,14 +184,24 @@ async def upload_photo(
 
     # Upload to S3, then persist the DB row
     object_key = f"{context.trip.id}/{stop_id}/{id}"
-    file_bytes = await file.read()
 
+    # Streamed from the spooled upload rather than read into memory first; boto3
+    # switches to multipart on its own above its size threshold. That is a memory
+    # choice, not resumability: a photo is one idempotent request, retried whole
+    # under the same client id by the offline queue: a replay is answered above
+    # with no storage write, and the deterministic key means a retry after a
+    # failed insert overwrites rather than duplicates (decision-log Entry 20). This
+    # block is where "add resumable multipart" would be re-proposed -- read
+    # Entry 20 first.
     s3 = get_s3_client()
-    await asyncio.to_thread(
-        partial(s3.put_object, Bucket=BUCKET_NAME, Key=object_key, Body=file_bytes)
-    )
+    await asyncio.to_thread(partial(s3.upload_fileobj, file.file, BUCKET_NAME, object_key))
 
     photo = await insert(
-        session, stop_id, id, uploadedBy, takenAt, object_key,
+        session,
+        stop_id,
+        id,
+        uploadedBy,
+        takenAt,
+        object_key,
     )
     return photo

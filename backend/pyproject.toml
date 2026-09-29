@@ -26,3 +26,6 @@ line-length = 100
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The project has no [build-system], so uv never installs it into the venv;
+# this is what makes `import app` work under any pytest invocation.
+pythonpath = ["."]

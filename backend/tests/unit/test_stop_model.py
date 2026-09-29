@@ -105,7 +105,7 @@ def test_naive_arrived_at_is_rejected() -> None:
     because a surfaced error is recoverable and a stop silently filed at the
     wrong hour is not.
     """
-    naive = datetime(2026, 6, 14, 9, 30)
+    naive = datetime(2026, 6, 14, 9, 30)  # noqa: DTZ001 - a naive value is the input under test
     assert naive.tzinfo is None  # the premise of the test, not an assumption
 
     with pytest.raises(ValidationError) as caught:

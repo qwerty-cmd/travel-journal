@@ -37,13 +37,11 @@ from uuid import uuid4
 import pytest
 from conftest import SeededTrip
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.data import tables
 from app.data.db import get_session
 from app.models.common import ErrorCode, ErrorEnvelope
-from app.models.photo import PhotoOut
 
 PHOTOS_PATH = "/api/trips/{slug}/stops/{stop_id}/photos"
 
@@ -169,18 +167,6 @@ async def created_photo_ids(migrated_engine: AsyncEngine) -> AsyncIterator[list[
             await conn.execute(tables.photos.delete().where(tables.photos.c.id.in_(ids)))
 
 
-@pytest.fixture
-async def s3_bucket() -> None:
-    """Ensure the S3 bucket exists in MinIO before photo tests run."""
-    from app.storage.s3_client import BUCKET_NAME, get_s3_client
-
-    s3 = get_s3_client()
-    try:
-        s3.head_bucket(Bucket=BUCKET_NAME)
-    except Exception:
-        s3.create_bucket(Bucket=BUCKET_NAME)
-
-
 def upload_form(
     photo_id: str | None = None,
     uploaded_by: str = "Alice",
@@ -202,9 +188,7 @@ def fake_file(content: bytes = b"fake-jpeg-bytes", filename: str = "photo.jpg"):
 async def photo_rows_for_id(engine: AsyncEngine, photo_id: str) -> list[Any]:
     """Every photos row with this id, read straight from the table."""
     async with engine.connect() as conn:
-        result = await conn.execute(
-            tables.photos.select().where(tables.photos.c.id == photo_id)
-        )
+        result = await conn.execute(tables.photos.select().where(tables.photos.c.id == photo_id))
         return list(result.mappings())
 
 
@@ -676,9 +660,7 @@ class TestTakenAtIsOffsetAware:
         stop = seeded_stops[0]
         url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
 
-        response = await client.post(
-            url, data=upload_form(taken_at=taken_at), files=fake_file()
-        )
+        response = await client.post(url, data=upload_form(taken_at=taken_at), files=fake_file())
 
         assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
         assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR
@@ -755,18 +737,17 @@ class TestTakenAtIsOffsetAware:
         zone, so a host-local re-resolution cannot coincidentally land on the right
         answer.
 
-        Compared as datetimes on purpose. The ``201`` body echoes the offset the
-        device sent while the column and every read-back are UTC, so one correct
-        instant has two spellings and a string comparison would fail on a
-        difference that is not a defect.
+        Compared as datetimes on purpose. The ``201`` body comes from the stored
+        row (``t-photo-insert-echoes-argument``), so it is UTC like the column and
+        every read-back, while ``submitted`` carries ``+09:30``. The instants match
+        and the spellings don't, so a string comparison would fail on a difference
+        that is not a defect.
         """
         trip = seeded_trips[0]
         stop = seeded_stops[0]
         url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id)
 
-        submitted = datetime(
-            2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30))
-        )
+        submitted = datetime(2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30)))
         form = upload_form(taken_at=submitted.isoformat())
         created_photo_ids.append(form["id"])
 

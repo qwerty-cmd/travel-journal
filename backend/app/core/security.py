@@ -186,6 +186,13 @@ async def require_rider_access(
     viewer slug. The order matters: an unknown slug must never reach the
     permission check, or the two answers become distinguishable to someone
     guessing links (see the module docstring).
+
+    FastAPI parses the request body before it solves dependencies, so a body
+    that isn't valid JSON gets a 422 before this guard runs. That 422 is
+    byte-identical for rider, viewer and unknown slugs, so it reveals nothing
+    about the slug. Don't add a second slug check ahead of body parsing to
+    "fix" the order: it would be a second copy of this guard that can drift
+    from it. Decision-log Entry 23 (won't-fix).
     """
     context = await _resolve_trip(slug, session)
     if context.access is not Access.RIDER:

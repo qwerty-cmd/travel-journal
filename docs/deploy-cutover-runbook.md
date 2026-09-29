@@ -58,13 +58,34 @@ Tick each box as you go.
     Microsoft accounts"**. The sync and the helper below use the `/common` endpoint, which only accepts a
     personal account under this setting.
   - Grant the delegated `Files.ReadWrite` and `offline_access` permissions.
-  - Add a redirect URI on the **Web** platform, exactly `http://localhost:8765`, and create a client secret.
-  - Put `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` in `backend/.env`. Then, in your own terminal (never
-    an agent session), run `cd backend && uv run python -m app.storage.get_refresh_token`. Run it from
-    `backend/` so the full `.env` loads: it needs the database and S3 settings too, not just `GRAPH_*`.
-    It opens the browser for consent and prints the refresh token once.
-  - Store the printed token in your password manager and as the Azure secret `GRAPH_REFRESH_TOKEN`.
-    Never commit it or paste it into chat.
+  - Add a platform of type **Web** and register the redirect URI `http://localhost:8765` on it.
+  - Create a client secret.
+  - Get the refresh token with the one-time helper (`t-graph-refresh-token-helper`). **You run this
+    yourself in your own terminal, never an agent.** It opens a real Microsoft sign-in and prints a
+    live credential.
+    1. Make sure `backend/.env` is complete. `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` must be set, and
+       so must `DATABASE_URL` and the `S3_*` vars, because settings are validated as a whole. If
+       something is missing, the helper lists the missing field names (never their values) and stops.
+    2. Run `cd backend && uv run python -m app.storage.get_refresh_token`.
+    3. Sign in with the Microsoft account whose OneDrive gets the archive, and accept the consent
+       prompt. If the browser doesn't open, visit the URL the helper prints.
+    4. Copy the refresh token it prints into your password manager and into the Azure secret
+       `GRAPH_REFRESH_TOKEN` (step 2). The helper writes no file.
+    5. Never paste the token into chat, including an agent session, and never commit it.
+  - **When to mint, and how long it lasts** (decision-log Entry 22). The sync reuses this one token for
+    the whole trip. It works until about **90 days after you mint it** (Microsoft publishes no exact
+    number for personal accounts, so treat 90 as approximate).
+    - Mint it **as close to departure as practical**.
+    - Record two dates in your password manager, next to the secrets: the **mint date**, and the
+      **client secret's expiry date** (shown in the app registration when you created the secret).
+      An expired client secret also stops the token working.
+    - Check that **mint date + 90 days falls after the trip ends**, and that the client secret expires
+      after the trip ends too. If either doesn't, re-mint closer to departure or create a longer-lived
+      client secret.
+    - The token can also die early if you revoke your Microsoft sessions, remove the app's consent, or
+      reset your password.
+    - **Re-minting** means re-running the helper above, then updating `GRAPH_REFRESH_TOKEN` on **both**
+      the Container App and the OneDrive sync Job. They have separate secret stores.
   - The exact scope and request shape have not been checked against Graph. Step 5 checks them.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
@@ -90,7 +111,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
 | `S3_REGION` | plain env | `auto` |
 | `GRAPH_CLIENT_ID` | secret | app registration |
 | `GRAPH_CLIENT_SECRET` | secret | app registration |
-| `GRAPH_REFRESH_TOKEN` | secret | OAuth consent |
+| `GRAPH_REFRESH_TOKEN` | secret | printed by the `get_refresh_token` helper (step 1) |
 | `GRAPH_ONEDRIVE_FOLDER` | plain env | target folder path |
 | `ENVIRONMENT` | plain env | a non-`local` value |
 
@@ -136,10 +157,27 @@ Only you do this, because it needs real `GRAPH_*` values.
   `conflictBehavior` placement are all **unverified** until this passes.
 - [ ] If the uploaded filename looks wrong, check `t-onedrive-filename-url-encoding`. That one-line
   fix was meant to be folded into this task.
-- [ ] Run it again close to departure, so the refresh token is known to be healthy when the trip starts.
+- [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
+  token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
+  the app and the Job both carry that new token.
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
+
+### If archiving stops mid-trip
+
+Nothing is lost. Photos stay in R2, which is the real copy, and OneDrive is only an archive. The next
+successful run after the fix archives everything that was missed.
+
+- [ ] **Check the Job's logs.** A token problem looks like `Graph token request rejected: HTTP <status>`
+  followed by `No Graph access token -- run aborted, nothing archived`. The log does not yet say *why*
+  the token was rejected (`t-graph-token-error-code-logging`), so if Microsoft itself is having an
+  outage the lines look the same. If the rejection keeps happening across several runs, treat it as an
+  expired or revoked token.
+- [ ] **Re-mint** the refresh token with the helper (step 1), in your own terminal.
+- [ ] **Update `GRAPH_REFRESH_TOKEN`** on both the Container App and the sync Job.
+- [ ] If re-minting fails too, check whether the client secret has expired (step 1, the date you
+  recorded). If it has, create a new one and update `GRAPH_CLIENT_SECRET` in both places first.
 
 ## 6. Deploy (following `.claude/skills/deploy/SKILL.md`)
 
@@ -183,8 +221,9 @@ devops runs these steps after you have confirmed the cutover.
 
 ## Triggered debt to decide at cutover
 
-This cutover fires the triggers on the four items below. A fired trigger is not approval: each still
-goes through `ba` and the pipeline, or you decide to accept it.
+This cutover fires the triggers on the items below. (`t-onedrive-main-untested` is ordinary debt, not
+triggered debt: provisioning the Job is the point where it gets re-classified.) A fired trigger is not
+approval: each still goes through `ba` and the pipeline, or you decide to accept it.
 
 | Task | Why it matters now | Options |
 |---|---|---|
@@ -192,3 +231,6 @@ goes through `ba` and the pipeline, or you decide to accept it.
 | `t-access-log-slug-exposure` | The uvicorn access log records trip slugs from request URLs. Container Apps sends stdout to Log Analytics by default, so the slugs become stored and searchable. | Accept it, turn off the Log Analytics destination, or add a uvicorn flag or logging config at startup (devops). **Don't** have the app reconfigure `uvicorn.access` at import time: that approach was rejected (decision-log Entries 7b and 13; `core/errors.py`). |
 | `t-dockerignore-route-tree` | A build from a dev working tree carries a stale `routeTree.gen.ts` into the image. | Build from a fresh clone (step 3). Add the file to `.dockerignore` if any CI or build step reads `frontend/src/` before `vite build`. |
 | `t-onedrive-preflight-check` | Nothing is known about whether Graph accepts the request until this runs. | Step 5. Scheduling is decided (step 0, `t-onedrive-sync-scheduler`), so once the job exists, follow step 5's caveat about overlapping runs. |
+| `t-settings-error-hides-input` | If an app revision or the sync Job starts with a required env var missing, pydantic's `ValidationError` includes `input_value` tails of the other settings, **including the `GRAPH_*` secrets**. That stderr goes to the platform logs. | **Recommended before you provision the app or the Job (step 1):** have dev add `hide_input_in_errors=True` to `Settings.model_config` in `backend/app/core/config.py`. Until then, check that every secret in step 2 is set before the first revision or Job run starts. |
+| `t-onedrive-per-photo-isolation` | Fires once the sync Job is actually scheduled (step 1). The S3 read and the read of Graph's returned `id` sit outside the per-photo `try`, so a missing S3 object or a 2xx body without an `id` aborts the whole run instead of skipping that one photo. No path today produces either case, and qa confirmed the traceback leaks no secret. | Accept it, or have dev move both statements inside the existing `try` and `continue`, the same way HTTP failures are handled. |
+| `t-onedrive-main-untested` | `main()`'s configured path (real session, real repositories, real refresh token) has no automated test. qa verified it is correct by running it, so what's missing is regression protection. Once the Job is provisioned, `main()` has a real consumer. | Re-classify it when the Job is provisioned (step 1), not before. |

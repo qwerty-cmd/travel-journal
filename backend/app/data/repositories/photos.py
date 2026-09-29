@@ -88,7 +88,9 @@ async def list_by_stop(session: AsyncSession, stop_id: str) -> list[PhotoOut]:
 
 
 async def find_existing(
-    session: AsyncSession, stop_id: str, photo_id: str,
+    session: AsyncSession,
+    stop_id: str,
+    photo_id: str,
 ) -> PhotoOut | None:
     """
     If this photo id already exists on this stop, return the stored PhotoOut.
@@ -121,33 +123,46 @@ async def check_id_conflict(session: AsyncSession, photo_id: str) -> bool:
 
 
 async def insert(
-    session: AsyncSession, stop_id: str, photo_id: str, uploaded_by: str,
-    taken_at, object_key: str,
+    session: AsyncSession,
+    stop_id: str,
+    photo_id: str,
+    uploaded_by: str,
+    taken_at,
+    object_key: str,
 ) -> PhotoOut:
     """
     Insert a new photo row. Caller must have already checked for replay/conflict.
+
+    The ``PhotoOut`` is built from the row as stored (``RETURNING``), not from
+    the arguments: ``taken_at`` goes in with the device's offset and comes back
+    from ``timestamptz`` as UTC, so echoing the argument made a ``201`` spell
+    the same instant differently from its own ``200`` replay.
     """
-    await session.execute(
-        photos.insert().values(
-            id=photo_id,
-            stop_id=stop_id,
-            object_key=object_key,
-            uploaded_by=uploaded_by,
-            taken_at=taken_at,
+    stored = (
+        await session.execute(
+            photos.insert()
+            .values(
+                id=photo_id,
+                stop_id=stop_id,
+                object_key=object_key,
+                uploaded_by=uploaded_by,
+                taken_at=taken_at,
+            )
+            .returning(
+                photos.c.id,
+                photos.c.stop_id,
+                photos.c.object_key,
+                photos.c.one_drive_file_id,
+                photos.c.uploaded_by,
+                photos.c.taken_at,
+            )
         )
-    )
+    ).one()
     await session.commit()
 
     s3 = get_s3_client()
-    url = await _presign_async(s3, object_key)
-    return PhotoOut(
-        id=photo_id,
-        stopId=stop_id,
-        url=url,
-        uploadedBy=uploaded_by,
-        takenAt=taken_at,
-        archived=False,
-    )
+    url = await _presign_async(s3, stored.object_key)
+    return _row_to_photo_sync(stored, url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +179,8 @@ class PendingArchivePhoto:
 
 
 async def list_pending_archive(
-    session: AsyncSession, limit: int,
+    session: AsyncSession,
+    limit: int,
 ) -> list[PendingArchivePhoto]:
     """
     Photos that have never been archived (``one_drive_file_id IS NULL``), across
@@ -176,7 +192,12 @@ async def list_pending_archive(
     crashes leaves the row untouched and the next run re-selects it.
 
     Presigns nothing -- the sync reads bytes from S3 directly.
+
+    ``limit`` must be at least 1: a negative value would otherwise surface as a
+    raw driver error, and ``0`` would be a sweep that can never make progress.
     """
+    if limit < 1:
+        raise ValueError(f"limit must be at least 1, got {limit!r}")
     statement = (
         select(photos.c.id, photos.c.object_key)
         .where(photos.c.one_drive_file_id.is_(None))
@@ -188,20 +209,27 @@ async def list_pending_archive(
 
 
 async def mark_archived(
-    session: AsyncSession, photo_id: str, one_drive_file_id: str,
+    session: AsyncSession,
+    photo_id: str,
+    one_drive_file_id: str,
 ) -> int:
     """
     Record that this photo now exists in OneDrive, by setting its
     ``one_drive_file_id`` -- the only column touched, on the only row matched.
     ``PhotoOut.archived`` is derived from it, never stored.
 
-    Returns the number of rows updated: 0 means that photo is gone (its stop
-    was cascade-deleted mid-run), which the caller can tell from a write
-    without a second query.
+    Returns the number of rows updated: 0 means nothing was written -- either
+    the photo is gone (its stop was cascade-deleted mid-run) or it already has
+    a ``one_drive_file_id``. The caller can tell from a write without a second
+    query.
+
+    The update only matches a row that is still unarchived, so a second write
+    (two overlapping sweeps selecting the same row) never replaces a file id
+    that is already recorded and leaves the first OneDrive copy unreferenced.
     """
     result = await session.execute(
         photos.update()
-        .where(photos.c.id == photo_id)
+        .where(photos.c.id == photo_id, photos.c.one_drive_file_id.is_(None))
         .values(one_drive_file_id=one_drive_file_id)
     )
     await session.commit()

@@ -168,7 +168,9 @@ async def seeded_stops(
 
 
 @pytest.fixture
-async def single_stop_trip(migrated_engine: AsyncEngine) -> AsyncIterator[tuple[SeededTrip, SeededStop]]:
+async def single_stop_trip(
+    migrated_engine: AsyncEngine,
+) -> AsyncIterator[tuple[SeededTrip, SeededStop]]:
     """A trip with exactly one stop -- for testing the no-trail case."""
     trip = SeededTrip(
         id=f"test-trip-{secrets.token_urlsafe(8)}",
@@ -608,6 +610,7 @@ async def test_no_slug_appears_in_the_response(
 
 def _openapi() -> dict[str, Any]:
     import app.main
+
     return app.main.app.openapi()
 
 

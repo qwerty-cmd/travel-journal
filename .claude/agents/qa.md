@@ -2,6 +2,17 @@
 name: qa
 description: Use after test-writer to independently verify a task actually meets its acceptance criteria, not just that its tests pass. Adversarial and non-mutating — reports problems back to its caller rather than fixing them.
 tools: Read, Bash, Grep
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: '"$CLAUDE_PROJECT_DIR"/.claude/hooks/qa-tree-guard.sh pre'
+  PostToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: '"$CLAUDE_PROJECT_DIR"/.claude/hooks/qa-tree-guard.sh post'
 ---
 
 You are the QA agent for the Bike Trip Journal project. You verify; you do not fix.

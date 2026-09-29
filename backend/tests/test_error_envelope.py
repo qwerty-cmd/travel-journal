@@ -1511,3 +1511,55 @@ def test_spa_unknown_api_path_is_404_under_every_verb(spa_client: TestClient, me
     else:
         assert response.content, f"{method} must answer with an envelope body, not an empty one"
         assert assert_envelope(response).code is ErrorCode.NOT_FOUND, method
+
+
+# --------------------------------------------------------------------------
+# 7. An empty request body names its subject (t-validation-empty-body-message)
+# --------------------------------------------------------------------------
+
+EMPTY_BODY_MESSAGE = "The request could not be validated. The request body is missing."
+
+
+def test_empty_body_message_names_the_body(client: TestClient) -> None:
+    """
+    No body at all -> FastAPI's `missing` at `loc == ("body",)`. The message says
+    the body is missing instead of a bare, subject-less `Field required`.
+    """
+    response = client.post("/probe/validate", headers={"content-type": "application/json"})
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    detail = assert_envelope(response)
+    assert detail.code is ErrorCode.VALIDATION_ERROR
+    assert detail.message == EMPTY_BODY_MESSAGE
+
+
+def test_empty_body_without_content_type_gets_the_same_message(client: TestClient) -> None:
+    """The same condition whether or not the client declared a JSON content type."""
+    response = client.post("/probe/validate")
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert assert_envelope(response).message == EMPTY_BODY_MESSAGE
+
+
+def test_missing_named_field_still_names_the_field(client: TestClient) -> None:
+    """The branch is keyed on the exact pair; `missing` on a real field is unchanged."""
+    response = client.post("/probe/validate", json={})
+
+    assert assert_envelope(response).message == (
+        "The request could not be validated. distance_km: Field required"
+    )
+
+
+def test_format_validation_errors_empty_body_branch_is_exact() -> None:
+    """Only `missing` + `("body",)` takes the branch -- not another type at that loc."""
+    from app.core.errors import _format_validation_errors
+
+    empty = [{"type": "missing", "loc": ("body",), "msg": "Field required"}]
+    not_an_object = [
+        {"type": "model_attributes_type", "loc": ("body",), "msg": "Input should be an object"}
+    ]
+
+    assert _format_validation_errors(empty) == EMPTY_BODY_MESSAGE
+    assert _format_validation_errors(not_an_object) == (
+        "The request could not be validated. Input should be an object"
+    )

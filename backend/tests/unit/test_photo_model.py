@@ -107,7 +107,9 @@ def test_taken_at_description_carries_the_timezone_ruling() -> None:
     text = (PhotoOut.model_fields["takenAt"].description or "").lower()
 
     for claim in ("timezone-aware", "offset", "utc", "422"):
-        assert claim in text, f"PhotoOut.takenAt's description dropped the timezone claim: {claim!r}"
+        assert claim in text, (
+            f"PhotoOut.takenAt's description dropped the timezone claim: {claim!r}"
+        )
 
 
 # --------------------------------------------------------------------------

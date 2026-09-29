@@ -1,359 +1,612 @@
 """
-Tests for the one-time Graph refresh-token helper (``app.storage.get_refresh_token``).
+The one-time Graph refresh-token helper -- ``app/storage/get_refresh_token.py``.
 
-No real network, browser or port: token calls go through ``httpx.MockTransport``,
-``webbrowser.open`` is recorded, and the one-shot redirect server is either
-replaced or given a fake in-memory connection. The secrets checks run over
-captured stdout + stderr.
+Implementation-following tests (not a priority-tier module): they cover the
+pure pieces of the PKCE authorization-code flow -- building the authorize URL,
+parsing the single redirect, redeeming the code -- plus ``main()``: its refusal to
+start without client credentials or with invalid settings, and one full
+success path (PKCE challenge derivation, stdout secrecy).
+
+**Nothing here opens a browser, binds a socket or reaches the network.** The
+token endpoint is faked at the wire with ``httpx.MockTransport``, and every test
+of ``main()`` replaces ``webbrowser.open`` and ``_wait_for_redirect`` with
+functions that fail the test if they are ever called.
+
+Secrets are sentinels chosen to be unmistakable, so the secrecy assertions can
+search every ``SystemExit`` message for them.
 """
 
 from __future__ import annotations
 
 import base64
-import builtins
 import hashlib
-import io
+import http.server
+import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable
+from pathlib import Path
+from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import pytest
 
 from app.core.config import Settings
-from app.storage import get_refresh_token as mod
-from app.storage.onedrive_sync import TOKEN_URL
+from app.storage import get_refresh_token as helper
 
-CLIENT_ID = "client-id-123"
-CLIENT_SECRET = "s3cr3t-CLIENT-value"
-CODE = "AUTH-CODE-xyz789"
-ACCESS_TOKEN = "ACCESS-TOKEN-must-not-leak"
-REFRESH_TOKEN = "REFRESH-TOKEN-abc456"
-STORE_LINE = (
-    "store this in your password manager / Azure secret (GRAPH_REFRESH_TOKEN); "
-    "never commit it or paste it into chat"
-)
+TOKEN_URL = helper.TOKEN_URL
+
+CLIENT_ID = "client-id-SENTINEL-4f1c"
+CLIENT_SECRET = "client-secret-SENTINEL-9b2e"
+AUTH_CODE = "auth-code-SENTINEL-7d3a"
+VERIFIER = "pkce-verifier-SENTINEL-1e8f"
+REFRESH_TOKEN = "refresh-token-SENTINEL-c05d"
+STATE = "state-SENTINEL-66aa"
+CHALLENGE = "challenge-SENTINEL-2b7c"
+
+ACCESS_TOKEN = "access-token-SENTINEL-a11e"
+
+SECRETS = (CLIENT_SECRET, AUTH_CODE, VERIFIER)
 
 
 def _settings(client_id: str = CLIENT_ID, client_secret: str = CLIENT_SECRET) -> Settings:
-    # model_construct: no validation, no .env read.
-    return Settings.model_construct(graph_client_id=client_id, graph_client_secret=client_secret)
+    # model_construct: no env/.env lookup, so the Graph values are exactly these.
+    return Settings.model_construct(
+        graph_client_id=client_id,
+        graph_client_secret=client_secret,
+        graph_refresh_token="",
+    )
 
 
-def _query(url: str) -> dict[str, str]:
-    return {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+def _assert_no_secrets(message: object) -> None:
+    text = str(message)
+    for secret in SECRETS:
+        assert secret not in text, f"SystemExit message leaked a secret: {text!r}"
 
 
-def _exit_message(exc: pytest.ExceptionInfo[SystemExit]) -> str:
-    # SystemExit(str) -> Python prints it to stderr and exits 1.
-    assert isinstance(exc.value.code, str), "must exit non-zero with a message"
-    return exc.value.code
+# --------------------------------------------------------------------------- #
+# TOKEN_URL
+# --------------------------------------------------------------------------- #
 
 
-def _token_client(status: int, body: dict | str, seen: list[httpx.Request]) -> httpx.Client:
-    def handler(request: httpx.Request) -> httpx.Response:
+def test_token_url_matches_onedrive_sync() -> None:
+    # Imported here only: onedrive_sync pulls in s3_client, which loads settings.
+    from app.storage import onedrive_sync
+
+    assert helper.TOKEN_URL == onedrive_sync.TOKEN_URL
+
+
+# --------------------------------------------------------------------------- #
+# Running the module: import must not load settings
+# --------------------------------------------------------------------------- #
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# Sentinels for the subprocess run. Deliberately free of ordinary words so that a
+# fragment search over the output cannot collide with the helper's own messages.
+SUBPROCESS_SENTINELS = {
+    "GRAPH_CLIENT_ID": "SENTINEL-gcid-Qx7vP2mK9wLz",
+    "GRAPH_CLIENT_SECRET": "SENTINEL-gsec-Hb4TnR8jYc3e",
+    "GRAPH_REFRESH_TOKEN": "SENTINEL-grt-Vd6uZq1XoF5s",
+}
+_KEPT_ENV = ("PATH", "HOME", "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "UV_PROJECT_ENVIRONMENT")
+
+
+def _fragments(value: str, width: int = 8) -> list[str]:
+    return [value[i : i + width] for i in range(len(value) - width + 1)]
+
+
+def test_running_the_helper_without_settings_exits_cleanly_and_leaks_nothing() -> None:
+    """Regression guard for the round-1 leak.
+
+    If the module imports anything that loads settings at import time (e.g.
+    ``from app.storage.onedrive_sync import TOKEN_URL``, which pulls in
+    ``s3_client``), the ValidationError escapes ``main()``'s handler: the run
+    dies with a traceback, and without ``hide_input_in_errors`` that traceback
+    echoes env values. ``main()`` itself must turn the same failure into a
+    field-names-only exit before it gets anywhere near the browser.
+    """
+    if (BACKEND_DIR / ".env").exists():
+        pytest.skip("backend/.env exists; Settings would read it and mask the missing vars")
+
+    env = {name: os.environ[name] for name in _KEPT_ENV if name in os.environ}
+    env.update(SUBPROCESS_SENTINELS)
+    assert not any(k == "DATABASE_URL" or k.startswith("S3_") for k in env)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "app.storage.get_refresh_token"],
+        cwd=BACKEND_DIR,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "Traceback" not in output, output
+    assert "Opening your browser" not in output, output
+    # Fragments, not whole values: pydantic truncates long reprs ('SENT...TINEL-...').
+    for value in SUBPROCESS_SENTINELS.values():
+        for fragment in _fragments(value):
+            assert fragment not in output, f"sentinel fragment {fragment!r} leaked: {output!r}"
+    assert "DATABASE_URL" in result.stderr, output  # main()'s field-names-only exit
+
+
+# --------------------------------------------------------------------------- #
+# build_authorize_url
+# --------------------------------------------------------------------------- #
+
+
+def test_authorize_url_targets_the_same_tenant_endpoint_as_token_url() -> None:
+    url = urlsplit(helper.build_authorize_url(CLIENT_ID, STATE, CHALLENGE))
+    token = urlsplit(TOKEN_URL)
+
+    assert (url.scheme, url.netloc) == (token.scheme, token.netloc)
+    assert url.path == token.path.removesuffix("/token") + "/authorize"
+
+
+def test_authorize_url_carries_the_pkce_code_flow_parameters() -> None:
+    query = parse_qs(urlsplit(helper.build_authorize_url(CLIENT_ID, STATE, CHALLENGE)).query)
+    params = {k: v[0] for k, v in query.items()}
+
+    assert all(len(v) == 1 for v in query.values())
+    assert params["client_id"] == CLIENT_ID
+    assert params["response_type"] == "code"
+    assert params["redirect_uri"] == "http://localhost:8765"
+    assert params["state"] == STATE
+    assert params["code_challenge"] == CHALLENGE
+    assert params["code_challenge_method"] == "S256"
+    scopes = params["scope"].split()
+    assert "offline_access" in scopes
+    assert "Files.ReadWrite" in scopes
+
+
+# --------------------------------------------------------------------------- #
+# parse_redirect
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_redirect_returns_the_code() -> None:
+    assert helper.parse_redirect(f"/?code={AUTH_CODE}&state={STATE}", STATE) == AUTH_CODE
+
+
+def test_parse_redirect_exits_on_error_param() -> None:
+    with pytest.raises(SystemExit) as exc:
+        helper.parse_redirect(
+            f"/?error=access_denied&error_description=user+cancelled&state={STATE}", STATE
+        )
+    assert exc.value.code not in (0, None)
+    assert "access_denied" in str(exc.value.code)
+
+
+def test_parse_redirect_exits_on_state_mismatch() -> None:
+    with pytest.raises(SystemExit) as exc:
+        helper.parse_redirect(f"/?code={AUTH_CODE}&state=someone-elses-state", STATE)
+    assert exc.value.code not in (0, None)
+    assert "state" in str(exc.value.code)
+    _assert_no_secrets(exc.value.code)
+
+
+def test_parse_redirect_exits_on_missing_state() -> None:
+    with pytest.raises(SystemExit) as exc:
+        helper.parse_redirect(f"/?code={AUTH_CODE}", STATE)
+    assert exc.value.code not in (0, None)
+    _assert_no_secrets(exc.value.code)
+
+
+def test_parse_redirect_exits_on_missing_code() -> None:
+    with pytest.raises(SystemExit) as exc:
+        helper.parse_redirect(f"/?state={STATE}", STATE)
+    assert exc.value.code not in (0, None)
+
+
+def test_parse_redirect_exits_on_empty_path() -> None:
+    # _wait_for_redirect returns "" if no request was captured.
+    with pytest.raises(SystemExit) as exc:
+        helper.parse_redirect("", STATE)
+    assert exc.value.code not in (0, None)
+
+
+# --------------------------------------------------------------------------- #
+# exchange_code
+# --------------------------------------------------------------------------- #
+
+
+def _client(*, respond: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(respond))
+
+
+def _assert_nothing_secret_printed(capsys: pytest.CaptureFixture[str]) -> None:
+    """The error path must not print the request or the response body on its way out.
+
+    The SystemExit message is checked separately; this catches a stray
+    ``print(body)`` / ``print(response.text)`` before the raise.
+    """
+    out = capsys.readouterr()
+    printed = out.out + out.err
+    for secret in (*SECRETS, ACCESS_TOKEN):
+        assert secret not in printed, f"exchange_code printed a secret: {printed!r}"
+
+
+def test_exchange_code_returns_the_refresh_token() -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": "at", "refresh_token": REFRESH_TOKEN, "token_type": "Bearer"},
+        )
+
+    with _client(respond=respond) as client:
+        assert helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings()) == REFRESH_TOKEN
+
+
+def test_exchange_code_posts_the_authorization_code_grant() -> None:
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        if isinstance(body, str):
-            return httpx.Response(status, text=body)
-        return httpx.Response(status, json=body)
+        return httpx.Response(200, json={"refresh_token": REFRESH_TOKEN})
 
-    return httpx.Client(transport=httpx.MockTransport(handler))
+    with _client(respond=respond) as client:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
 
-
-# --- AC1: authorize URL ---------------------------------------------------------
-
-
-def test_authorize_url_targets_common_authorize_with_all_params() -> None:
-    url = mod.build_authorize_url(CLIENT_ID, "STATE", "CHALLENGE")
-    parts = urlsplit(url)
-    assert parts.scheme == "https"
-    assert parts.netloc == "login.microsoftonline.com"
-    assert parts.path == "/common/oauth2/v2.0/authorize"
-    assert urlsplit(TOKEN_URL).path.replace("/token", "/authorize") == parts.path
-    q = _query(url)
-    assert q["client_id"] == CLIENT_ID
-    assert q["response_type"] == "code"
-    assert q["redirect_uri"] == "http://localhost:8765"
-    assert q["response_mode"] == "query"
-    assert {"offline_access", "Files.ReadWrite"} <= set(q["scope"].split())
-    assert q["state"] == "STATE"
-    assert q["code_challenge"] == "CHALLENGE"
-    assert q["code_challenge_method"] == "S256"
+    assert len(seen) == 1
+    request = seen[0]
+    assert request.method == "POST"
+    assert str(request.url) == TOKEN_URL
+    assert request.headers["content-type"].startswith("application/x-www-form-urlencoded")
+    form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+    assert form["grant_type"] == "authorization_code"
+    assert form["code"] == AUTH_CODE
+    assert form["code_verifier"] == VERIFIER
+    assert form["redirect_uri"] == "http://localhost:8765"
+    assert form["client_id"] == CLIENT_ID
+    assert form["client_secret"] == CLIENT_SECRET
 
 
-# --- AC3: redirect parsing -------------------------------------------------------
+def test_exchange_code_non_2xx_exits_with_only_graphs_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error": "invalid_grant",
+                "error_description": "AADSTS70008: The provided authorization code has expired.",
+                "trace_id": "trace-should-not-matter",
+            },
+        )
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    message = str(exc.value.code)
+    assert exc.value.code not in (0, None)
+    assert "invalid_grant" in message
+    assert "AADSTS70008" in message
+    assert "400" in message
+    _assert_no_secrets(message)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_parse_redirect_matching_state_returns_code() -> None:
-    assert mod.parse_redirect(f"/?code={CODE}&state=S1", "S1") == CODE
+def test_exchange_code_2xx_without_refresh_token_exits(capsys: pytest.CaptureFixture[str]) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "at", "token_type": "Bearer"})
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    assert exc.value.code not in (0, None)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-@pytest.mark.parametrize("path", [f"/?code={CODE}&state=OTHER", f"/?code={CODE}", "/"])
-def test_parse_redirect_bad_or_missing_state_exits(path: str) -> None:
-    with pytest.raises(SystemExit) as exc:
-        mod.parse_redirect(path, "S1")
-    msg = _exit_message(exc)
-    assert "state mismatch" in msg
-    assert CODE not in msg
+def test_exchange_code_2xx_with_empty_refresh_token_exits(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"refresh_token": ""})
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit):
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_parse_redirect_error_param_exits_with_error_and_description() -> None:
-    path = "/?error=access_denied&error_description=The+user+declined&state=S1"
-    with pytest.raises(SystemExit) as exc:
-        mod.parse_redirect(path, "S1")
-    msg = _exit_message(exc)
-    assert "access_denied" in msg
-    assert "The user declined" in msg
+def test_exchange_code_non_json_error_body_is_handled(capsys: pytest.CaptureFixture[str]) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502, text="<html>Bad Gateway</html>", headers={"content-type": "text/html"}
+        )
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    message = str(exc.value.code)
+    assert exc.value.code not in (0, None)
+    assert "502" in message
+    _assert_no_secrets(message)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_parse_redirect_matching_state_without_code_exits() -> None:
-    with pytest.raises(SystemExit) as exc:
-        mod.parse_redirect("/?state=S1", "S1")
-    _exit_message(exc)
+def test_exchange_code_non_json_2xx_body_exits(capsys: pytest.CaptureFixture[str]) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json")
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-# --- AC4 / AC5: token exchange ---------------------------------------------------
+def test_exchange_code_non_dict_json_body_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1])
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    assert exc.value.code not in (0, None)
+    assert isinstance(exc.value.code, str)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_posts_full_form_and_returns_refresh_token() -> None:
-    seen: list[httpx.Request] = []
-    body = {"access_token": ACCESS_TOKEN, "refresh_token": REFRESH_TOKEN}
-    with _token_client(200, body, seen) as client:
-        assert mod.exchange_code(client, CODE, "VERIFIER", _settings()) == REFRESH_TOKEN
+def test_exchange_code_non_dict_json_error_body_exits_cleanly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json=[1])
 
-    [req] = seen
-    assert req.method == "POST"
-    assert str(req.url) == TOKEN_URL
-    assert req.headers["content-type"] == "application/x-www-form-urlencoded"
-    form = {k: v[0] for k, v in parse_qs(req.content.decode()).items()}
-    assert form == {
-        "grant_type": "authorization_code",
-        "code": CODE,
-        "redirect_uri": _query(mod.build_authorize_url(CLIENT_ID, "s", "c"))["redirect_uri"],
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "scope": "offline_access Files.ReadWrite",
-        "code_verifier": "VERIFIER",
-    }
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+
+    assert exc.value.code not in (0, None)
+    assert "400" in str(exc.value.code)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-@pytest.mark.parametrize("status", [400, 401, 500])
-def test_exchange_code_non_2xx_exits_with_only_graph_error(status: int) -> None:
-    seen: list[httpx.Request] = []
-    body = {
-        "error": "invalid_grant",
-        "error_description": "AADSTS70008: code expired",
-        "trace_id": "TRACE-ID-SHOULD-NOT-APPEAR",
-        "access_token": ACCESS_TOKEN,
-    }
-    with _token_client(status, body, seen) as client, pytest.raises(SystemExit) as exc:
-        mod.exchange_code(client, CODE, "VERIFIER", _settings())
-    msg = _exit_message(exc)
-    assert "invalid_grant" in msg
-    assert "AADSTS70008: code expired" in msg
-    for leaked in ("TRACE-ID-SHOULD-NOT-APPEAR", ACCESS_TOKEN, CLIENT_SECRET, CODE, "VERIFIER"):
-        assert leaked not in msg
+ECHOED = {
+    "client_secret": CLIENT_SECRET,
+    "code": AUTH_CODE,
+    "v": VERIFIER,
+    "access_token": ACCESS_TOKEN,
+}
 
 
-def test_exchange_code_non_json_error_body_is_not_echoed() -> None:
-    seen: list[httpx.Request] = []
-    with _token_client(502, "<html>RAW-BODY-SHOULD-NOT-APPEAR</html>", seen) as client:
-        with pytest.raises(SystemExit) as exc:
-            mod.exchange_code(client, CODE, "VERIFIER", _settings())
-    assert "RAW-BODY-SHOULD-NOT-APPEAR" not in _exit_message(exc)
+def test_exchange_code_error_does_not_echo_secrets_graph_reflected_back(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The message carries only error/error_description -- any other field in
+    # the body (even one that happens to echo request values) is dropped, and
+    # nothing of the body is printed on the way out.
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={
+                "error": "invalid_client",
+                "error_description": "AADSTS7000215: Invalid client secret provided.",
+                "echo": ECHOED,
+            },
+        )
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    assert "invalid_client" in str(exc.value.code)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_2xx_without_refresh_token_exits() -> None:
-    seen: list[httpx.Request] = []
-    with _token_client(200, {"access_token": ACCESS_TOKEN}, seen) as client:
-        with pytest.raises(SystemExit) as exc:
-            mod.exchange_code(client, CODE, "VERIFIER", _settings())
-    assert ACCESS_TOKEN not in _exit_message(exc)
+def test_exchange_code_2xx_without_refresh_token_prints_nothing_of_an_echoing_body(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Same guard on the success-status branch: a 200 with no refresh_token whose
+    # body carries secrets must not be dumped before the SystemExit.
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token_type": "Bearer", **ECHOED})
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    assert exc.value.code not in (0, None)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-# --- main(): wiring, AC2, AC6, AC7 -----------------------------------------------
+# --------------------------------------------------------------------------- #
+# main
+# --------------------------------------------------------------------------- #
 
 
-class _Harness:
-    """Records browser/server/network use during main()."""
+@pytest.fixture
+def no_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if main() gets as far as the browser or the socket."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None:
-        self.opened: list[str] = []
-        self.server_started = False
-        self.requests: list[httpx.Request] = []
-        self.token_status = 200
-        self.token_body: dict = {
-            "access_token": ACCESS_TOKEN,
-            "refresh_token": REFRESH_TOKEN,
-            "token_type": "Bearer",
-        }
-        self.redirect: str | None = None  # None -> echo the real state back
+    def browser(*args: object, **kwargs: object) -> bool:
+        pytest.fail("webbrowser.open was called")
 
-        real_client = httpx.Client
+    def wait() -> str:
+        pytest.fail("_wait_for_redirect was called")
 
-        def handler(request: httpx.Request) -> httpx.Response:
-            self.requests.append(request)
-            return httpx.Response(self.token_status, json=self.token_body)
-
-        def client_factory(**kwargs: object) -> httpx.Client:
-            kwargs.pop("transport", None)
-            return real_client(transport=httpx.MockTransport(handler), **kwargs)
-
-        def fake_wait() -> str:
-            self.server_started = True
-            if self.redirect is not None:
-                return self.redirect
-            state = _query(self.opened[-1])["state"]
-            return f"/?code={CODE}&state={state}"
-
-        monkeypatch.setattr(mod, "get_settings", lambda: settings)
-        monkeypatch.setattr(mod.webbrowser, "open", lambda url, *a, **k: self.opened.append(url))
-        monkeypatch.setattr(mod, "_wait_for_redirect", fake_wait)
-        monkeypatch.setattr(mod.httpx, "Client", client_factory)
+    monkeypatch.setattr(helper.webbrowser, "open", browser)
+    monkeypatch.setattr(helper, "_wait_for_redirect", wait)
 
 
 @pytest.mark.parametrize(
-    ("client_id", "client_secret"), [("", CLIENT_SECRET), (CLIENT_ID, ""), ("", "")]
+    ("client_id", "client_secret"),
+    [("", CLIENT_SECRET), (CLIENT_ID, ""), ("", "")],
+    ids=["no-client-id", "no-client-secret", "neither"],
 )
-def test_main_missing_credentials_exits_before_browser_server_or_network(
-    monkeypatch: pytest.MonkeyPatch, client_id: str, client_secret: str
-) -> None:
-    h = _Harness(monkeypatch, _settings(client_id, client_secret))
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    msg = _exit_message(exc)
-    assert "GRAPH_CLIENT_ID" in msg and "GRAPH_CLIENT_SECRET" in msg
-    assert h.opened == []
-    assert h.server_started is False
-    assert h.requests == []
-
-
-def test_main_success_prints_refresh_token_once_and_no_secrets(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    h = _Harness(monkeypatch, _settings())
-    assert mod.main() == 0
-
-    out, err = capsys.readouterr()
-    assert out.count(REFRESH_TOKEN) == 1
-    assert REFRESH_TOKEN not in err
-    assert STORE_LINE in out.splitlines()
-    [req] = h.requests
-    verifier = parse_qs(req.content.decode())["code_verifier"][0]
-    for leaked in (ACCESS_TOKEN, CLIENT_SECRET, CODE, verifier):
-        assert leaked not in out
-        assert leaked not in err
-
-    # The printed URL is the one the browser opened.
-    [url] = h.opened
-    assert url in out
-
-
-def test_main_pkce_challenge_is_s256_of_the_posted_verifier(
+def test_main_exits_without_client_credentials(
     monkeypatch: pytest.MonkeyPatch,
+    no_side_effects: None,
+    capsys: pytest.CaptureFixture[str],
+    client_id: str,
+    client_secret: str,
 ) -> None:
-    h = _Harness(monkeypatch, _settings())
-    mod.main()
-    challenge = _query(h.opened[0])["code_challenge"]
-    form = {k: v[0] for k, v in parse_qs(h.requests[0].content.decode()).items()}
+    monkeypatch.setattr(helper, "get_settings", lambda: _settings(client_id, client_secret))
+
+    with pytest.raises(SystemExit) as exc:
+        helper.main()
+
+    assert exc.value.code not in (0, None)
+    assert "GRAPH_CLIENT_ID" in str(exc.value.code)
+    _assert_no_secrets(exc.value.code)
+    out = capsys.readouterr()
+    _assert_no_secrets(out.out + out.err)
+
+
+def test_main_invalid_settings_exits_with_field_names_only(
+    monkeypatch: pytest.MonkeyPatch,
+    no_side_effects: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    db_secret = "postgresql://u:db-password-SENTINEL-5e5e@host/db"
+    s3_secret = "s3-secret-SENTINEL-8c8c"
+    monkeypatch.setenv("DATABASE_URL", db_secret)
+    monkeypatch.setenv("S3_SECRET_ACCESS_KEY", s3_secret)
+    monkeypatch.setenv("GRAPH_CLIENT_SECRET", CLIENT_SECRET)
+    for name in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_BUCKET_NAME"):
+        monkeypatch.delenv(name, raising=False)
+
+    def failing_settings() -> Settings:
+        return Settings(_env_file=None)  # type: ignore[call-arg]
+
+    monkeypatch.setattr(helper, "get_settings", failing_settings)
+
+    with pytest.raises(SystemExit) as exc:
+        helper.main()
+
+    message = str(exc.value.code)
+    assert exc.value.code not in (0, None)
+    for field in ("S3_ENDPOINT_URL", "S3_ACCESS_KEY_ID", "S3_BUCKET_NAME"):
+        assert field in message
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__
+    out = capsys.readouterr()
+    assert "SENTINEL" not in message
+    assert "SENTINEL" not in out.out + out.err
+    for secret in (db_secret, s3_secret, CLIENT_SECRET):
+        assert secret not in message
+
+
+def test_main_success_sends_s256_challenge_of_the_posted_verifier_and_prints_only_the_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opened: list[str] = []
+    posted: list[dict[str, str]] = []
+
+    def browser(url: str, *args: object, **kwargs: object) -> bool:
+        opened.append(url)
+        return True
+
+    def wait() -> str:
+        assert len(opened) == 1, "redirect awaited before the browser was opened"
+        state = parse_qs(urlsplit(opened[0]).query)["state"][0]
+        return f"/?code={AUTH_CODE}&state={state}"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == TOKEN_URL
+        posted.append({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        return httpx.Response(
+            200,
+            json={
+                "access_token": ACCESS_TOKEN,
+                "refresh_token": REFRESH_TOKEN,
+                "token_type": "Bearer",
+            },
+        )
+
+    real_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        return real_client(transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(helper, "get_settings", lambda: _settings())
+    monkeypatch.setattr(helper.webbrowser, "open", browser)
+    monkeypatch.setattr(helper, "_wait_for_redirect", wait)
+    monkeypatch.setattr(helper.httpx, "Client", mock_client)
+
+    assert helper.main() == 0
+
+    assert len(opened) == 1
+    assert len(posted) == 1
+    form = posted[0]
+    verifier = form["code_verifier"]
+    assert form["code"] == AUTH_CODE
+
+    challenge = parse_qs(urlsplit(opened[0]).query)["code_challenge"][0]
     expected = (
-        base64.urlsafe_b64encode(hashlib.sha256(form["code_verifier"].encode()).digest())
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
         .rstrip(b"=")
-        .decode()
+        .decode("ascii")
     )
     assert challenge == expected
-    assert form["code"] == CODE
-    assert form["redirect_uri"] == _query(h.opened[0])["redirect_uri"]
+    assert "=" not in challenge
+    assert challenge != verifier
+
+    out = capsys.readouterr()
+    printed = out.out + out.err
+    assert REFRESH_TOKEN in out.out
+    for secret in (ACCESS_TOKEN, CLIENT_SECRET, AUTH_CODE, verifier):
+        assert secret not in printed
+    assert json.dumps(REFRESH_TOKEN) not in printed  # no JSON body dump
 
 
-def test_main_state_mismatch_exits_without_network(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    h = _Harness(monkeypatch, _settings())
-    h.redirect = f"/?code={CODE}&state=forged"
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    assert "state mismatch" in _exit_message(exc)
-    assert h.requests == []
-    out, err = capsys.readouterr()
-    assert CODE not in out + err + _exit_message(exc)
+# --------------------------------------------------------------------------- #
+# _wait_for_redirect's request handler
+# --------------------------------------------------------------------------- #
 
 
-def test_main_token_rejection_prints_no_secrets(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    h = _Harness(monkeypatch, _settings())
-    h.token_status = 400
-    h.token_body = {"error": "invalid_client", "error_description": "bad secret"}
-    with pytest.raises(SystemExit) as exc:
-        mod.main()
-    msg = _exit_message(exc)
-    assert "invalid_client" in msg and "bad secret" in msg
-    out, err = capsys.readouterr()
-    for leaked in (CLIENT_SECRET, CODE, REFRESH_TOKEN):
-        assert leaked not in out + err + msg
+def _capture_handler_class(monkeypatch: pytest.MonkeyPatch) -> type:
+    """Run _wait_for_redirect against a fake HTTPServer that binds nothing.
 
-
-def test_main_writes_no_files(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
-    _Harness(monkeypatch, _settings())
-    writes: list[tuple[object, str]] = []
-    real_open = builtins.open
-
-    def guarded_open(file, mode="r", *args, **kwargs):
-        if any(c in mode for c in "wax+"):
-            writes.append((file, mode))
-        return real_open(file, mode, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", guarded_open)
-    monkeypatch.setattr(io, "open", guarded_open)
-    monkeypatch.chdir(tmp_path)
-    mod.main()
-    assert writes == []
-    assert list(tmp_path.iterdir()) == []
-
-
-# --- _wait_for_redirect: one request, access log silenced ------------------------
-
-
-class _FakeConnection:
-    """In-memory stand-in for the accepted socket -- no port is bound."""
-
-    def __init__(self, raw: bytes) -> None:
-        self._raw = raw
-        self.sent = b""
-
-    def makefile(self, mode: str, bufsize: int = -1) -> io.BytesIO:
-        return io.BytesIO(self._raw)
-
-    def sendall(self, data: bytes) -> None:
-        self.sent += data
-
-
-def test_wait_for_redirect_returns_path_and_never_logs_code(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    raw = f"GET /?code={CODE}&state=S1 HTTP/1.1\r\nHost: localhost:8765\r\n\r\n".encode()
-    conn = _FakeConnection(raw)
-    bound: list[tuple[str, int]] = []
-    handled: list[int] = []
+    ``Handler`` is a local class inside ``_wait_for_redirect``, so the only way
+    to reach it without restructuring the module is to intercept the server
+    constructor it is passed to.
+    """
+    captured: list[type] = []
 
     class FakeServer:
-        def __init__(self, address: tuple[str, int], handler_cls: type) -> None:
-            bound.append(address)
-            self._handler_cls = handler_cls
+        def __init__(self, address: object, handler: type) -> None:
+            captured.append(handler)
 
-        def __enter__(self) -> FakeServer:
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *exc: object) -> None:
-            pass
+            return None
 
         def handle_request(self) -> None:
-            handled.append(1)
-            self._handler_cls(conn, ("127.0.0.1", 50000), self)
+            return None
 
-    monkeypatch.setattr(mod.http.server, "HTTPServer", FakeServer)
-    assert mod._wait_for_redirect() == f"/?code={CODE}&state=S1"
-    assert bound == [("localhost", 8765)]
-    assert handled == [1]
-    assert conn.sent.startswith(b"HTTP/1.0 200")
-    out, err = capsys.readouterr()
-    assert CODE not in out + err
+    monkeypatch.setattr(helper.http.server, "HTTPServer", FakeServer)
+    assert helper._wait_for_redirect() == ""
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_redirect_handler_does_not_log_the_authorization_code(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    handler_cls = _capture_handler_class(monkeypatch)
+    assert issubclass(handler_cls, http.server.BaseHTTPRequestHandler)
+
+    handler = handler_cls.__new__(handler_cls)
+    path = f"/?code={AUTH_CODE}&state={STATE}"
+    handler.path = path
+    handler.requestline = f"GET {path} HTTP/1.1"
+    handler.request_version = "HTTP/1.1"
+    handler.command = "GET"
+    handler.client_address = ("127.0.0.1", 50000)
+
+    handler.log_request(200)
+    handler.log_message('"%s" %s %s', handler.requestline, "200", "-")
+
+    out = capsys.readouterr()
+    assert AUTH_CODE not in out.out + out.err

@@ -21,6 +21,12 @@
 **/node_modules
 frontend/dist
 frontend/.vite
+# Host-generated build inputs (gitignored). The frontend-build stage must see a
+# clean checkout: the TanStack Router vite plugin regenerates routeTree.gen.ts
+# during `vite build`, so a stale host copy would only mask a missing-file
+# failure in any step that reads src/ before the build. See t-dockerignore-route-tree.
+frontend/src/routeTree.gen.ts
+**/tsconfig.tsbuildinfo
 
 # Local service data
 minio-data/

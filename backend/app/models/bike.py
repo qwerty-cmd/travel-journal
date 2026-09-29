@@ -9,7 +9,9 @@ class BikeCreate(BaseModel):
         "existing bike (200) instead of creating a duplicate — see docs/api-contract.md "
         "'Idempotency'."
     )
-    riderName: str = Field(description="Whose bike this is — free text, not tied to a user account.")
+    riderName: str = Field(
+        description="Whose bike this is — free text, not tied to a user account."
+    )
     make: str = Field(description="Manufacturer, e.g. 'Honda'. Free text — not a fixed list.")
     model: str = Field(description="Model name, e.g. 'Africa Twin'. Free text — not a fixed list.")
     year: int = Field(description="Model year of the bike, as a four-digit year, e.g. 2019.")

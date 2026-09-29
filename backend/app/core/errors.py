@@ -20,13 +20,12 @@ originate in the framework rather than in our code.
 **Raise it through the classmethod constructors** — `ApiError.forbidden(...)`,
 `ApiError.not_found(...)`, `ApiError.conflict(...)`, `ApiError.validation(...)`,
 `ApiError.internal(...)` — never by passing a status and a code as separate
-arguments. The contract's
-top-priority distinction is 403-vs-404 (spec Section 12, decision-log entry 6),
-and a two-argument call site makes the transposed pair `(404, FORBIDDEN)`
-representable: a body that violates the contract, produced by a typo, that no
-status-only or code-only assertion would catch. The classmethods make it
-unrepresentable; `__init__` rejects it as a backstop for anything that still
-constructs `ApiError` directly.
+arguments. The contract's top-priority distinction is 403-vs-404 (spec Section
+12, decision-log entry 6), and a two-argument call site makes the transposed
+pair `(404, FORBIDDEN)` representable: a body that violates the contract,
+produced by a typo, that no status-only or code-only assertion would catch. The
+classmethods make it unrepresentable; `__init__` rejects it as a backstop for
+anything that still constructs `ApiError` directly.
 """
 
 from __future__ import annotations
@@ -66,6 +65,15 @@ INTERNAL_ERROR_MESSAGE = "Something went wrong on our end. Please try again."
 # Adding this row is also what makes `ApiError(409, CONFLICT, ...)` constructible
 # — `__init__` checks the pair against `code_for_status` — and that is the
 # intended effect, not a side one.
+#
+# The flip side of keying on *status*: a bare `HTTPException(409)` also renders a
+# well-formed CONFLICT envelope — carrying whatever `detail` it was given — without
+# passing through `ApiError.conflict`, where the "no value from the conflicting
+# record" rule is held. The envelope looks right, so nothing at runtime would
+# notice. The guard is therefore at the raise site, not here and not in
+# `http_exception_handler`: `tests/test_bare_409_raise_audit.py` fails the suite
+# if any module under `app/` raises an `HTTPException` with a 409 (or with a
+# status it cannot resolve statically). Do not "fix" this by dropping the row.
 _STATUS_TO_CODE: dict[int, ErrorCode] = {
     HTTPStatus.FORBIDDEN: ErrorCode.FORBIDDEN,
     HTTPStatus.NOT_FOUND: ErrorCode.NOT_FOUND,
@@ -177,13 +185,14 @@ class ApiError(Exception):
 #      exception type, no database error required. CLOSED here: every 5xx site
 #      goes through `_endpoint()` and logs the matched route template instead.
 #   C. The uvicorn access log, which writes the request line on every request.
-#      ACCEPTED, deliberately, not overlooked: there is no shipper, tracker or
-#      aggregator in this project today; silencing access logs wholesale would
-#      cost status/method/latency for every request to remove a URL that was
-#      already on the wire; and an app module reconfiguring a third-party
-#      logger at import time is the silently-inert shape Entry 7(b) records.
-#      Filed as `t-access-log-slug-exposure`, trigger: **the first error
-#      tracker or log shipper configured**. Fire it then.
+#      CLOSED ahead of cutover (Container Apps ships stdout to Log Analytics) by
+#      `t-access-log-slug-exposure`: `backend/log_config/uvicorn.json`, passed
+#      as `--log-config` at startup, filters the slug segment out of access and
+#      error lines. Not by silencing access logs (that would cost
+#      status/method/latency on every request), and not by an app module
+#      reconfiguring uvicorn's logger at import time (the silently-inert shape
+#      Entry 7(b) records). A server started without `--log-config` still logs
+#      slugs.
 #
 # REJECTED REASONING — do not delete this guard because "the slug is in the
 # access log anyway, so this is pointless." That argument was made, recorded in
@@ -258,11 +267,20 @@ def _format_validation_errors(errors: list[dict[str, Any]]) -> str:
     no field to name when the body isn't JSON, so we don't invent one. Handled
     here rather than per-route because every body-taking route funnels through
     this function.
+
+    A second type gets the same treatment: `missing` at `loc == ("body",)`, the
+    **empty** body. The generic branch strips `"body"` from the location and
+    leaves pydantic's bare `Field required` — a message with no subject. The
+    condition is exactly that pair; a `missing` on a named field (`("body",
+    "lat")`) still renders as `lat: Field required`.
     """
     parts: list[str] = []
     for error in errors:
         if error.get("type") == "json_invalid":
             parts.append("The request body could not be read as JSON.")
+            continue
+        if error.get("type") == "missing" and tuple(error.get("loc", ())) == ("body",):
+            parts.append("The request body is missing.")
             continue
         location = ".".join(str(item) for item in error.get("loc", ()) if item != "body")
         message = str(error.get("msg", "Invalid value"))

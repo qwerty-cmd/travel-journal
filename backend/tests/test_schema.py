@@ -25,10 +25,23 @@ DATABASE_URL) — see tests/conftest.py.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
-from sqlalchemy import CheckConstraint, DateTime, MetaData, exc, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Double,
+    Integer,
+    MetaData,
+    Text,
+    exc,
+    text,
+)
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.types import REAL, VARCHAR, TypeEngine
 
 from app.data import tables
 
@@ -47,6 +60,19 @@ _INSERT_STOP = (
     "INSERT INTO stops (id, trip_id, name, lat, lng, location_source, arrived_at) "
     "VALUES (:id, :trip_id, :name, :lat, :lng, :source, :arrived_at)"
 )
+
+
+def _postgres_ddl(column_type: TypeEngine[Any]) -> str:
+    """
+    The column type as Postgres DDL — ``TEXT``, ``VARCHAR(20)``, ``DOUBLE PRECISION``.
+
+    Compiled against the Postgres dialect so a declared generic type (``Text``,
+    ``Double``) and the dialect-specific type reflection hands back (``TEXT``,
+    ``DOUBLE_PRECISION``) render to the same string exactly when the database
+    would store the same thing, and to different strings when it would not —
+    length, precision and width included.
+    """
+    return column_type.compile(dialect=postgresql.dialect())
 
 
 async def _reflect(engine: AsyncEngine) -> MetaData:
@@ -88,8 +114,15 @@ async def test_columns_match_metadata(migrated_engine: AsyncEngine, table_name: 
         live_column = live.columns[column.name]
         qualified = f"{table_name}.{column.name}"
 
-        assert column.type.python_type is live_column.type.python_type, (
-            f"{qualified}: declared {column.type!r}, database has {live_column.type!r}"
+        # Compared as the DDL Postgres itself would emit, not as `python_type`.
+        # `python_type` collapses Text/VARCHAR(20) to str, Double/REAL to float
+        # and Integer/BigInteger to int, so a migration that narrowed a column
+        # tables.py still declares wide passed this check (t-schema-type-drift-check).
+        declared_ddl = _postgres_ddl(column.type)
+        live_ddl = _postgres_ddl(live_column.type)
+        assert declared_ddl == live_ddl, (
+            f"{qualified}: declared {declared_ddl} ({column.type!r}), "
+            f"database has {live_ddl} ({live_column.type!r})"
         )
         assert column.nullable == live_column.nullable, (
             f"{qualified}: declared nullable={column.nullable}, "
@@ -100,7 +133,37 @@ async def test_columns_match_metadata(migrated_engine: AsyncEngine, table_name: 
         # the trip crosses a time zone, so it gets its own assertion.
         if isinstance(column.type, DateTime):
             assert column.type.timezone is True, f"{qualified}: declared without timezone"
-            assert live_column.type.timezone is True, f"{qualified}: database column is not timestamptz"
+            assert live_column.type.timezone is True, (
+                f"{qualified}: database column is not timestamptz"
+            )
+
+
+@pytest.mark.parametrize(
+    ("declared", "narrower"),
+    [(Text(), VARCHAR(20)), (Double(), REAL()), (BigInteger(), Integer())],
+    ids=["text-vs-varchar20", "double-vs-real", "bigint-vs-integer"],
+)
+def test_type_comparison_sees_what_python_type_cannot(
+    declared: TypeEngine[Any], narrower: TypeEngine[Any]
+) -> None:
+    """
+    The comparator's own guard: the three pairs QA found ``python_type`` equating.
+
+    Each pair has the same ``python_type`` (asserted, so the case keeps meaning
+    what it says) and must still compare *different* under the check
+    ``test_columns_match_metadata`` uses.
+    """
+    assert declared.python_type is narrower.python_type
+    assert _postgres_ddl(declared) != _postgres_ddl(narrower)
+
+
+def test_type_comparison_equates_generic_and_reflected_spellings() -> None:
+    """...and does not over-report: ``Text`` declared and ``TEXT`` reflected are one type."""
+    assert _postgres_ddl(Text()) == _postgres_ddl(postgresql.TEXT())
+    assert _postgres_ddl(Double()) == _postgres_ddl(postgresql.DOUBLE_PRECISION())
+    assert _postgres_ddl(DateTime(timezone=True)) == _postgres_ddl(
+        postgresql.TIMESTAMP(timezone=True)
+    )
 
 
 async def test_primary_keys_are_text_not_uuid(migrated_engine: AsyncEngine) -> None:
