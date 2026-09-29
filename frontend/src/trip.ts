@@ -2,6 +2,8 @@
  * Trip-link parsing and the one hook every `/t/$slug` screen reads the trip
  * through. Lives outside `routes/` because route files are code-split and must
  * not export helpers.
+ *
+ * APIs called: GET /api/trips/{slug} (useTrip). parseTripLink is local only.
  */
 import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'

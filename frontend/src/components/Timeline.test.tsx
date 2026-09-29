@@ -1,9 +1,12 @@
+// The root route mounts the real QueueNotice, which reads the queue's IndexedDB.
+import "fake-indexeddb/auto";
 import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRouter } from "@tanstack/react-router";
 import { routeTree } from "../routeTree.gen";
 import { Timeline } from "./Timeline";
+import { formatInstant } from "../format";
 import type { StopOut } from "../api/gen/types/StopOut";
 import type { TripOut } from "../api/gen/types/TripOut";
 
@@ -52,12 +55,12 @@ test("AC1: does not mutate the caller's array", () => {
   expect(stops.map((x) => x.id)).toEqual(["b", "a"]);
 });
 
-test("AC2: item shows name, toLocaleString() arrival, and notes when non-null", () => {
+test("AC2: item shows name, zone-labelled arrival, and notes when non-null", () => {
   const at = "2026-06-14T10:00:00+09:30";
   render(<Timeline stops={[s("a", at, { name: "Daly Waters Pub", notes: "Cold beer" })]} />);
   const li = screen.getByRole("listitem");
   expect(li.querySelector("strong")!.textContent).toBe("Daly Waters Pub");
-  expect(li.textContent).toContain(new Date(at).toLocaleString());
+  expect(li.textContent).toContain(formatInstant(at));
   expect(li.querySelector("p")!.textContent).toBe("Cold beer");
 });
 

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider, createMemoryHistory, createRouter } from "@tanstack/react-router";
 import L from "leaflet";
 import { routeTree } from "./routeTree.gen";
+import { formatInstant } from "./format";
 import type { PhotoOut } from "./api/gen/types/PhotoOut";
 import type { StopOut } from "./api/gen/types/StopOut";
 import type { TripOut } from "./api/gen/types/TripOut";
@@ -127,7 +128,7 @@ describe("AC1/AC2: stop header", () => {
   test("gps stop: name, localised arrivedAt, notes, no approximate label", async () => {
     renderAt(`/t/abc/stops/${GPS.id}`);
     expect(await screen.findByRole("heading", { name: GPS.name })).toBeTruthy();
-    expect(screen.getByText(new Date(GPS.arrivedAt).toLocaleString())).toBeTruthy();
+    expect(screen.getByText(formatInstant(GPS.arrivedAt))).toBeTruthy();
     expect(screen.getByText(GPS.notes!)).toBeTruthy();
     expect(screen.queryByText(/approximate location/)).toBeNull();
   });
@@ -136,7 +137,7 @@ describe("AC1/AC2: stop header", () => {
     renderAt(`/t/abc/stops/${MANUAL.id}`);
     expect(await screen.findByRole("heading", { name: MANUAL.name })).toBeTruthy();
     expect(screen.getByText(/approximate location/).textContent).toContain(
-      new Date(MANUAL.arrivedAt).toLocaleString(),
+      formatInstant(MANUAL.arrivedAt),
     );
     expect(screen.queryByText("null")).toBeNull();
     const main = screen.getByRole("main");
@@ -218,6 +219,59 @@ describe("AC4: enlarge overlay", () => {
     await openSecond();
     fireEvent.keyDown(document, { key: "Enter" });
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+});
+
+// Presigned URLs live 1h: a load error refetches the photo list once for fresh
+// URLs, and never loops when the fresh URL fails too.
+describe("expired photo URLs", () => {
+  // Each photos response re-signs every URL with that request's number.
+  const fresh = (p: PhotoOut, n: number) => ({ ...p, url: `${p.url}&n=${n}` });
+  beforeEach(() => {
+    let n = 0;
+    stub({ [`/api/trips/abc/stops/${GPS.id}/photos`]: () => (n++, json(200, PHOTOS.map((p) => fresh(p, n)))) });
+  });
+  const thumbs = () => screen.getAllByAltText("Stop photo") as HTMLImageElement[];
+
+  test("a thumbnail error refetches once and renders the fresh URLs", async () => {
+    renderAt(`/t/abc/stops/${GPS.id}`);
+    await screen.findAllByAltText("Stop photo");
+    expect(thumbs()[0].getAttribute("src")).toBe(fresh(PHOTOS[0], 1).url);
+    fireEvent.error(thumbs()[0]);
+    await waitFor(() => expect(thumbs()[0].getAttribute("src")).toBe(fresh(PHOTOS[0], 2).url));
+    expect(thumbs()[1].getAttribute("src")).toBe(fresh(PHOTOS[1], 2).url);
+    expect(photoRequests()).toHaveLength(2);
+  });
+
+  test("several thumbnails failing together cause a single refetch", async () => {
+    renderAt(`/t/abc/stops/${GPS.id}`);
+    await screen.findAllByAltText("Stop photo");
+    thumbs().forEach((img) => fireEvent.error(img));
+    await waitFor(() => expect(thumbs()[0].getAttribute("src")).toBe(fresh(PHOTOS[0], 2).url));
+    await settle();
+    expect(photoRequests()).toHaveLength(2);
+  });
+
+  test("a fresh URL that fails too is not retried: no loop", async () => {
+    renderAt(`/t/abc/stops/${GPS.id}`);
+    await screen.findAllByAltText("Stop photo");
+    fireEvent.error(thumbs()[0]);
+    await waitFor(() => expect(thumbs()[0].getAttribute("src")).toBe(fresh(PHOTOS[0], 2).url));
+    fireEvent.error(thumbs()[0]);
+    fireEvent.error(thumbs()[1]);
+    await settle();
+    expect(photoRequests()).toHaveLength(2);
+    expect(thumbs()[0].getAttribute("src")).toBe(fresh(PHOTOS[0], 2).url);
+  });
+
+  test("an enlarged photo that fails refetches and shows the same photo's fresh URL", async () => {
+    renderAt(`/t/abc/stops/${GPS.id}`);
+    fireEvent.click((await screen.findAllByAltText("Stop photo"))[1]);
+    const big = () => screen.getByRole("dialog").querySelector("img")!;
+    expect(big().getAttribute("src")).toBe(fresh(PHOTOS[1], 1).url);
+    fireEvent.error(big());
+    await waitFor(() => expect(big().getAttribute("src")).toBe(fresh(PHOTOS[1], 2).url));
+    expect(photoRequests()).toHaveLength(2);
   });
 });
 

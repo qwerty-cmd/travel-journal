@@ -8,17 +8,42 @@ import { enqueue, type PhotoItem } from "../offline/queue";
 import { getDisplayName } from "../localStore";
 import { processPhoto } from "../photo";
 
-// Add stop (spec Section 6), rider-only. Never POSTs: the stop goes into the
-// offline queue (decision-log Entry 19), which sends it when it can. The id and
-// arrivedAt are fixed at mount, so a resubmit replays the same idempotent id.
-// arrivedAt is toISOString(): UTC with a "Z" offset, so aware but the rider's
-// local offset is not preserved. GPS first; any geolocation failure falls back
-// to tapping the map (locationSource "manual"). Photos are processed at pick
-// time (id fixed when processing finishes, before submit) and enqueued in the
-// same call as the stop, stop first.
+// Design feature: add stop (spec Section 6), rider only. Captures a stop (name,
+// notes, location, photos) with or without signal. Never POSTs: the stop goes
+// into the offline queue (decision-log Entry 19), which sends it when it can.
+// A viewer (trip.access !== "rider", from the server) is redirected to the trip
+// home before geolocation is ever requested, so viewers never see a GPS
+// permission prompt.
+// Design format:
+//   - Location line: "Getting GPS fix…", then "Location: lat, lng (GPS|map
+//     tap)". GPS first (enableHighAccuracy). Any geolocation error, no
+//     navigator.geolocation, or no answer within GPS_FALLBACK_MS (15s, our own
+//     timer, because the browser's timeout doesn't start until permission is
+//     granted, so an ignored prompt would otherwise wait forever) shows "GPS
+//     unavailable: tap the map…" and a TripMap whose tap sets locationSource
+//     "manual". A GPS fix arriving after the fallback is still used, but never
+//     replaces a point the rider already tapped.
+//   - Name (required), Notes, Photos (multiple, image/*). Photos are processed
+//     at pick time (processPhoto: ≤1600px JPEG + takenAt); each gets its client
+//     id when processing finishes; "Processing photos…" while any are in
+//     flight; an undecodable file shows "Couldn't read photo <name>" and is not
+//     queued. Each picked photo has a Remove button.
+//   - "Save stop" is disabled until there is a name and a location and no photo
+//     is processing. On save, the stop and its photos are enqueued in one
+//     transaction, stop first, then the route navigates to the trip home. A
+//     failed local write shows "Couldn't save the stop on this device".
+// The stop id and arrivedAt are fixed at mount, so a resubmit replays the same
+// idempotent id. arrivedAt is toISOString(): UTC with a "Z" offset, so aware
+// but the rider's local offset is not preserved. uploadedBy is the device's
+// display name (the trip shell guarantees one is saved).
+// APIs called: none directly. GET /api/trips/{slug} is read from the shell's
+// cache for `access`. The queue later sends POST /api/trips/{slug}/stops and
+// POST /api/trips/{slug}/stops/{stop_id}/photos (see src/offline/queue.ts).
 export const Route = createFileRoute("/t/$slug/add")({
   component: AddStop,
 });
+
+const GPS_FALLBACK_MS = 15_000;
 
 type Position = { lat: number; lng: number; locationSource: LocationSource };
 type Picked = { id: string; fileName: string; blob: Blob; takenAt: string };
@@ -40,18 +65,40 @@ function AddStop() {
   const [processing, setProcessing] = useState(0);
   const [photoErrors, setPhotoErrors] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (p) => setPosition({ lat: p.coords.latitude, lng: p.coords.longitude, locationSource: "gps" }),
-      () => setGpsFailed(true),
-      { enableHighAccuracy: true, timeout: 15_000 },
-    );
-  }, []);
-
   // The trip shell only renders this once the trip is loaded (or cached), so
   // trip.data is the server's access answer, never a device-side guess.
-  if (trip.data?.access !== "rider") return <Navigate to="/t/$slug" params={{ slug }} replace />;
+  const isRider = trip.data?.access === "rider";
+
+  // Geolocation is only requested once the rider check passes, so a viewer
+  // redirected away never sees a permission prompt. The browser's own timeout
+  // does not start until permission is granted, so an ignored or dismissed
+  // prompt would wait forever: our own timer falls back to the map tap. A fix
+  // that arrives after the fallback is still used, but never over a point the
+  // rider already tapped.
+  useEffect(() => {
+    if (!isRider || !navigator.geolocation) return;
+    let active = true;
+    const fallback = setTimeout(() => setGpsFailed(true), GPS_FALLBACK_MS);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        if (!active) return;
+        clearTimeout(fallback);
+        setPosition((cur) => cur ?? { lat: p.coords.latitude, lng: p.coords.longitude, locationSource: "gps" });
+      },
+      () => {
+        if (!active) return;
+        clearTimeout(fallback);
+        setGpsFailed(true);
+      },
+      { enableHighAccuracy: true, timeout: GPS_FALLBACK_MS },
+    );
+    return () => {
+      active = false;
+      clearTimeout(fallback);
+    };
+  }, [isRider]);
+
+  if (!isRider) return <Navigate to="/t/$slug" params={{ slug }} replace />;
 
   function pick(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);

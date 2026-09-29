@@ -3,6 +3,9 @@
  * in one place. Every access is wrapped: storage that throws (Safari private
  * mode, quota, disabled) or holds corrupt JSON reads as "absent", never as an
  * exception the UI has to handle.
+ *
+ * APIs called: none. Stores the last fetched TripOut per slug (written by
+ * useTrip after a real GET /api/trips/{slug} response).
  */
 import type { TripOut } from './api/gen/types/TripOut'
 

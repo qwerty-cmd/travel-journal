@@ -5,7 +5,19 @@ import { useListStopsApiTripsSlugStopsGet } from "../api/gen/hooks/useListStopsA
 import { Timeline } from "../components/Timeline";
 import { TripMap } from "../components/TripMap";
 
-// Trip home (spec Section 6, screen 2): map, then the chronological timeline.
+// Design feature: trip home (spec Section 6, screen 2). Where the journey is
+// seen at a glance: map of stops and trail, then the chronological timeline.
+// Same screen for rider and viewer, except the "Add stop" link.
+// Design format: links row ("Add stop", rider only, i.e. trip.access ===
+// "rider"; "Bikes" for everyone), then TripMap ("Map unavailable" if the map
+// request fails; Australia while loading), then the Timeline ("Loading stops…"
+// while pending; the envelope message or "Couldn't load stops" on error).
+// Stops queued offline but not yet sent do not appear here; the root
+// QueueNotice shows them.
+// APIs called: GET /api/trips/{slug}/map (useGetMapApiTripsSlugMapGet), GET
+// /api/trips/{slug}/stops (useListStopsApiTripsSlugStopsGet), and GET
+// /api/trips/{slug} read from the shell's cache (refetchOnMount: false). The
+// queue drain invalidates the map and stops queries after each sent stop.
 export const Route = createFileRoute("/t/$slug/")({
   component: TripHome,
 });

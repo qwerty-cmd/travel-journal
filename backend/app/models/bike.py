@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -18,38 +20,55 @@ class BikeCreate(BaseModel):
     specs: str = Field(default="", description="Free text: engine, suspension, tyres, etc.")
 
 
-class BikePatch(BaseModel):
-    """PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. All fields optional — only sent fields change."""
+def _omit_default(schema: dict[str, Any]) -> None:
+    """Drop ``default: null`` from a ``BikePatch`` field's schema -- null is not a valid value."""
+    schema.pop("default", None)
 
-    riderName: str | None = Field(
+
+_NULL_REJECTED = (
+    " Omit the field to leave the stored value alone. Explicit null is rejected with 422 / "
+    "VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
+)
+
+
+# Each BikePatch field is typed non-optional with a ``None`` default that is never
+# validated: omitting a field leaves it unset (the repository's
+# ``model_dump(exclude_unset=True)`` drops it), while an explicit ``null`` is
+# validated against ``str`` / ``int`` and fails as a 422 instead of reaching a
+# NOT NULL column as a 500. ``_omit_default`` keeps ``default: null`` out of the
+# schema, so the generated client types each field as optional, never nullable.
+class BikePatch(BaseModel):
+    """
+    PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. Every field may be omitted --
+    only fields present in the body change -- but none may be null.
+    """
+
+    riderName: str = Field(
         default=None,
-        description="Whose bike this is — free text, not tied to a user account. Omit the field "
-        "to leave the stored name alone; omitting is not the same as sending it explicitly as "
-        "null, which asks to write null into a column that holds none.",
+        json_schema_extra=_omit_default,
+        description="Whose bike this is — free text, not tied to a user account." + _NULL_REJECTED,
     )
-    make: str | None = Field(
+    make: str = Field(
         default=None,
-        description="Manufacturer, e.g. 'Honda'. Free text — not a fixed list. Omit the field to "
-        "leave the stored make alone; omitting is not the same as sending it explicitly as null, "
-        "which asks to write null into a column that holds none.",
+        json_schema_extra=_omit_default,
+        description="Manufacturer, e.g. 'Honda'. Free text — not a fixed list." + _NULL_REJECTED,
     )
-    model: str | None = Field(
+    model: str = Field(
         default=None,
-        description="Model name, e.g. 'Africa Twin'. Free text — not a fixed list. Omit the field "
-        "to leave the stored model alone; omitting is not the same as sending it explicitly as "
-        "null, which asks to write null into a column that holds none.",
+        json_schema_extra=_omit_default,
+        description="Model name, e.g. 'Africa Twin'. Free text — not a fixed list."
+        + _NULL_REJECTED,
     )
-    year: int | None = Field(
+    year: int = Field(
         default=None,
-        description="Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to "
-        "leave the stored year alone; omitting is not the same as sending it explicitly as null, "
-        "which asks to write null into a column that holds none.",
+        json_schema_extra=_omit_default,
+        description="Model year of the bike, as a four-digit year, e.g. 2019." + _NULL_REJECTED,
     )
-    specs: str | None = Field(
+    specs: str = Field(
         default=None,
-        description="Free text: engine, suspension, tyres, etc. Omit the field to leave the "
-        "stored specs alone; omitting is not the same as sending it explicitly as null. To clear "
-        "specs send an empty string — that is how 'nothing written yet' is spelled, never null.",
+        json_schema_extra=_omit_default,
+        description="Free text: engine, suspension, tyres, etc. To clear specs send an empty "
+        "string — that is how 'nothing written yet' is spelled, never null." + _NULL_REJECTED,
     )
 
 

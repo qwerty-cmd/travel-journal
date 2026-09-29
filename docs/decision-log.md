@@ -43,9 +43,10 @@ empirically disproves another.
 | 20 | Photo upload is one idempotent request; the "resumable multipart" requirement is amended | `routes/photos.py`, `api-contract.md`, spec §4, `CLAUDE.md` Stack | **Architect ruling (delegated by user, final). Changes a sentence in CLAUDE.md's locked Stack section**, but not the technology (still S3), so it is flagged for the user's morning review. S3/R2 multipart parts must be ≥5 MiB except the last. A ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Spec §4's two lines cannot both hold, and compression wins. Resumability lives in the queue: the blob persists in IndexedDB, and a replay is `200` with no storage write, over a deterministic key. Rejected: presigned direct multipart and backend-proxied multipart (both still can't resume <5 MiB). **Supersedes** `t-photo-s3-multipart-upload`'s Gate 1 filing |
 | 21 | Write-PIN declined; the rider link stays the only write gate | spec §8, `offline/queue.ts`, `seed_trip.py`, `progress.json` | **Architect ruling (HIGH confidence, no escalation), flagged for the user's morning review because it closes spec §8's open item.** Spec calls the PIN optional everywhere. The rider slug is 256 random bits, so the only threat is a forwarded link, and a PIN is usually forwarded with it. **The PIN lost on cost:** `FORBIDDEN` is never-retry, so a wrong or rotated PIN would permanently fail every queued stop and photo. A safe version needs a 7th `ErrorCode`, a paused-queue state, a prompt UI, per-origin storage and a brute-force policy, all in the top-rigor queue. Mitigation instead: rotate `rider_slug` with one SQL `UPDATE`. Reopen trigger and reopen design are in the body. Spec file left untouched (Entry 20 policy) |
 | 22 | Graph refresh token: mint once and reuse, don't persist the rotated one | `storage/onedrive_sync.py`, `deploy-cutover-runbook.md`, `progress.json` | **Architect ruling (option A).** The code comment's premise that Graph "rotates" the token is wrong: Microsoft issues a new refresh token on redemption but **does not revoke the old one**. Each token dies ~90 days after issue (**MEDIUM confidence for personal accounts**, no published number), so the sync works until mint date + ~90 days. **Option B lost on cost, not correctness:** a single-row Postgres table for the rotated token breaks no invariant, but it touches off-limits token handling and puts a long-lived secret in Neon and its backups, for no gain on a trip under ~80 days. A lapse only pauses archiving; nothing is lost. Runbook now says mint close to departure and record the dates |
-| 23 | Malformed body → `422` before the access guard — won't-fix | `core/security.py`, `test_stops_create_endpoint.py`, `progress.json` | **Orchestrator, 2026-09-30.** FastAPI parses the body before it solves dependencies. The resulting `422` is **byte-identical for rider, viewer and unknown slugs**, so it is no slug oracle. **"Reorder so the guard answers first" lost:** FastAPI can't do it natively, so it needs a second copy of the access check ahead of parsing, and that copy can drift. Rationale is beside `require_rider_access` |
-| 24 | Bound form model for photo upload — won't-fix | `routes/photos.py`, `api-contract.md`, `progress.json` | **Orchestrator, 2026-09-30.** Corrects Entry 16's "impossible": a model carrying `UploadFile` **does** bind, but it flips the OpenAPI request type to `x-www-form-urlencoded`, which breaks the `multipart/form-data` contract and the Kubb client, for a cosmetic gain. Inline `Form(...)` params stay. Rationale is beside the params |
-| 25 | `qa`/`docs` write-boundary hooks, promoted ahead of their triggers | `.claude/hooks/*.sh`, `.claude/agents/{qa,docs}.md` | **User call, 2026-09-30, `c9d6b64`.** Triage had these as triggered/ordinary debt with no trigger fired. **Limits:** the `qa` tree guard **detects, doesn't prevent**, misses change-and-revert within one command, and **false-positives when another agent edits the same checkout in parallel**. The `docs` path guard **can't tell a doc comment from a logic edit** inside app/test source. Both narrow prose rules; neither replaces them |
+| 23 | Malformed body → `422` before the access guard — won't-fix | `core/security.py`, `test_stops_create_endpoint.py`, `progress.json` | **Orchestrator, 2026-09-29.** FastAPI parses the body before it solves dependencies. The resulting `422` is **byte-identical for rider, viewer and unknown slugs**, so it is no slug oracle. **"Reorder so the guard answers first" lost:** FastAPI can't do it natively, so it needs a second copy of the access check ahead of parsing, and that copy can drift. Rationale is beside `require_rider_access` |
+| 24 | Bound form model for photo upload — won't-fix | `routes/photos.py`, `api-contract.md`, `progress.json` | **Orchestrator, 2026-09-29.** Corrects Entry 16's "impossible": a model carrying `UploadFile` **does** bind, but it flips the OpenAPI request type to `x-www-form-urlencoded`, which breaks the `multipart/form-data` contract and the Kubb client, for a cosmetic gain. Inline `Form(...)` params stay. Rationale is beside the params |
+| 25 | `qa`/`docs` write-boundary hooks, promoted ahead of their triggers | `.claude/hooks/*.sh`, `.claude/agents/{qa,docs}.md` | **User call, 2026-09-29, `c9d6b64`.** Triage had these as triggered/ordinary debt with no trigger fired. **Limits:** the `qa` tree guard **detects, doesn't prevent**, misses change-and-revert within one command, and **false-positives when another agent edits the same checkout in parallel**. The `docs` path guard **can't tell a doc comment from a logic edit** inside app/test source. Both narrow prose rules; neither replaces them |
+| 26 | Stop and photo times: stored as instants, shown in the reader's zone with the zone labelled | `frontend/src/format.ts`, `models/stop.py`, `api-contract.md`, `progress.json` | **Architect ruling, 2026-09-29, option A.** The review found times rendered with no zone, and the rider's own offset is not stored (`timestamptz` keeps the instant, not the offset). **Option B lost on need, not correctness:** `arrived_offset_minutes` / `taken_offset_minutes` columns would work, but no spec line asks for rider-local time; filed as triggered debt `t-stop-rider-offset`. **Option C is a no-op** (sending a local-offset spelling changes nothing, storage is UTC). **Option D lost on cost** (a timezone lookup from lat/lng adds a dependency) |
 
 ---
 
@@ -1887,7 +1888,7 @@ Do not re-derive this. The agreed shape is:
 
 ## 22. Graph refresh token: mint once and reuse — don't persist the rotated one
 
-**Ruling:** architect, 2026-09-30, option A. No escalation: neither option breaks an architecture
+**Ruling:** architect, 2026-09-29, option A. No escalation: neither option breaks an architecture
 invariant.
 
 **Who disagreed:** the premise written into `backend/app/storage/onedrive_sync.py` (the comment at
@@ -1958,7 +1959,7 @@ cite this entry**, so that "persist the rotated token" is not re-proposed from t
 
 ## 23. A malformed body returns 422 before the access guard runs — closed won't-fix
 
-**Ruling:** orchestrator, 2026-09-30, while clearing the debt backlog at the user's request ("clear all
+**Ruling:** orchestrator, 2026-09-29, while clearing the debt backlog at the user's request ("clear all
 tech debt that doesn't need me"). `t-malformed-body-precedes-access-guard` set to `done` with the title
 suffix "CLOSED WON'T-FIX".
 
@@ -2001,7 +2002,7 @@ before body parsing.
 
 ## 24. A bound form model for the photo upload — closed won't-fix
 
-**Ruling:** orchestrator, 2026-09-30, same debt-clearing pass. `t-photo-form-model-binding` set to
+**Ruling:** orchestrator, 2026-09-29, same debt-clearing pass. `t-photo-form-model-binding` set to
 `done` with the title suffix "CLOSED WON'T-FIX".
 
 **Who disagreed:** Entry 16's summary line vs `dev`'s later finding. Entry 16 recorded that binding a
@@ -2037,7 +2038,7 @@ form model carrying `UploadFile`. Verify that against the generated spec, not th
 
 ## 25. Agent write-boundary hooks for `qa` and `docs`, promoted ahead of their triggers
 
-**Ruling:** user, 2026-09-30 ("clear all tech debt that doesn't need me"), shipped in `c9d6b64`. Closes
+**Ruling:** user, 2026-09-29 ("clear all tech debt that doesn't need me"), shipped in `c9d6b64`. Closes
 `t-qa-mutation-hook` and `t-docs-agent-unscoped-grant`.
 
 **Who disagreed:** the backlog triage vs the user's call. Both items had been triaged as not-yet-work:
@@ -2083,3 +2084,56 @@ re-classification. Neither trigger fired.
 These hooks narrow two prose boundaries; they don't replace them. Anyone reading "qa is hook-guarded"
 or "docs is path-scoped" as complete enforcement is overreading the hooks. The two prose rules in
 `qa.md` and `docs.md` still carry the parts the hooks can't see.
+
+---
+
+## 26. Stop and photo times: stored as instants, shown in the reader's zone with the zone labelled
+
+**Ruling:** architect, 2026-09-29, option A, during the full-codebase review. No escalation: no option
+breaks an architecture invariant, and option D was rejected before it could touch the locked stack.
+
+**Who disagreed:** the review's finding vs the storage model the contract settled in Entries 15 and 16.
+The review found that stop times were rendered with `toLocaleString()` and no zone, so a viewer at home
+and a rider on the road read the same stop at different clock times with nothing to say which clock.
+The obvious reading of that finding is "show the rider's local time", and that is the position that
+lost. Entries 15/16 require an offset on input, but `arrivedAt` and `takenAt` land in `timestamptz`
+columns, which store the instant and discard the offset. Every response is UTC with a `Z`. So the
+server cannot tell anyone what the rider's clock said.
+
+### The options
+
+- **A (ruled).** Keep storing instants. Show every time in the **reader's** zone, **with the zone
+  labelled**. Shipped in the frontend review batch as `formatInstant` (`frontend/src/format.ts`, used by
+  the timeline, the map pin labels and the stop detail page), which renders with
+  `timeZoneName: "short"` (for example "ACST" or "GMT+9:30").
+- **B: store the rider's offset.** Add `arrived_offset_minutes` (stops) and `taken_offset_minutes`
+  (photos), captured from the device, returned beside the instant, and used to render rider-local time.
+- **C: have the client send its local offset** in the ISO string (`+09:30` rather than `Z`).
+- **D: derive the zone from the coordinates** with a timezone lookup from lat/lng.
+
+### Why B, C and D lost
+
+- **B lost on need, not correctness.** It works, and it is the right design if rider-local time is
+  ever wanted. But no spec line asks for it. It is a migration, two model fields, a contract change,
+  a Kubb regeneration and queue payload changes, for a display nobody has requested. The labelled
+  reader-zone display already removes the actual defect, which was the ambiguity. Filed as **triggered
+  debt `t-stop-rider-offset`**. **Trigger: the spec adds a requirement to show the rider's local
+  time.**
+- **C does nothing.** Storage is `timestamptz`, so a `+09:30` spelling is normalised to UTC on write
+  and gone on read, exactly as `api-contract.md` "`takenAt` comes back in UTC" already records. It
+  changes the request and nothing else. (The add-stop form sends `toISOString()`, which is `Z`, for
+  the same reason: the spelling carries no information the server keeps.)
+- **D lost on cost.** A lat/lng → zone lookup needs a timezone-boundary dataset or a library, which is
+  a new dependency to keep current. It would also be wrong at a border, on a manual map tap, and when
+  the device clock itself was on another zone.
+
+### Why it matters
+
+"Just show the rider's local time" will be suggested again by anyone who reads a timeline in a different
+zone from the trip. Sending the offset (C) looks like the cheap fix and is not a fix. Rider-local time
+needs the offset *stored* (B), and B waits for its trigger.
+
+**Rationale beside the code:** option B would be built in `backend/app/models/stop.py` (and a
+migration), and the display lives in `frontend/src/format.ts`. `format.ts`'s doc comment already
+explains the reader-zone choice. Citing this entry there, and beside `arrivedAt` in `models/stop.py`,
+was left for the later non-`docs/` pass, because this pass edits `docs/` only.

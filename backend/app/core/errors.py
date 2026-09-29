@@ -39,6 +39,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.headers import SECURITY_HEADERS
 from app.models.common import ErrorCode, ErrorDetail, ErrorEnvelope
 
 logger = logging.getLogger(__name__)
@@ -342,10 +343,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
     `exc` is logged with its traceback and never reaches the body. A DB error's
     text alone can contain the database host and user.
+
+    Starlette routes an `Exception` handler to `ServerErrorMiddleware`, which
+    sits outside user middleware — so `SecurityHeadersMiddleware` never sees
+    this response, and the headers are set here instead.
     """
     logger.exception("Unhandled exception on %s", _endpoint(request), exc_info=exc)
     return envelope_response(
-        HTTPStatus.INTERNAL_SERVER_ERROR, ErrorCode.INTERNAL_ERROR, INTERNAL_ERROR_MESSAGE
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        ErrorCode.INTERNAL_ERROR,
+        INTERNAL_ERROR_MESSAGE,
+        dict(SECURITY_HEADERS),
     )
 
 

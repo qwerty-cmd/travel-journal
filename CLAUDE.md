@@ -61,13 +61,17 @@ One task = one reviewable patch — don't queue up several unreviewed.
 
 ## Commands
 ```
-# Local dev (everything: api + postgres + minio)
+# One-time: env file (compose and Settings both read backend/.env)
+cp .env.example backend/.env
+
+# Local dev (everything: api + postgres + minio; minio-init creates the bucket).
+# After a dependency change: docker compose up --build -V
 docker compose up
 
 # Backend only
 cd backend && uv sync && uv run uvicorn app.main:app --reload
 
-# Backend tests
+# Backend tests (need postgres + minio up: docker compose up -d postgres minio minio-init)
 cd backend && uv run pytest
 
 # Backend lint + format gate (both must pass before a patch is done)
@@ -82,10 +86,12 @@ cd frontend && npm test
 # Regenerate frontend API client: dump the OpenAPI snapshot, then run Kubb on it
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api
+# Kubb reorders imports in src/api/gen/hooks on every run; if those import lines are the
+# only hook diffs, discard them (git checkout -- frontend/src/api/gen/hooks) and keep the rest.
 ```
 
 ## Commit convention
-Conventional Commits: `type(scope): subject`. Types in use: `feat`, `fix`, `docs`, `chore`, `build`. Scopes seen: `data`, `api`, `docs`. Subject in imperative mood, lower case, no trailing period.
+Conventional Commits: `type(scope): subject`. Types in use: `feat`, `fix`, `docs`, `chore`, `build`, `test`. Scopes seen: `data`, `api`, `docs`, `frontend`, `storage`, `infra`, `agents`. Subject in imperative mood, lower case, no trailing period.
 
 **The body carries the *why*, not the *what*** — the diff already shows what changed. The existing commit history is the reference for message style.
 

@@ -743,69 +743,34 @@
       "BikePatch": {
         "properties": {
           "riderName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Ridername",
-            "description": "Whose bike this is \u2014 free text, not tied to a user account. Omit the field to leave the stored name alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+            "description": "Whose bike this is \u2014 free text, not tied to a user account. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
           },
           "make": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Make",
-            "description": "Manufacturer, e.g. 'Honda'. Free text \u2014 not a fixed list. Omit the field to leave the stored make alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+            "description": "Manufacturer, e.g. 'Honda'. Free text \u2014 not a fixed list. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
           },
           "model": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Model",
-            "description": "Model name, e.g. 'Africa Twin'. Free text \u2014 not a fixed list. Omit the field to leave the stored model alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+            "description": "Model name, e.g. 'Africa Twin'. Free text \u2014 not a fixed list. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
           },
           "year": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "integer",
             "title": "Year",
-            "description": "Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to leave the stored year alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none."
+            "description": "Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
           },
           "specs": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Specs",
-            "description": "Free text: engine, suspension, tyres, etc. Omit the field to leave the stored specs alone; omitting is not the same as sending it explicitly as null. To clear specs send an empty string \u2014 that is how 'nothing written yet' is spelled, never null."
+            "description": "Free text: engine, suspension, tyres, etc. To clear specs send an empty string \u2014 that is how 'nothing written yet' is spelled, never null. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how 'no change' is spelled."
           }
         },
         "type": "object",
         "title": "BikePatch",
-        "description": "PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. All fields optional \u2014 only sent fields change."
+        "description": "PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. Every field may be omitted --\nonly fields present in the body change -- but none may be null."
       },
       "Body_upload_photo_api_trips__slug__stops__stop_id__photos_post": {
         "properties": {
@@ -1039,13 +1004,17 @@
           },
           "lat": {
             "type": "number",
+            "maximum": 90.0,
+            "minimum": -90.0,
             "title": "Lat",
-            "description": "Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+            "description": "Latitude in decimal degrees, WGS 84, from -90 to 90 inclusive. A value outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
           },
           "lng": {
             "type": "number",
+            "maximum": 180.0,
+            "minimum": -180.0,
             "title": "Lng",
-            "description": "Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
+            "description": "Longitude in decimal degrees, WGS 84, from -180 to 180 inclusive. A value outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] \u2014 the reverse of this pair."
           },
           "locationSource": {
             "$ref": "#/components/schemas/LocationSource",

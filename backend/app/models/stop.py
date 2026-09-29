@@ -19,12 +19,22 @@ class StopCreate(BaseModel):
     )
     name: str = Field(description="What the rider called this stop, e.g. 'Daly Waters Pub'.")
     lat: float = Field(
-        description="Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in "
-        "the map endpoint are ordered [lng, lat] — the reverse of this pair."
+        ge=-90,
+        le=90,
+        allow_inf_nan=False,
+        description="Latitude in decimal degrees, WGS 84, from -90 to 90 inclusive. A value "
+        "outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note "
+        "that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of "
+        "this pair.",
     )
     lng: float = Field(
-        description="Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in "
-        "the map endpoint are ordered [lng, lat] — the reverse of this pair."
+        ge=-180,
+        le=180,
+        allow_inf_nan=False,
+        description="Longitude in decimal degrees, WGS 84, from -180 to 180 inclusive. A value "
+        "outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note "
+        "that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of "
+        "this pair.",
     )
     locationSource: LocationSource = Field(
         description="How lat/lng were obtained — an automatic GPS fix, or a manual "

@@ -21,12 +21,16 @@ export type StopCreate = {
     */
     name: string;
     /**
-     * @description Latitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of this pair.
+     * @description Latitude in decimal degrees, WGS 84, from -90 to 90 inclusive. A value outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of this pair.
+     * @minLength -90
+     * @maxLength 90
      * @type number
     */
     lat: number;
     /**
-     * @description Longitude in decimal degrees, WGS 84. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of this pair.
+     * @description Longitude in decimal degrees, WGS 84, from -180 to 180 inclusive. A value outside that range, NaN or Infinity is rejected with 422 / VALIDATION_ERROR. Note that GeoJSON positions in the map endpoint are ordered [lng, lat] — the reverse of this pair.
+     * @minLength -180
+     * @maxLength 180
      * @type number
     */
     lng: number;

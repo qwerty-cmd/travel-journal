@@ -188,6 +188,80 @@ describe("AC3: geolocation unavailable -> manual map tap", () => {
     expect(enqueued()[0].payload.data).toMatchObject({ lat: -21.5, lng: 133.5, locationSource: "manual" });
   });
 
+  // The browser's own timeout only starts once permission is granted, so an
+  // unanswered prompt never calls back: the form's own 15s timer must.
+  describe("permission prompt never answered", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    });
+    const advance = (ms: number) => act(() => void vi.advanceTimersByTime(ms));
+    const gpsFix = (geo: Geo, lat: number, lng: number) =>
+      act(() =>
+        (geo.getCurrentPosition.mock.calls[0][0] as PositionCallback)({
+          coords: { latitude: lat, longitude: lng, accuracy: 5 },
+          timestamp: Date.now(),
+        } as GeolocationPosition),
+      );
+
+    test("falls back to the map tap after 15s, not before", async () => {
+      setGeo(geoPending());
+      renderAt("/t/abc/add");
+      fireEvent.change(await nameInput(), { target: { value: "Barrow Creek" } });
+      expect(screen.getByText("Getting GPS fix…")).toBeTruthy();
+      await advance(14_000);
+      expect(screen.getByText("Getting GPS fix…")).toBeTruthy();
+      expect(maps).toHaveLength(0);
+      await advance(1_500);
+      expect(screen.getByText("GPS unavailable: tap the map to set the location")).toBeTruthy();
+      await waitFor(() => expect(maps.length).toBeGreaterThan(0));
+      expect(saveBtn().disabled).toBe(true);
+      await tapMap(-21.5, 133.5);
+      fireEvent.click(saveBtn());
+      await waitFor(() => expect(enqueueMock).toHaveBeenCalledTimes(1));
+      expect(enqueued()[0].payload.data).toMatchObject({ lat: -21.5, lng: 133.5, locationSource: "manual" });
+    });
+
+    test("a late GPS fix never overwrites a point the rider already tapped", async () => {
+      const geo = geoPending();
+      setGeo(geo);
+      renderAt("/t/abc/add");
+      fireEvent.change(await nameInput(), { target: { value: "Barrow Creek" } });
+      await advance(15_000);
+      await waitFor(() => expect(maps.length).toBeGreaterThan(0));
+      await tapMap(-21.5, 133.5);
+      await gpsFix(geo, -19.6, 134.1);
+      expect(screen.getByText(/map tap/)).toBeTruthy();
+      fireEvent.click(saveBtn());
+      await waitFor(() => expect(enqueueMock).toHaveBeenCalledTimes(1));
+      expect(enqueued()[0].payload.data).toMatchObject({ lat: -21.5, lng: 133.5, locationSource: "manual" });
+    });
+
+    test("a late GPS fix with no tap yet is used", async () => {
+      const geo = geoPending();
+      setGeo(geo);
+      renderAt("/t/abc/add");
+      fireEvent.change(await nameInput(), { target: { value: "Barrow Creek" } });
+      await advance(15_000);
+      await waitFor(() => expect(maps.length).toBeGreaterThan(0));
+      await gpsFix(geo, -19.6, 134.1);
+      fireEvent.click(saveBtn());
+      await waitFor(() => expect(enqueueMock).toHaveBeenCalledTimes(1));
+      expect(enqueued()[0].payload.data).toMatchObject({ lat: -19.6, lng: 134.1, locationSource: "gps" });
+    });
+
+    test("a GPS fix before 15s cancels the fallback: no map ever shown", async () => {
+      const geo = geoPending();
+      setGeo(geo);
+      renderAt("/t/abc/add");
+      await nameInput();
+      await advance(5_000);
+      await gpsFix(geo, -19.6, 134.1);
+      await advance(30_000);
+      expect(maps).toHaveLength(0);
+      expect(screen.getByText(/\(GPS\)/)).toBeTruthy();
+    });
+  });
+
   test("tap on a wrapped world copy stores lng inside -180..180", async () => {
     setGeo(geoErr(1));
     renderAt("/t/abc/add");
@@ -297,6 +371,16 @@ describe("AC5: access control", () => {
     expect(screen.queryByLabelText("Name")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save stop" })).toBeNull();
     expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  test("viewer opening /t/$slug/add directly is never asked for geolocation", async () => {
+    tripBody = { ...TRIP, access: "viewer" };
+    const geo = geoPending();
+    setGeo(geo);
+    const router = renderAt("/t/abc/add");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/t/abc"));
+    await settle();
+    expect(geo.getCurrentPosition).not.toHaveBeenCalled();
   });
 
   test("server access wins over a cached rider trip", async () => {

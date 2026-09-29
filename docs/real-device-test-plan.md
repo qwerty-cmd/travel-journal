@@ -1,7 +1,7 @@
 # Real-device test plan
 
-For the Week 4 real-device test day (spec §7 and §12). Task `t-real-device-test-plan`, story
-`s-real-device-testing`. The goal is to confirm the offline queue, access control and photo handling on
+For the Week 4 real-device test day (spec §7 and §12). Written by task `t-real-device-test-plan`; the
+test day itself is the owner task `t-owner-real-device-test-day`, story `s-real-device-testing`. The goal is to confirm the offline queue, access control and photo handling on
 real phones, and to test the one design assumption still at MEDIUM confidence (iOS `start_url`,
 decision-log Entry 18).
 
@@ -32,6 +32,22 @@ If the app instead opens straight at the trip on first launch, record that. It i
 the Entry 18 assumption was wrong.
 - [ ] Pass  - [ ] Fail
 
+### 1a. Android install and first launch
+Steps:
+1. On the Android phone, open the rider link in Chrome.
+2. Install it: accept Chrome's install prompt, or use the menu's **Install app** (older Chrome: **Add to
+   Home screen**, which should still create an installed app, not a bookmark).
+3. Launch the app from the home screen.
+
+Expected:
+- Chrome offers **Install**. If it only offers a plain shortcut, record a FAIL: the manifest icons
+  (`t-pwa-manifest-icons`) are meant to make the app installable.
+- The home-screen icon is the app's own icon, not a generic letter or a page screenshot.
+- The splash screen and the status bar use the app's **dark green** theme colour.
+- The app opens **straight at the trip**, with no paste-link screen. On Android the installed app shares
+  Chrome's storage, so it already knows the last trip. (This is the opposite of iOS in case 1.)
+- [ ] Pass  - [ ] Fail
+
 ### 2. Rider vs viewer
 Steps:
 1. Open the rider link.
@@ -41,6 +57,9 @@ Expected:
 - **Rider link:** shows the display-name prompt once, plus the "Add stop" link.
 - **Viewer link:** shows no prompt and no "Add stop" link. Opening `/t/<viewer>/add` directly sends the
   viewer back to the trip.
+- **The viewer is never asked for location.** Use a browser profile or phone that has never granted
+  location to the site. No location permission prompt appears at any point, including when opening
+  `/t/<viewer>/add` directly. (Only a rider on Add stop requests GPS.)
 - [ ] Pass  - [ ] Fail
 
 ### 3. Airplane-mode capture, close, reopen, resync (spec §12, top priority)
@@ -85,6 +104,18 @@ Steps:
 Expected: the screen shows "GPS unavailable: tap the map to set the location". Tapping the map shows
 "Location: …(map tap)", and a second tap moves it. After saving, the stop shows
 **"· approximate location"** in the timeline and on the stop detail page.
+- [ ] Pass  - [ ] Fail
+
+### 6a. GPS prompt dismissed without choosing
+Steps:
+1. Reset the site's location permission so the browser asks again.
+2. As a rider, tap Add stop.
+3. When the location prompt appears, **don't choose**: dismiss it (tap outside it, or swipe it away), or
+   just leave it open.
+
+Expected: within about **15 seconds** the screen switches to "GPS unavailable: tap the map to set the
+location", and the map tap works as in case 6. The form does not wait for an answer forever. (The app
+runs its own 15-second timer, because a browser may never report a dismissed prompt.)
 - [ ] Pass  - [ ] Fail
 
 ### 7. GPS allowed
@@ -156,8 +187,6 @@ is fine after a drill because no link actually leaked.
 - [ ] Pass  - [ ] Fail
 
 ### 13. Bikes page: view, add, edit
-Depends on `t-bikes-page-edit`, which is still in progress. Mark this case N/A if it hasn't shipped.
-
 Steps:
 1. As a rider, open Bikes, add a bike, then edit its specs.
 2. Open Bikes with the viewer link.
@@ -175,4 +204,19 @@ Steps: using the viewer link, try to reach any write path, for example `/t/<view
 `POST /api/trips/<viewer>/stops` operation under `/docs`.
 
 Expected: the UI offers no way to write, and the API returns `403 FORBIDDEN`.
+- [ ] Pass  - [ ] Fail
+
+### 15. Times show their time zone (decision-log Entry 26)
+Steps:
+1. Add a stop and note the phone's clock time.
+2. Look at the stop's time in the timeline, on its map pin label, and on the stop detail page.
+3. If you can, open the viewer link on a device set to a different time zone (or change one phone's
+   time zone in Settings and reopen the app).
+
+Expected:
+- Every time carries a zone label, for example "ACST" or "GMT+9:30". No time appears without one.
+- On the phone that added the stop, the time matches its clock.
+- On a device in another zone, the time is shown in **that device's** zone, with that zone's label. The
+  hour differs, but it is the same moment. This is by design: times are shown in the reader's zone, not
+  the rider's.
 - [ ] Pass  - [ ] Fail

@@ -2,7 +2,12 @@
 // an offset-aware `takenAt` per the api-contract ladder. EXIF is hand-parsed
 // from the ORIGINAL file because re-encoding through a canvas strips it.
 // Known limit: createImageBitmap decodes the source at full size (a 48MP photo
-// costs a lot of memory on older phones) before we downscale.
+// costs a lot of memory on older phones) before we downscale. Only formats the
+// browser can decode are accepted: HEIC is re-encoded to JPEG only where the
+// browser can decode it; elsewhere (e.g. desktop Chrome) it throws
+// PhotoDecodeError at pick time and is never queued.
+// APIs called: none. The add-stop form enqueues the result; the offline queue
+// uploads it.
 
 export type ExifTimes = { dateTimeOriginal?: string; offsetTimeOriginal?: string };
 
