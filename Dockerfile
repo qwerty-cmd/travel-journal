@@ -14,7 +14,9 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv
+# Pinned to the uv used to write backend/uv.lock, so `uv sync --frozen` reads
+# the lockfile with the same resolver the host used. Bump both together.
+RUN pip install --no-cache-dir uv==0.8.17
 
 COPY backend/pyproject.toml backend/uv.lock* ./backend/
 RUN cd backend && uv sync --frozen --no-dev

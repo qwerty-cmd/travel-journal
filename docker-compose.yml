@@ -1,26 +1,67 @@
+# MinIO root credentials, shared by the minio server and the minio-init
+# one-shot so they cannot drift apart. Local-only throwaway values.
+x-minio-credentials: &minio-credentials
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: minioadmin
+
+# After changing backend dependencies (pyproject.toml / uv.lock), start with
+#   docker compose up --build -V
+# -V (--renew-anon-volumes) discards the api's anonymous .venv volume. Without
+# it compose re-attaches the old volume, which masks the rebuilt image's venv,
+# so the new packages are invisible and imports fail.
+
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    # The Dockerfile CMD plus --reload, so edits under the ./backend bind mount
+    # restart the server. Paths are relative to the image WORKDIR /app.
+    # --log-config is kept so local logs get the same slug redaction as prod.
+    # --reload-dir limits watching to the Python source tree.
+    command:
+      [
+        "/app/backend/.venv/bin/uvicorn",
+        "app.main:app",
+        "--app-dir",
+        "backend",
+        "--log-config",
+        "backend/log_config/uvicorn.json",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "backend/app",
+      ]
     ports:
       - "8000:8000"
-    # backend/.env is the single local secrets file (gitignored). The two
-    # entries below override its host-oriented DATABASE_URL / S3_ENDPOINT_URL
-    # with the compose service names; the rest (S3 creds, GRAPH_*) come from it.
+    # backend/.env is the single local secrets file (gitignored). The entries
+    # below override its host-oriented DATABASE_URL / S3_ENDPOINT_URL with the
+    # compose service names; the rest (S3 creds, bucket, GRAPH_*) come from it.
     env_file: backend/.env
     environment:
       - DATABASE_URL=postgresql://bike_trip:bike_trip@postgres:5432/bike_trip
       - S3_ENDPOINT_URL=http://minio:9000
+      # Presigned GET URLs are opened by the host browser, which cannot resolve
+      # "minio", so sign them against the published port instead.
+      - S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+      # uvicorn --reload uses watchfiles (inotify). File events from a Windows
+      # host do not reliably cross the bind mount, so poll instead.
+      - WATCHFILES_FORCE_POLLING=true
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     volumes:
-      - ./backend:/app/backend # live-reload for local dev
+      - ./backend:/app/backend # source for --reload (see command above)
       # Anonymous volume masks the host's Windows-shaped .venv (Scripts/, no
       # bin/) so the image's Linux venv stays visible. Must follow the bind mount.
+      # It outlives rebuilds: see the `up --build -V` note at the top.
       - /app/backend/.venv
     # Same probe as the Dockerfile HEALTHCHECK, on the faster local cadence the
     # other services use. The venv path is the image's (the anonymous volume
@@ -55,11 +96,13 @@ services:
       retries: 5
 
   minio:
+    # Unpinned on purpose: release tags could not be verified from the build
+    # environment, and a wrong pin breaks `docker compose up` outright. Local
+    # only; production uses R2. Pin to a tag you have pulled if reproducibility
+    # starts to matter.
     image: quay.io/minio/minio:latest
     command: server /data --console-address ":9001"
-    environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+    environment: *minio-credentials
     ports:
       - "9000:9000" # S3 API
       - "9001:9001" # Web console
@@ -70,6 +113,27 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # One-shot: creates the api's bucket in MinIO, then exits 0. The api waits for
+  # it (service_completed_successfully). The bucket name comes from the same
+  # backend/.env the api reads, so the two cannot disagree. --ignore-existing
+  # makes re-runs against the persisted minio-data volume a no-op.
+  minio-init:
+    image: minio/mc:latest  # unpinned for the same reason as minio above
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file: backend/.env
+    environment: *minio-credentials
+    entrypoint: ["/bin/sh", "-c"]
+    # $$ defers expansion to the container shell (compose would otherwise
+    # interpolate from the host environment, where these are unset).
+    command:
+      - >-
+        : "$${S3_BUCKET_NAME:?S3_BUCKET_NAME must be set in backend/.env}" &&
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing "local/$$S3_BUCKET_NAME"
+    restart: "no"
 
 volumes:
   postgres-data:
