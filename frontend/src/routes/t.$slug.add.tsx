@@ -12,13 +12,15 @@ import { processPhoto } from "../photo";
 // offline queue (decision-log Entry 19), which sends it when it can. The id and
 // arrivedAt are fixed at mount, so a resubmit replays the same idempotent id.
 // arrivedAt is toISOString(): UTC with a "Z" offset, so aware but the rider's
-// local offset is not preserved. GPS first; any geolocation failure falls back
-// to tapping the map (locationSource "manual"). Photos are processed at pick
+// local offset is not preserved. GPS first; any geolocation failure, or no
+// answer within 15s, falls back to tapping the map (locationSource "manual"). Photos are processed at pick
 // time (id fixed when processing finishes, before submit) and enqueued in the
 // same call as the stop, stop first.
 export const Route = createFileRoute("/t/$slug/add")({
   component: AddStop,
 });
+
+const GPS_FALLBACK_MS = 15_000;
 
 type Position = { lat: number; lng: number; locationSource: LocationSource };
 type Picked = { id: string; fileName: string; blob: Blob; takenAt: string };
@@ -40,18 +42,40 @@ function AddStop() {
   const [processing, setProcessing] = useState(0);
   const [photoErrors, setPhotoErrors] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (p) => setPosition({ lat: p.coords.latitude, lng: p.coords.longitude, locationSource: "gps" }),
-      () => setGpsFailed(true),
-      { enableHighAccuracy: true, timeout: 15_000 },
-    );
-  }, []);
-
   // The trip shell only renders this once the trip is loaded (or cached), so
   // trip.data is the server's access answer, never a device-side guess.
-  if (trip.data?.access !== "rider") return <Navigate to="/t/$slug" params={{ slug }} replace />;
+  const isRider = trip.data?.access === "rider";
+
+  // Geolocation is only requested once the rider check passes, so a viewer
+  // redirected away never sees a permission prompt. The browser's own timeout
+  // does not start until permission is granted, so an ignored or dismissed
+  // prompt would wait forever: our own timer falls back to the map tap. A fix
+  // that arrives after the fallback is still used, but never over a point the
+  // rider already tapped.
+  useEffect(() => {
+    if (!isRider || !navigator.geolocation) return;
+    let active = true;
+    const fallback = setTimeout(() => setGpsFailed(true), GPS_FALLBACK_MS);
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        if (!active) return;
+        clearTimeout(fallback);
+        setPosition((cur) => cur ?? { lat: p.coords.latitude, lng: p.coords.longitude, locationSource: "gps" });
+      },
+      () => {
+        if (!active) return;
+        clearTimeout(fallback);
+        setGpsFailed(true);
+      },
+      { enableHighAccuracy: true, timeout: GPS_FALLBACK_MS },
+    );
+    return () => {
+      active = false;
+      clearTimeout(fallback);
+    };
+  }, [isRider]);
+
+  if (!isRider) return <Navigate to="/t/$slug" params={{ slug }} replace />;
 
   function pick(e: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
