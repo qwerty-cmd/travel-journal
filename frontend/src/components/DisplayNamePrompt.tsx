@@ -2,8 +2,18 @@ import { useState } from "react";
 import { setDisplayName } from "../localStore";
 
 /**
- * Asks a rider for the name that labels their uploads (`uploadedBy`) — a label,
- * not an identity check. Stores the trimmed name, then calls `onSaved`.
+ * Design feature: asks a rider for the name that labels their uploads
+ * (`uploadedBy`) — a label, not an identity check. Shown by the /t/$slug shell
+ * only when the server says `access === "rider"` and this device has no saved
+ * name; viewers never see it.
+ *
+ * Design format: one "Your name" field and a Save button. A blank or
+ * whitespace-only name shows "Please enter your name." On save, stores the
+ * trimmed name in localStorage (`btj.displayName`, via setDisplayName), then
+ * calls `onSaved`. The name is per device, not per trip.
+ *
+ * APIs called: none. The name is sent later as `uploadedBy` on queued photo
+ * uploads.
  */
 export function DisplayNamePrompt({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState("");

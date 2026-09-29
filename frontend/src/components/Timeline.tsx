@@ -2,10 +2,16 @@ import { useNavigate } from "@tanstack/react-router";
 import type { StopOut } from "../api/gen/types/StopOut";
 import { formatInstant } from "../format";
 
-// Chronological stop feed (spec Section 6, trip home). GET /stops promises no
-// order, so sort here: oldest first by instant (Date.parse, so mixed UTC
-// offsets compare correctly — never by string), ties broken by id. Clicking
-// an item opens the stop's detail screen.
+// Design feature: chronological stop feed on the trip home (spec Section 6).
+// Clicking (or Enter on) an item opens that stop's detail screen.
+// Design format: prop `stops: StopOut[]`. Empty → "No stops yet.". Otherwise an
+// unstyled list, one row per stop: bold name; arrival time via formatInstant
+// (reader's zone, with a zone label) plus " · approximate location" for a
+// manual (map-tap) location; notes if not null. GET /stops promises no order,
+// so sort here: oldest first by instant (Date.parse, so mixed UTC offsets
+// compare correctly — never by string), ties broken by id.
+// APIs called: none itself. The trip home passes the result of
+// GET /api/trips/{slug}/stops.
 export function Timeline({ stops }: { stops: StopOut[] }) {
   const navigate = useNavigate();
   if (stops.length === 0) return <p>No stops yet.</p>;

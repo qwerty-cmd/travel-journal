@@ -4,13 +4,27 @@ import { useListPhotosApiTripsSlugStopsStopIdPhotosGet } from "../api/gen/hooks/
 import { useListStopsApiTripsSlugStopsGet } from "../api/gen/hooks/useListStopsApiTripsSlugStopsGet";
 import { formatInstant } from "../format";
 
-// Stop detail (spec Section 6, screen 3): same for rider and viewer, read-only.
-// There is no stop-by-id endpoint, so the stop comes from the GET /stops list
-// (usually already cached from the trip home). Photo URLs are presigned and
-// short-lived (1h): shown straight from the query, never persisted. An image
-// that fails to load (typically an expired URL on a long-open page) refetches
-// the list once for fresh URLs; the enlarged view is looked up by id, so it
-// picks up the fresh URL too. Accepted limit: photos need the network.
+// Design feature: stop detail (spec Section 6, screen 3). One stop with its
+// photos; same for rider and viewer, read-only.
+// Design format: "Back to trip" link, stop name, arrival time (formatInstant,
+// in the reader's zone with a zone label) plus " · approximate location" for a
+// manual (map-tap) location, notes if any, then the photos: a wrap of 96px
+// square lazy-loaded thumbnails ("Loading photos…", the envelope message or
+// "Couldn't load photos", or "No photos yet"). Tapping a thumbnail opens a
+// full-screen dialog; a click anywhere or Escape closes it. An unknown stop id
+// shows "Stop not found" with a back link.
+// Photo URLs are presigned and short-lived (1h): shown straight from the query,
+// never persisted. An <img> onError (typically an expired URL on a long-open
+// page) refetches the photo list once for fresh URLs; a list that is itself
+// the result of that refetch never triggers another, so a genuinely broken
+// photo can't loop, and a later ordinary refetch re-arms it. The enlarged view
+// is looked up by id, so it picks up the fresh URL too. Accepted limit: photos
+// need the network.
+// APIs called: GET /api/trips/{slug}/stops (useListStopsApiTripsSlugStopsGet;
+// there is no stop-by-id endpoint, and the list is usually already cached from
+// the trip home) and, once the stop is found, GET
+// /api/trips/{slug}/stops/{stop_id}/photos
+// (useListPhotosApiTripsSlugStopsStopIdPhotosGet).
 export const Route = createFileRoute("/t/$slug/stops/$stopId")({
   component: StopDetail,
 });

@@ -13,6 +13,8 @@
  * TanStack Router's lazyRouteComponent has its own once-per-message reload for
  * a missing module at render time; this covers the import itself, which Vite
  * wraps for every lazy route chunk in the build.
+ *
+ * APIs called: none (the reload re-fetches static assets only).
  */
 const KEY = "btj.staleChunkReloadAt";
 export const RELOAD_WINDOW_MS = 30_000;

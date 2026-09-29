@@ -5,11 +5,24 @@ const label = (e: QueueRecord) => (e.kind === "photo" ? `Photo for ${e.payload.s
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
- * The rider's offline indicator (spec §6 screen 5): a count of every non-failed
- * entry still waiting to send, split into stops and photos, plus the entries
- * that need attention (docs/api-contract.md, Error envelope) — every failed
- * entry until dismissed, and every entry still retrying after 10+ attempts.
- * Renders nothing only when the queue is empty.
+ * Design feature: the rider's offline indicator (spec §6 screen 5), mounted in
+ * the root shell so it shows on every screen. Tells the rider what hasn't
+ * reached the server yet and what needs attention (docs/api-contract.md, Error
+ * envelope).
+ *
+ * Design format: renders nothing only when the queue is empty. Otherwise a
+ * section labelled "Unsent stops" with:
+ * - "Waiting to send: N stops, M photos" — every non-failed entry;
+ * - per failed entry: "<label> could not be sent: <lastError>" and a Dismiss
+ *   button (the only way a failed entry leaves the queue);
+ * - per entry still retrying after 10+ attempts: "<label> still trying:
+ *   <lastError>".
+ * The label is the stop name, or "Photo for <stop name>". It updates live via
+ * `subscribe`, including changes made in other tabs (BroadcastChannel
+ * `btj-queue`).
+ *
+ * APIs called: none. Reads and deletes local IndexedDB entries only; the drain
+ * in `queue.ts` does the sending.
  */
 export function QueueNotice() {
   const [entries, setEntries] = useState<QueueRecord[]>([]);

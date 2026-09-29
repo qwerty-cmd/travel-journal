@@ -4,9 +4,23 @@ import { DisplayNamePrompt } from "../components/DisplayNamePrompt";
 import { getDisplayName } from "../localStore";
 import { isTripNotFound, useTrip } from "../trip";
 
-// Trip shell for every /t/$slug screen (decision-log Entry 18): trip header,
-// then the child route. A cached trip renders even when the server can't be
-// reached (Entry 19); only a NOT_FOUND envelope overrides it.
+// Design feature: trip shell for every /t/$slug screen (decision-log Entry 18).
+// Loads the trip once for all child routes, and asks a rider for a display
+// name before any child screen is shown. A cached trip renders even when the
+// server can't be reached (Entry 19); only a NOT_FOUND envelope overrides it.
+// Design format, first match wins:
+//   - NOT_FOUND envelope → "Trip not found" (useTrip also clears the cached
+//     trip and, if it was this slug, the remembered last slug).
+//   - trip data (fetched or persisted) → header with trip name and
+//     "Starts <startDate>", then either DisplayNamePrompt (access === "rider"
+//     and no name saved on this device) or the child route. Rider vs viewer
+//     comes from the server's `access`, never from device storage; viewers are
+//     never asked for a name.
+//   - any other error with no cached trip → "Can't reach the server" + Retry.
+//   - otherwise → "Waking up the server…" (free-tier cold start).
+// APIs called: GET /api/trips/{slug} via useTrip (src/trip.ts), seeded from the
+// persisted TripOut. Child routes read this same cache entry with
+// refetchOnMount: false rather than fetching again.
 export const Route = createFileRoute("/t/$slug")({
   component: TripShell,
 });

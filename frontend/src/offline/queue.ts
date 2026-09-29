@@ -14,7 +14,14 @@
  * entry; elsewhere each tab falls back to its own in-memory guard. Where
  * BroadcastChannel exists every change is announced on `btj-queue`, so other
  * tabs' subscribers (the QueueNotice) re-read, and a new entry wakes a drain
- * in the tab that holds the lock.
+ * in the tab that holds the lock. Every send is aborted after 30s (stop) or
+ * 120s (photo), so a hung request can't hold that lock forever.
+ *
+ * APIs called: POST /api/trips/{slug}/stops and
+ * POST /api/trips/{slug}/stops/{stop_id}/photos (multipart, one request per
+ * photo, retried whole under the same client id). After a successful send it
+ * invalidates the stops and map queries (stop) or that stop's photos query
+ * (photo) so open screens refetch.
  */
 import type { QueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'

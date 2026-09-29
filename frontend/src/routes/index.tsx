@@ -3,9 +3,17 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { getLastSlug } from "../localStore";
 import { parseTripLink } from "../trip";
 
-// `/` (decision-log Entry 18): back to the last trip opened on this device, or,
-// when there is none (e.g. first launch of the installed iOS app, whose storage
-// is separate from Safari's), a one-field "paste your trip link" screen.
+// Design feature: `/` (decision-log Entry 18). Sends the user back to the last
+// trip opened on this device, or, when there is none (e.g. first launch of the
+// installed iOS app, whose storage is separate from Safari's), asks for the
+// trip link.
+// Design format: beforeLoad redirects (replace) to /t/$slug when localStorage
+// has a last slug (getLastSlug). Otherwise a one-field form, "Paste your trip
+// link", with an "Open trip" button. parseTripLink accepts a full URL whose
+// path is /t/<slug> or a bare slug; anything else shows "That doesn't look
+// like a trip link." and stays put.
+// APIs called: none. The slug is not checked against the server here; the
+// /t/$slug shell does that and shows "Trip not found" for a NOT_FOUND envelope.
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
     const slug = getLastSlug();
