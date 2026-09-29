@@ -1105,6 +1105,8 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 
 ## t-onedrive-per-photo-isolation
 
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+
 TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
 The S3 read (`_read_object` via `to_thread`) and the `response.json()["id"]` that follows a successful upload both sit **outside** the per-photo `try`. A missing S3 object or a 2xx body without an `id` therefore aborts the whole run with a traceback, instead of logging that one photo and continuing — which is the isolation the rest of the loop is built for.
@@ -1117,6 +1119,8 @@ The S3 read (`_read_object` via `to_thread`) and the `response.json()["id"]` tha
 
 ## t-onedrive-filename-url-encoding
 
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+
 TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
 A photo id containing `#` or `?` mangles the Graph upload URL. **Measured, not reasoned:** with a `#` in the id, both the `:/content` suffix and the `@microsoft.graph.conflictBehavior=replace` directive are dropped from the request — and `conflictBehavior` is precisely the protection acceptance criterion 5 exists for (without it, Graph's default `fail` strands a photo pending forever after a crash between upload and `UPDATE`).
@@ -1128,6 +1132,8 @@ A photo id containing `#` or `?` mangles the Graph upload URL. **Measured, not r
 - qa suggests folding this into `t-onedrive-preflight-check` — the same trip against real Graph that settles the URL shape would settle the encoding too. **`t-onedrive-preflight-check` has no row yet**; if it is scoped, fold this in rather than shipping a separate one-line patch.
 
 ## t-onedrive-heic-brand-list
+
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1153,6 +1159,8 @@ STATUS AS OF 2026-09-30 (supersedes the 2026-09-17 "zero scoped tasks" reading, 
 
 ## t-graph-token-error-code-logging
 
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+
 ORDINARY DEBT, filed 2026-09-30 out of the architect's refresh-token ruling (decision-log Entry 22). Do not implement on sight. **Needs explicit user approval**, because it touches OneDrive token handling (`backend/app/storage/onedrive_sync.py`, off-limits per CLAUDE.md).
 
 - `_fetch_token` logs only `Graph token request rejected: HTTP <status>`. An expired or revoked token and a Microsoft outage therefore look the same in the Job's logs, and the owner can't tell whether to re-mint (runbook "If archiving stops mid-trip").
@@ -1160,6 +1168,8 @@ ORDINARY DEBT, filed 2026-09-30 out of the architect's refresh-token ruling (dec
 - Gate: ORDINARY (Gate 4). Nothing is broken, and the runbook's workaround (repeated rejections across runs mean re-mint) covers the trip.
 
 ## t-onedrive-rotate-comment-misleading
+
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 ORDINARY DEBT, filed 2026-09-30 out of decision-log Entry 22. Do not implement on sight. **Needs explicit user approval** (same off-limits file).
 
@@ -1169,6 +1179,8 @@ ORDINARY DEBT, filed 2026-09-30 out of decision-log Entry 22. Do not implement o
 - Gate: ORDINARY (Gate 4). A comment, no runtime effect.
 
 ## t-onedrive-archived-log-wording
+
+DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 FILED 2026-09-30 from the `d534ea7` close-out. ORDINARY DEBT, `gate: ordinary`. **NEEDS EXPLICIT USER APPROVAL: `backend/app/storage/onedrive_sync.py` is off-limits** (OneDrive token handling file, CLAUDE.md).
 
@@ -1803,3 +1815,9 @@ The error-path test for `exchange_code` asserts on the `SystemExit` message. It 
 
 ## t-pwa-manifest-icons
 Gate: CURRENTLY BROKEN — spec §4 "Installable", but the manifest had no icons, so Chrome on Android never offered install (iOS Add to Home Screen worked regardless). Added `frontend/public/` icons (192, 512, maskable 512, apple-touch 180) generated by `frontend/scripts/generate-icons.py` (Pillow via `uv run --no-project --with pillow`, build-time only), wired into `manifest.icons` and `index.html`. Backend `spa_fallback` already serves real dist root files, so no server change. Verified: build lists the icons with correct sizes, all four PNGs and the manifest return 200 from the app against the real dist, maskable artwork inside the safe zone, frontend 288/288. Not verified: an actual Android install prompt (real-device test day). Ordinary debt noted, not filed as tasks: manifest icons precached twice (harmless, same revision; `includeManifestIcons: false` would dedupe) and `theme_color`/`background_color` are the plugin's placeholders rather than the icon green.
+
+## t-onedrive-graph-name-charset
+
+TRIGGERED DEBT, filed from QA on `21d34ec` (2026-09-30). The filename is now `quote(..., safe='')`, so an id containing `/` becomes `%2F` in one path segment instead of creating a subfolder. Whether real Graph accepts `%2F`, and what it does with OneDrive-forbidden name characters (`? : / \ | " * < >`), is unverified: such a photo could get a 400 on every run and stay pending, logged each time. Today every id is a `crypto.randomUUID()`, so no such name reaches Graph.
+- Promotion trigger: a non-UUID4 id reaching `photos`, or `t-onedrive-preflight-check` being run (check the real request once there).
+- Agent: `devops` for the check; `dev` for any fix, which needs the owner's approval because it touches `onedrive_sync.py`.
