@@ -1842,7 +1842,7 @@ Rows below were filed in the full-codebase review's docs pass (2026-09-29). The 
 ## t-compose-minio-bucket-reload
 
 DONE, `a2a4579` (devops). Story `s-local-dev-env`.
-- Compose gained a one-shot `minio-init` service (`minio/mc`) that creates the bucket, so a fresh `docker compose up` can store photos.
+- Compose gained a one-shot `minio-init` service that creates the bucket (first with `minio/mc`; since 2026-09-29 with boto3 from the app's own image, because `minio/mc` is gone from Docker Hub), so a fresh `docker compose up` can store photos.
 - The `api` service runs the Dockerfile command plus `--reload`, with file polling so edits from a Windows host are seen, over a `./backend` bind mount.
 - `.env.example` now documents copying to `backend/.env`. uv is pinned in the Dockerfile (`uv==0.8.17`, the version that wrote `uv.lock`).
 - Docs in the same commit: runbook §3's smoke test runs the built image with `docker run` (compose's `api` bind-mounts and reloads, so it doesn't test the image), and §6 has the real deploy commands.
@@ -1923,7 +1923,7 @@ ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `3d07c86` review. Do not imple
 ## t-image-digest-pinning
 
 ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `a2a4579` review. Do not implement on sight.
-- `docker-compose.yml` uses `quay.io/minio/minio:latest` and `minio/mc:latest`. A known-good release tag or digest could not be verified from the agent environment, so they were left unpinned, with a comment saying why.
+- `docker-compose.yml` uses `quay.io/minio/minio:latest` (`minio/mc` was dropped on 2026-09-29: the owner's `docker compose up` failed with "pull access denied for minio/mc", so `minio-init` now uses boto3 from the app image). A known-good release tag or digest could not be verified from the agent environment, so they were left unpinned, with a comment saying why.
 - Local dev only; the production image uses neither. The risk is a MinIO release changing `mc` syntax and breaking `minio-init`.
 - Fix: pin both to a release tag (or digest) someone has actually pulled and run. Agent: `devops`.
 
