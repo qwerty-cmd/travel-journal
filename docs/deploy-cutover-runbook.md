@@ -43,8 +43,8 @@ Tick each box as you go.
 ## 1. Cloud service setup (story `s-cloud-service-setup`)
 
 - [ ] **You. Azure budget alert FIRST** (spec §13). Set a low-threshold alert, which acts as a tripwire
-  rather than a hard limit, before any other Azure resource exists. Steps: `infra/azure/README.md`
-  §1 ("Budget alert + resource group").
+  rather than a hard limit, before any other Azure resource exists. Do it in the portal: Cost Management → Budgets → Add, with an
+  email alert. Create the resource group only after the alert exists.
 - [ ] **You. Neon.** Create the project and database, then copy the connection string into your password
   manager, not into a file in the repo.
 - [ ] **You. Cloudflare R2.**
@@ -93,9 +93,11 @@ Tick each box as you go.
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
   (`allowInsecure: false`). Use **multiple-revision mode**, because the rollback in step 8 depends on it.
   The definition is drafted in `infra/azure/README.md` (`t-owner-container-app-definition`); running it
-  needs your approval. In order: §2 the environment, §3 the Container App (the step 2 secrets marked
-  "App + Job"; no `GRAPH_*`), §4 the `/api/health` liveness and startup probes
-  (`t-infra-container-apps-probe`, see the table at the end), and §6 verification.
+  needs your approval. Section "Container Apps environment and app", in order: the environment, the
+  Container App (the step 2 secrets marked "App + Job"; no `GRAPH_*`; `--max-replicas 1`), then the
+  `/api/health` startup and liveness probes applied with the `az rest` merge-patch script
+  (`t-infra-container-apps-probe`, see the table at the end). Then check traffic and health on the
+  revisions, as that section says.
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
   secret store**, separate from the app's. Set the shared secrets with the same names and values as the
@@ -103,7 +105,7 @@ Tick each box as you go.
 
 ## 2. Secrets and env vars (names only)
 
-Secrets are passed at create time (`--secrets`, see `infra/azure/README.md` §3 and "OneDrive sync
+Secrets are passed at create time (`--secrets`, see `infra/azure/README.md` "Container Apps environment and app" and "OneDrive sync
 job") and changed later with `az containerapp secret set` / `az containerapp job secret set`. Each is
 referenced as an env var. The names must match `.env.example` (see `infra/azure/README.md` and
 `.claude/skills/deploy/SKILL.md`). **Set on** says which resource carries each one. `GRAPH_*` are on
@@ -324,7 +326,7 @@ One item is waiting on you: it is drafted, and applying it is part of creating t
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The liveness and startup probes are drafted in `infra/azure/README.md` §4 (applied with `az containerapp update --yaml`). | Apply §4 when you create the app (step 1), then check the probes are on the template with the §6 verification commands. |
+| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The startup and liveness probes are drafted in `infra/azure/README.md` ("Container Apps environment and app"), applied with an `az rest` JSON merge-patch that keeps the whole containers array. | Run the probe script right after creating the app (step 1), then check the new revision's health and which revision has traffic. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,
