@@ -2146,6 +2146,8 @@ docker compose up -d postgres minio minio-init
 cd backend && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
+DONE 2026-09-29. `make_async_client` / `make_test_client` in `tests/conftest.py` (https://testserver + same-origin Origin, per-call overrides). 19 files moved or carry a one-line justification (three non-app clients: mock Graph, two object-store fetches). QA PASS: 894 → 894, only `backend/tests/` touched, no assertion changed. Debt (ordinary): no direct test of the factory defaults — `t-am-csrf` tests exercise them.
+
 ## t-am-csrf
 **Goal.** The CSRF middleware (obligation 8). It needs only `t-am-test-client-harness`, because the `FORBIDDEN` error code already exists.
 **Scope.** `core/csrf.py`, the `main.py` middleware wiring, and `tests/test_csrf.py`.
@@ -2161,6 +2163,7 @@ cd backend && uv run pytest && uv run ruff check . && uv run ruff format --check
 docker compose up -d postgres minio minio-init
 cd backend && uv run pytest tests/test_csrf.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
+**Added AC (from t-am-test-client-harness QA).** Two tests build raw ASGI requests outside the factory: `test_spa_static_files.py` `_raw_get` (plain-http GETs, no Origin, on purpose — path-escape probes) and `test_error_envelope.py` ~1450 (a scope passed straight to `_methods_allowed_elsewhere`, never through middleware). If the CSRF check touches safe methods or the scheme, give the first an Origin or a comment saying why not.
 
 ## t-am-identity-core
 
