@@ -63,3 +63,4 @@ never been run is worse than not having one.
 |---|---|
 | `0001_initial_schema.sql` | Creates `trips`, `stops`, `photos`, `bikes`, their FK indexes and the `location_source` check constraint. |
 | `0002_trips_slugs_differ_check.sql` | Adds `trips_slugs_differ_check` — `rider_slug <> viewer_slug`. A row with both slugs equal resolves to rider access, so a read-only link would silently grant writes. |
+| `0003_accounts_membership.sql` | Accounts and membership (decision-log Entry 29): creates `users`, `sessions`, `trip_members` and `join_requests`; adds `visibility`, `public_delay_hours`, `created_by` and `created_at` to `trips` and `created_by` to `stops`, `photos` and `bikes`; makes both slugs nullable, paired by `trips_slugs_paired_check`. Additive and relaxing only: existing trips become private with a 24h delay through column defaults, slugs are untouched, and the pre-0003 image runs unchanged on the result. |
