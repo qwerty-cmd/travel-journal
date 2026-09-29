@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.tables import photos, stops
 from app.models.photo import PhotoOut
-from app.storage.s3_client import BUCKET_NAME, get_s3_client
+from app.storage.s3_client import BUCKET_NAME, get_presign_client
 
 
 async def stop_belongs_to_trip(session: AsyncSession, trip_id: str, stop_id: str) -> bool:
@@ -79,7 +79,7 @@ async def list_by_stop(session: AsyncSession, stop_id: str) -> list[PhotoOut]:
     if not rows:
         return []
 
-    s3 = get_s3_client()
+    s3 = get_presign_client()
     results: list[PhotoOut] = []
     for row in rows:
         url = await _presign_async(s3, row.object_key)
@@ -112,7 +112,7 @@ async def find_existing(
     if stored is None:
         return None
 
-    s3 = get_s3_client()
+    s3 = get_presign_client()
     url = await _presign_async(s3, stored.object_key)
     return _row_to_photo_sync(stored, url)
 
@@ -160,7 +160,7 @@ async def insert(
     ).one()
     await session.commit()
 
-    s3 = get_s3_client()
+    s3 = get_presign_client()
     url = await _presign_async(s3, stored.object_key)
     return _row_to_photo_sync(stored, url)
 
