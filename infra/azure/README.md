@@ -96,35 +96,85 @@ baked into the image. The secret names and plain environment variables match
 
 The CLI does not expose custom Container Apps probes directly. After creating
 the app, apply the startup and liveness probes with the Container Apps Update REST API
-(`2026-07-01`) using JSON Merge Patch. It reads the existing app once and uses
+(`2026-07-01`). ARM PATCH already merges, so `application/json` is the right
+media type; `application/merge-patch+json` was tried and came back as
+`UnsupportedMediaType`. The script reads the existing app once and uses
 Python's standard library to preserve the complete containers array (including
 any sidecars and their settings), changing only `probes` on the named app
-container. It fails instead of silently patching if that name is absent or
-ambiguous. The probes are deliberately startup + liveness, not readiness: `/api/health`
-does not check Postgres or object storage.
+container and dropping the empty `value` ARM reads back next to a `secretRef`
+(an entry carrying both is not a valid write shape). It fails instead of
+silently patching if that name is absent or ambiguous. The probes are
+deliberately startup + liveness, not readiness: `/api/health` does not check
+Postgres or object storage.
 
-```sh
+A `properties.template` change is a **long-running operation**
+(`final-state-via: location`): ARM provisions a new revision and answers `202
+Accepted` with **no body**, only `Location`/`Retry-After` headers. So the
+response is not the success signal — an empty response is the normal case, and
+`az` prints nothing at all. What is reliable is the exit code: `az rest` does
+exit non-zero when ARM returns an error (an HTML `400 Bad Request` page from a
+malformed URI included). Every `az` call whose failure matters is therefore
+checked explicitly with `if ! ...`, not left to `set -e`, whose behaviour
+differs between a script file and a pasted interactive session.
+
+The proof that the patch took effect is the re-read. Because the new revision
+takes seconds to provision, the probe assertion is polled — up to 18 attempts,
+10 s apart — and the first pass wins; failing attempts print what is still
+missing. It deliberately does not wait on `provisioningState` (which can still
+report an *earlier* failed operation, so it would hang on a patch that worked)
+or on `latestReadyRevisionName` (observed to lag). One more detail makes this
+work under Git Bash on Windows as well as bash on Linux/macOS: Python's stdout
+is forced to LF — text-mode stdout would otherwise emit CRLF and leave a stray
+carriage return inside the resource id and the JSON body, which ARM answers
+with an IIS `Invalid URL` page.
+
+The block exits non-zero on failure, which ends a shell you paste it into; run
+it as a script file, or inside `bash <<'EOF' ... EOF`, to keep your session.
+
+```bash
 set -e
 APP_CONTAINER_NAME=<app-container-name>
-APP_JSON=$(az containerapp show \
+if ! APP_JSON=$(az containerapp show \
   --name <app-name> \
   --resource-group <resource-group> \
-  --output json)
-PATCH_DATA=$(python -c '
+  --output json); then
+  printf 'reading the app failed; nothing was patched\n' >&2
+  exit 1
+fi
+if ! PATCH_DATA=$(python -c '
 import json
 import sys
+
+# Windows text-mode stdout emits CRLF, which would leave a carriage return in
+# the resource id and the JSON body split out below. json.dumps escapes any
+# real CR, so forcing LF is safe on every platform.
+sys.stdout.reconfigure(newline="\n")
 
 app = json.load(sys.stdin)
 container_name = sys.argv[1]
 containers = app["properties"]["template"]["containers"]
 matches = [container for container in containers if container.get("name") == container_name]
 if len(matches) != 1:
-    raise SystemExit("expected exactly one container with the requested name")
+    raise SystemExit(
+        "expected exactly one container named %r, found %d" % (container_name, len(matches))
+    )
+
+# ARM reads secret-backed env entries back carrying both "secretRef" and an
+# empty "value"; writing both is invalid. Plain value-only entries stay as-is.
+for container in containers:
+    for env_var in container.get("env") or []:
+        if env_var.get("secretRef"):
+            env_var.pop("value", None)
 
 for container in matches:
     probes = container.get("probes") or []
+    # Case-insensitive, matching the verification below: ARM has been seen to
+    # read probe types back in a different case than they were written, and a
+    # case-sensitive filter would leave the stale pair in place and duplicate.
     container["probes"] = [
-        probe for probe in probes if probe.get("type") not in ("Liveness", "Startup")
+        probe
+        for probe in probes
+        if str(probe.get("type", "")).lower() not in ("liveness", "startup")
     ]
     # Startup: gives a scale-from-zero cold start ~105 s before liveness applies.
     container["probes"].append({
@@ -150,13 +200,70 @@ patch = {
 }
 print(app["id"])
 print(json.dumps(patch, separators=(",", ":")))
-' "$APP_CONTAINER_NAME" <<<"$APP_JSON")
+' "$APP_CONTAINER_NAME" <<<"$APP_JSON"); then
+  printf 'building the patch body failed; nothing was patched\n' >&2
+  exit 1
+fi
 APP_RESOURCE_ID=${PATCH_DATA%%$'\n'*}
 PATCH_BODY=${PATCH_DATA#*$'\n'}
-az rest --method patch \
+
+# Long-running operation: 202 with an empty body is the normal success case, so
+# the response proves nothing and only the exit code is checked here.
+if ! az rest --method patch \
   --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2026-07-01" \
-  --headers "Content-Type=application/merge-patch+json" \
-  --body "$PATCH_BODY"
+  --headers "Content-Type=application/json" \
+  --body "$PATCH_BODY"; then
+  printf 'PATCH failed; see the az error above\n' >&2
+  exit 1
+fi
+
+# The new revision takes seconds to provision, so poll the assertion itself:
+# the probes appearing on the template is the success condition. Up to 3 minutes.
+PROBES_OK=
+for _ in {1..18}; do
+  if az containerapp show \
+    --name <app-name> \
+    --resource-group <resource-group> \
+    --output json | python -c '
+import json
+import sys
+
+app = json.load(sys.stdin)
+container_name = sys.argv[1]
+matches = [
+    container
+    for container in app["properties"]["template"]["containers"]
+    if container.get("name") == container_name
+]
+if len(matches) != 1:
+    raise SystemExit(
+        "probe check failed: expected exactly one container named %r, found %d"
+        % (container_name, len(matches))
+    )
+probes = matches[0].get("probes") or []
+missing = [
+    kind
+    for kind in ("Startup", "Liveness")
+    if not any(
+        str(probe.get("type", "")).lower() == kind.lower()
+        and (probe.get("httpGet") or {}).get("path") == "/api/health"
+        and (probe.get("httpGet") or {}).get("port") == 8000
+        for probe in probes
+    )
+]
+if missing:
+    raise SystemExit(
+        "probe check failed on container %r: missing %s probe(s) on /api/health:8000"
+        % (container_name, ", ".join(missing))
+    )
+print("probes verified on container %r: Startup, Liveness" % container_name)
+' "$APP_CONTAINER_NAME"; then
+    PROBES_OK=1
+    break
+  fi
+  sleep 10
+done
+[ -n "$PROBES_OK" ] || exit 1
 ```
 
 Changing the template creates a new revision. In multiple-revision mode, check
