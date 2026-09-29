@@ -46,11 +46,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import urllib.parse
 from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Protocol
 
 import httpx
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import get_settings
 from app.storage.s3_client import BUCKET_NAME, get_s3_client
@@ -96,7 +98,7 @@ def _extension(head: bytes) -> str:
         return ".jpg"
     if head.startswith(b"\x89PNG"):
         return ".png"
-    if head[4:8] == b"ftyp" and head[8:12] in (b"heic", b"heif"):
+    if head[4:8] == b"ftyp" and head[8:12] in (b"heic", b"heif", b"heix", b"hevc", b"mif1"):
         return ".heic"
     return ".bin"
 
@@ -110,7 +112,10 @@ async def _fetch_token(client: httpx.AsyncClient) -> str | None:
     """
     One access token from the refresh-token grant, or None (logged) on failure.
 
-    Logs a status code, never a token or a credential.
+    Logs a status code, never a token or a credential. On a rejection it also
+    logs the OAuth ``error`` code and any AADSTS numbers from ``error_codes``,
+    so an expired or revoked token (re-mint) reads differently from an outage.
+    Never ``error_description``: it is free text and can echo request data.
     """
     settings = get_settings()
     try:
@@ -127,12 +132,30 @@ async def _fetch_token(client: httpx.AsyncClient) -> str | None:
         logger.error("Graph token request failed: %s", type(exc).__name__)
         return None
     if not response.is_success:
-        logger.error("Graph token request rejected: HTTP %s", response.status_code)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            payload = {}
+        error = payload.get("error")
+        codes = payload.get("error_codes")
+        aadsts = (
+            [f"AADSTS{c}" for c in codes if isinstance(c, int)] if isinstance(codes, list) else []
+        )
+        logger.error(
+            "Graph token request rejected: HTTP %s (error: %s, codes: %s)",
+            response.status_code,
+            error if isinstance(error, str) else "none given",
+            ", ".join(aadsts) or "none given",
+        )
         return None
-    # Graph rotates the refresh token on every redemption and returns the new one
-    # here. Deliberately unused and persisted nowhere -- this process writes no
-    # config. The configured token stays valid until it lapses; that is a human
-    # re-consent step, not something this job can fix.
+    # Microsoft returns a new refresh token alongside the access token, but does
+    # not revoke the old one: the configured token stays valid until ~90 days
+    # after it was minted, however often it is redeemed. So the new one is
+    # deliberately unused and persisted nowhere -- this process writes no config,
+    # and it doesn't need to. A lapse is a human re-mint step (runbook) and only
+    # pauses archiving. See decision-log Entry 22.
     return response.json()["access_token"]
 
 
@@ -140,8 +163,10 @@ async def _upload(
     client: httpx.AsyncClient, token: str, filename: str, body: bytes
 ) -> httpx.Response:
     folder = get_settings().graph_onedrive_folder.strip("/")
+    # Encoded so a `#` or `?` in a photo id can't cut off `:/content` and the
+    # conflictBehavior directive.
     return await client.put(
-        UPLOAD_URL.format(path=f"{folder}/{filename}"),
+        UPLOAD_URL.format(path=f"{folder}/{urllib.parse.quote(filename, safe='')}"),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/octet-stream"},
         content=body,
     )
@@ -171,9 +196,9 @@ async def archive_photos(
     failures = 0
 
     for photo in photos:
-        body = await asyncio.to_thread(partial(_read_object, s3, photo.object_key))
-        filename = f"{photo.id}{_extension(body[:12])}"
         try:
+            body = await asyncio.to_thread(partial(_read_object, s3, photo.object_key))
+            filename = f"{photo.id}{_extension(body[:12])}"
             response = await _upload(client, token, filename, body)
             if response.status_code == 401:
                 # The access token expired mid-run. Exactly one refresh, one retry.
@@ -191,6 +216,12 @@ async def archive_photos(
         except httpx.HTTPError as exc:
             logger.error(
                 "Upload failed for photo %s: %s -- left pending", photo.id, type(exc).__name__
+            )
+            failures += 1
+            continue
+        except (BotoCoreError, ClientError) as exc:
+            logger.error(
+                "S3 read failed for photo %s: %s -- left pending", photo.id, type(exc).__name__
             )
             failures += 1
             continue
@@ -214,9 +245,28 @@ async def archive_photos(
             failures += 1
             continue
 
-        if await record(photo.id, response.json()["id"]) == 0:
+        try:
+            file_id = response.json()["id"]
+        except (ValueError, KeyError, TypeError):
+            file_id = None
+        # null, "", or a non-string id is as unusable as a missing one: recording
+        # it would mark the photo archived with no OneDrive copy to point at.
+        if not isinstance(file_id, str) or not file_id:
+            logger.error(
+                "Upload of photo %s returned HTTP %s with no Graph file id -- left pending",
+                photo.id,
+                response.status_code,
+            )
+            failures += 1
+            continue
+
+        if await record(photo.id, file_id) == 0:
+            # mark_archived only updates a row whose one_drive_file_id is still
+            # NULL, so 0 has two causes and this doesn't read back to tell them apart.
             logger.warning(
-                "Photo %s was gone by the time it archived -- its OneDrive copy is orphaned",
+                "Photo %s was not recorded as archived: either its row was deleted "
+                "(the OneDrive copy is orphaned) or an overlapping sweep already "
+                "archived it (same path, conflictBehavior=replace -- nothing orphaned)",
                 photo.id,
             )
 

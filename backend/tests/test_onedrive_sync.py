@@ -29,6 +29,7 @@ fails, including the error paths, which are the ones that usually do it.
 
 from __future__ import annotations
 
+import io
 import logging
 import secrets
 import subprocess
@@ -43,6 +44,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from botocore.exceptions import ClientError
 from conftest import BACKEND_DIR, SeededTrip
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -591,9 +593,9 @@ class TestTokenRequest:
         Three photos, one token request.
 
         A token per photo would work and would still be wrong: it is three times
-        the login traffic, and every redemption rotates the refresh token, so a
-        run with a hundred photos would be a hundred chances to end up holding a
-        token nobody wrote down.
+        the login traffic, and a hundred-photo run would be a hundred redemptions
+        where one does. (Redeeming does not revoke the configured refresh token;
+        decision-log Entry 22.)
         """
         graph = FakeGraph()
         async with graph.client() as client:
@@ -1364,3 +1366,374 @@ class TestModuleIsWriteOnlyAndDocumented:
             assert heading in doc, f"missing the '{heading}' section"
         assert "write-only" in doc.lower()
         assert "read" in doc.lower()
+
+
+# --------------------------------------------------------------------------
+# Debt sweep: per-photo isolation, URL encoding, HEIF brands, token error
+# codes, and the mark_archived == 0 warning
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class LoosePhoto:
+    """A ``PendingPhoto`` with its bytes in MinIO and no row -- for ``Recorder`` runs."""
+
+    id: str
+    object_key: str
+
+
+@pytest.fixture
+def s3_photos(s3_bucket: None) -> AsyncIterator[Callable[[str, bytes], LoosePhoto]]:
+    """Put an object in MinIO under a fresh key and hand back a photo pointing at it."""
+    from app.storage.s3_client import BUCKET_NAME, get_s3_client
+
+    s3 = get_s3_client()
+    keys: list[str] = []
+
+    def make(photo_id: str, body: bytes) -> LoosePhoto:
+        key = f"photos/loose/{secrets.token_urlsafe(8)}"
+        s3.put_object(Bucket=BUCKET_NAME, Key=key, Body=body)
+        keys.append(key)
+        return LoosePhoto(id=photo_id, object_key=key)
+
+    yield make
+    for key in keys:
+        s3.delete_object(Bucket=BUCKET_NAME, Key=key)
+
+
+class TestPerPhotoIsolation:
+    """
+    A photo that fails *before* or *after* the HTTP call is still one photo.
+
+    t-onedrive-per-photo-isolation: the S3 read and the read of Graph's ``id``
+    used to sit outside the per-photo ``try``, so either one failing ended the
+    whole pass with a traceback and every later photo went unattempted.
+    """
+
+    async def test_a_missing_s3_object_mid_batch_does_not_block_later_photos(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        session: AsyncSession,
+        migrated_engine: AsyncEngine,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """Photo 2's object is gone: 1 and 3 archive, 2 stays owed, and the run exits non-zero."""
+        from app.storage.s3_client import BUCKET_NAME, get_s3_client
+
+        get_s3_client().delete_object(Bucket=BUCKET_NAME, Key=pending.png.object_key)
+
+        graph = FakeGraph()
+        async with graph.client() as client:
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
+
+        assert code != 0, "a photo that could not be read is a failed run"
+        assert graph.uploaded_names == [f"{pending.jpeg.id}.jpg", f"{pending.heic.id}.heic"]
+        assert await stored_file_id(migrated_engine, pending.jpeg.id) is not None
+        assert await stored_file_id(migrated_engine, pending.png.id) is None
+        assert await stored_file_id(migrated_engine, pending.heic.id) is not None
+        assert await still_pending(session, pending.png.id), "the unreadable photo is still owed"
+        assert pending.png.id in captured_logs.text
+        TestNoSecretIsLogged.assert_clean(captured_logs)
+
+    async def test_a_2xx_without_a_graph_id_does_not_block_later_photos(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        session: AsyncSession,
+        migrated_engine: AsyncEngine,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """A 201 with no ``id`` in its body records nothing for that photo, and the run goes on."""
+
+        def upload(request: httpx.Request, count: int) -> httpx.Response:
+            if count == 1:
+                return httpx.Response(201, json={"name": "no id here"})
+            return httpx.Response(201, json={"id": f"graph-{uploaded_filename(request)}"})
+
+        graph = FakeGraph(upload=upload)
+        async with graph.client() as client:
+            code = await archive_photos(client, pending.three, partial(mark_archived, session))
+
+        assert code != 0
+        assert len(graph.uploads) == 3
+        assert await stored_file_id(migrated_engine, pending.png.id) is None
+        assert await stored_file_id(migrated_engine, pending.heic.id) is not None
+        assert await still_pending(session, pending.png.id)
+        assert pending.png.id in captured_logs.text
+
+    @pytest.mark.parametrize(
+        "graph_id",
+        [
+            pytest.param(None, id="null"),
+            pytest.param("", id="empty"),
+            pytest.param(123, id="int"),
+        ],
+    )
+    async def test_a_2xx_with_an_unusable_graph_id_leaves_the_photo_pending(
+        self,
+        graph_id: object,
+        graph_config: None,
+        pending: ArchiveFixture,
+        session: AsyncSession,
+        migrated_engine: AsyncEngine,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """
+        ``id`` present but null, empty or not a string: same as missing.
+
+        Recording it would stamp the row with a value that points at nothing in
+        OneDrive -- or, for null, silently re-record NULL and exit 0, so nobody
+        ever hears that the archive did not happen. (Missing key: the test above.)
+        """
+
+        def upload(request: httpx.Request, count: int) -> httpx.Response:
+            if count == 1:
+                return httpx.Response(201, json={"id": graph_id})
+            return httpx.Response(201, json={"id": f"graph-{uploaded_filename(request)}"})
+
+        recorded: list[str] = []
+
+        async def record(photo_id: str, one_drive_file_id: str) -> int:
+            recorded.append(photo_id)
+            return await mark_archived(session, photo_id, one_drive_file_id)
+
+        graph = FakeGraph(upload=upload)
+        async with graph.client() as client:
+            code = await archive_photos(client, pending.three, record)
+
+        assert code != 0, "an unusable id is a failed photo"
+        assert pending.png.id not in recorded, "record was called with an unusable id"
+        assert recorded == [pending.jpeg.id, pending.heic.id], "the run went on to photo 3"
+        assert await stored_file_id(migrated_engine, pending.png.id) is None
+        assert await still_pending(session, pending.png.id)
+        failures = [r.getMessage() for r in captured_logs.records if r.levelno == logging.ERROR]
+        assert any(pending.png.id in m and "201" in m for m in failures), failures
+
+
+class TestFailureLogsCarryNoPayload:
+    """
+    The S3-read and missing-id failure logs name the photo and the class/status only.
+
+    Not the exception text (a botocore message can carry the bucket, key and
+    request ids), not the object key, not the response body. A fake S3 client is
+    injected where the module looks it up, so this needs no MinIO and the
+    ``ClientError`` it raises carries a sentinel in its message.
+    """
+
+    OBJECT_KEY = "photos/key-SENTINEL-must-never-be-logged"
+    S3_MESSAGE = "s3-message-SENTINEL-must-never-be-logged"
+    BODY_TEXT = "graph-body-SENTINEL-must-never-be-logged"
+
+    class FakeS3:
+        def __init__(self, error: Exception | None) -> None:
+            self.error = error
+
+        def get_object(self, Bucket: str, Key: str) -> dict:
+            if self.error is not None:
+                raise self.error
+            return {"Body": io.BytesIO(JPEG_BYTES)}
+
+    def assert_no_payload(self, captured: pytest.LogCaptureFixture, photo_id: str) -> str:
+        text = captured.text
+        assert photo_id in text, "the failure was logged against its photo"
+        for sentinel in (self.OBJECT_KEY, self.S3_MESSAGE, self.BODY_TEXT):
+            assert sentinel not in text, f"{sentinel!r} reached the log"
+        TestNoSecretIsLogged.assert_clean(captured)
+        return text
+
+    async def test_s3_read_failure_logs_the_class_not_the_message_or_key(
+        self,
+        graph_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        error = ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": f"{self.S3_MESSAGE} {self.OBJECT_KEY}"}},
+            "GetObject",
+        )
+        assert self.S3_MESSAGE in str(error), "the sentinel really is in the exception text"
+        monkeypatch.setattr(onedrive_sync, "get_s3_client", lambda: self.FakeS3(error))
+        photo = LoosePhoto(id="log-hygiene-s3", object_key=self.OBJECT_KEY)
+
+        graph = FakeGraph()
+        async with graph.client() as client:
+            code = await archive_photos(client, [photo], Recorder(graph.events))
+
+        assert code != 0
+        assert graph.uploads == []
+        text = self.assert_no_payload(captured_logs, photo.id)
+        assert "ClientError" in text
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"name": BODY_TEXT}, id="missing"),
+            pytest.param({"id": None, "name": BODY_TEXT}, id="null"),
+        ],
+    )
+    async def test_missing_id_failure_logs_the_status_not_the_body_or_key(
+        self,
+        body: dict,
+        graph_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(onedrive_sync, "get_s3_client", lambda: self.FakeS3(None))
+        photo = LoosePhoto(id="log-hygiene-id", object_key=self.OBJECT_KEY)
+
+        graph = FakeGraph(upload=lambda request, count: httpx.Response(201, json=body))
+        recorder = Recorder(graph.events)
+        async with graph.client() as client:
+            code = await archive_photos(client, [photo], recorder)
+
+        assert code != 0
+        assert recorder.calls == []
+        text = self.assert_no_payload(captured_logs, photo.id)
+        assert "201" in text
+
+
+class TestFilenameEncoding:
+    """t-onedrive-filename-url-encoding: the id is data, not URL syntax."""
+
+    @pytest.mark.parametrize("photo_id", ["has#hash", "has?query", "both#and?x"])
+    async def test_a_reserved_character_in_the_id_keeps_content_and_replace(
+        self,
+        photo_id: str,
+        graph_config: None,
+        s3_photos: Callable[[str, bytes], LoosePhoto],
+    ) -> None:
+        """
+        The request still targets ``:/content`` with ``conflictBehavior=replace``.
+
+        Unencoded, a ``#`` turns everything after it into a fragment (never
+        sent) and a ``?`` starts the query early -- either way Graph's default
+        ``fail`` applies and a crash-window replay strands the photo.
+        """
+        photo = s3_photos(photo_id, JPEG_BYTES)
+
+        graph = FakeGraph()
+        async with graph.client() as client:
+            assert await archive_photos(client, [photo], Recorder(graph.events)) == 0
+
+        request = graph.uploads[0]
+        assert request.url.fragment == ""
+        assert (
+            request.url.path == f"/v1.0/me/drive/root:/{FOLDER.strip('/')}/{photo_id}.jpg:/content"
+        )
+        assert urllib.parse.unquote(request.url.query.decode()) == (
+            "@microsoft.graph.conflictBehavior=replace"
+        )
+
+
+class TestHeifBrands:
+    """t-onedrive-heic-brand-list: iPhone HEIF brands archive as ``.heic``, not ``.bin``."""
+
+    @pytest.mark.parametrize("brand", [b"heic", b"heif", b"heix", b"hevc", b"mif1"])
+    async def test_heif_brand_archives_as_heic(
+        self,
+        brand: bytes,
+        graph_config: None,
+        s3_photos: Callable[[str, bytes], LoosePhoto],
+    ) -> None:
+        photo = s3_photos(
+            f"heif-{brand.decode()}", b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 4 + b"x" * 32
+        )
+
+        graph = FakeGraph()
+        async with graph.client() as client:
+            await archive_photos(client, [photo], Recorder(graph.events))
+
+        assert graph.uploaded_names == [f"{photo.id}.heic"]
+
+
+class TestTokenErrorCodeLogging:
+    """
+    t-graph-token-error-code-logging: a rejected token says *why*, safely.
+
+    The owner has to tell an expired or revoked refresh token (re-mint) from a
+    Microsoft outage. The OAuth ``error`` code and the AADSTS numbers do that;
+    ``error_description`` is free text that can echo request data, so it never
+    reaches the log.
+    """
+
+    DESCRIPTION = "AADSTS700082: expired -- description-SENTINEL-must-never-be-logged"
+
+    async def test_error_and_aadsts_codes_are_logged_but_nothing_sensitive(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        graph = FakeGraph(
+            token=lambda request, call: httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_description": self.DESCRIPTION,
+                    "error_codes": [700082],
+                },
+            )
+        )
+        async with graph.client() as client:
+            code = await archive_photos(client, pending.three, Recorder(graph.events))
+
+        assert code != 0
+        text = captured_logs.text
+        assert "400" in text
+        assert "invalid_grant" in text
+        assert "AADSTS700082" in text
+        assert "description-SENTINEL" not in text, "error_description reached the log"
+        TestNoSecretIsLogged.assert_clean(captured_logs)
+
+    async def test_a_non_json_rejection_is_logged_without_its_body(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        """An HTML error page (a proxy, an outage) aborts cleanly and says no code was given."""
+        graph = FakeGraph(
+            token=lambda request, call: httpx.Response(
+                502, text="<html>Bad Gateway body-SENTINEL-must-never-be-logged</html>"
+            )
+        )
+        async with graph.client() as client:
+            code = await archive_photos(client, pending.three, Recorder(graph.events))
+
+        assert code != 0
+        assert graph.uploads == []
+        text = captured_logs.text
+        assert "502" in text
+        assert "error: none given" in text
+        assert "body-SENTINEL" not in text
+        TestNoSecretIsLogged.assert_clean(captured_logs)
+
+
+class TestRecordReturnedZero:
+    """
+    t-onedrive-archived-log-wording: ``mark_archived`` returning 0 has two causes.
+
+    Its ``UPDATE`` carries ``AND one_drive_file_id IS NULL``, so 0 means either
+    the row was deleted (orphaned copy) or an overlapping sweep already archived
+    it (same path, overwritten -- nothing orphaned). The warning must not claim
+    only the first.
+    """
+
+    async def test_warning_names_both_causes_and_the_exit_code_is_unchanged(
+        self,
+        graph_config: None,
+        pending: ArchiveFixture,
+        captured_logs: pytest.LogCaptureFixture,
+    ) -> None:
+        graph = FakeGraph()
+        async with graph.client() as client:
+            code = await archive_photos(client, [pending.jpeg], Recorder(graph.events, rows=0))
+
+        assert code == 0, "a 0-row record is a warning, not a failure"
+        warnings = [r for r in captured_logs.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert pending.jpeg.id in message
+        assert "deleted" in message
+        assert "already archived" in message
