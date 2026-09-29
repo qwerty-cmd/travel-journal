@@ -8,6 +8,7 @@ import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
 import shadowUrl from "leaflet/dist/images/marker-shadow.png";
 import type { MapFeatureCollection } from "../api/gen/types/MapFeatureCollection";
 import type { StopFeatureProperties } from "../api/gen/types/StopFeatureProperties";
+import { formatInstant } from "../format";
 
 // Leaflet guesses its marker image path from the CSS at runtime, which breaks
 // under Vite's hashed assets. Hand it the bundled URLs instead; dropping
@@ -23,7 +24,7 @@ function popupFor({ name, arrivedAt }: StopFeatureProperties) {
   const title = el.appendChild(document.createElement("strong"));
   title.textContent = name;
   el.appendChild(document.createElement("br"));
-  el.appendChild(document.createTextNode(new Date(arrivedAt).toLocaleString()));
+  el.appendChild(document.createTextNode(formatInstant(arrivedAt)));
   return el;
 }
 

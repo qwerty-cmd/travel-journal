@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import type { StopOut } from "../api/gen/types/StopOut";
+import { formatInstant } from "../format";
 
 // Chronological stop feed (spec Section 6, trip home). GET /stops promises no
 // order, so sort here: oldest first by instant (Date.parse, so mixed UTC
@@ -29,7 +30,7 @@ export function Timeline({ stops }: { stops: StopOut[] }) {
           >
             <strong>{stop.name}</strong>
             <div>
-              {new Date(stop.arrivedAt).toLocaleString()}
+              {formatInstant(stop.arrivedAt)}
               {stop.locationSource === "manual" && " · approximate location"}
             </div>
             {stop.notes !== null && <p style={{ margin: "4px 0 0" }}>{stop.notes}</p>}

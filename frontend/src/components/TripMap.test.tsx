@@ -1,3 +1,5 @@
+// The root route mounts the real QueueNotice, which reads the queue's IndexedDB.
+import "fake-indexeddb/auto";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -7,6 +9,7 @@ import L from "leaflet";
 import iconUrl from "leaflet/dist/images/marker-icon.png";
 import { routeTree } from "../routeTree.gen";
 import { TripMap } from "./TripMap";
+import { formatInstant } from "../format";
 import type { MapFeatureCollection } from "../api/gen/types/MapFeatureCollection";
 import type { TripOut } from "../api/gen/types/TripOut";
 
@@ -110,7 +113,7 @@ test("AC5: pin popup shows the stop name and formatted arrivedAt", () => {
   render(<TripMap collection={fc(stop("s1", 134.1, -19.6, "Tennant Creek"))} />);
   const content = markers(liveMap())[0].getPopup()!.getContent() as HTMLElement;
   expect(content.querySelector("strong")!.textContent).toBe("Tennant Creek");
-  expect(content.textContent).toContain(new Date(ARRIVED).toLocaleString());
+  expect(content.textContent).toContain(formatInstant(ARRIVED));
 });
 
 test("AC5: a stop name is rendered as text, never parsed as HTML", () => {
