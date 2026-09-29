@@ -42,7 +42,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from conftest import SeededTrip
@@ -437,3 +437,90 @@ class TestArchivedIsDerivedNotStored:
                  await photos_repo.list_by_stop(session, target.stop_id)}
         assert after[target.id] is True, "the photo that was archived"
         assert after[sibling.id] is False, "the photo beside it, which was not"
+
+
+class TestMarkArchivedNeverOverwrites:
+    """``t-mark-archived-overwrite-guard``: a recorded file id is never replaced."""
+
+    async def test_already_archived_row_is_not_overwritten(
+        self, session: AsyncSession, archive_fixture: ArchiveFixture, migrated_engine: AsyncEngine
+    ) -> None:
+        """
+        A second write against an archived row updates nothing and returns 0.
+
+        Replacing the id would leave the first OneDrive copy unreferenced with no
+        error -- the race two overlapping sweeps would produce.
+        """
+        archived = archive_fixture.already_archived
+
+        rows = await photos_repo.mark_archived(session, archived.id, "onedrive-second-copy")
+
+        assert rows == 0
+        assert await stored_one_drive_file_id(migrated_engine, archived.id) == (
+            archived.one_drive_file_id
+        )
+
+    async def test_second_sweep_writing_the_same_row_loses(
+        self, session: AsyncSession, archive_fixture: ArchiveFixture, migrated_engine: AsyncEngine
+    ) -> None:
+        """Two sweeps that both selected one NULL row: the first write stands."""
+        target = archive_fixture.pending_first
+
+        first = await photos_repo.mark_archived(session, target.id, "onedrive-first")
+        second = await photos_repo.mark_archived(session, target.id, "onedrive-second")
+
+        assert (first, second) == (1, 0)
+        assert await stored_one_drive_file_id(migrated_engine, target.id) == "onedrive-first"
+
+
+class TestListPendingArchiveLimitValidation:
+    """``t-pending-archive-limit-validation``: a non-positive limit is refused up front."""
+
+    @pytest.mark.parametrize("limit", [0, -1, -50])
+    async def test_non_positive_limit_raises_value_error(
+        self, session: AsyncSession, limit: int
+    ) -> None:
+        """A ``ValueError`` from the repository, not a raw driver error from asyncpg."""
+        with pytest.raises(ValueError, match="limit"):
+            await photos_repo.list_pending_archive(session, limit)
+
+    async def test_limit_of_one_is_accepted(
+        self, session: AsyncSession, archive_fixture: ArchiveFixture
+    ) -> None:
+        """The boundary: 1 is the smallest sweep that makes progress."""
+        pending = await photos_repo.list_pending_archive(session, 1)
+
+        assert [photo.id for photo in pending] == [archive_fixture.pending_first.id]
+
+
+class TestInsertReturnsTheStoredRow:
+    """``t-photo-insert-echoes-argument``: ``insert`` reads the row back."""
+
+    async def test_insert_spells_taken_at_like_its_own_replay(
+        self, session: AsyncSession, archive_fixture: ArchiveFixture, migrated_engine: AsyncEngine
+    ) -> None:
+        """
+        A ``+09:30`` instant goes in; the ``PhotoOut`` that comes back is the
+        stored UTC spelling, identical to what ``find_existing`` (the replay path)
+        returns for the same id -- field for field, bar the presigned URL.
+        """
+        stop_id = archive_fixture.stop_trip_one
+        photo_id = f"test-insert-readback-{secrets.token_urlsafe(8)}"
+        submitted = datetime(2026, 6, 14, 10, 0, tzinfo=timezone(timedelta(hours=9, minutes=30)))
+
+        try:
+            created = await photos_repo.insert(
+                session, stop_id, photo_id, "Zoe", submitted, f"photos/{photo_id}.jpg"
+            )
+            replayed = await photos_repo.find_existing(session, stop_id, photo_id)
+
+            assert replayed is not None
+            assert created.takenAt == submitted
+            assert created.takenAt.utcoffset() == timedelta(0)
+            assert created.model_dump(mode="json", exclude={"url"}) == replayed.model_dump(
+                mode="json", exclude={"url"}
+            )
+            assert created.archived is False
+        finally:
+            async with migrated_engine.begin() as conn:
+                await conn.execute(tables.photos.delete().where(tables.photos.c.id == photo_id))
