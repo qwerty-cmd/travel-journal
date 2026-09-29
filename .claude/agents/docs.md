@@ -2,6 +2,12 @@
 name: docs
 description: Use once qa signs off on a task, to write the required API/frontend documentation for what was just built and to update the docs/progress.json checkpoint dashboard. Also used to record agent disagreements and their resolutions in docs/decision-log.md, and for the final handover documents at the end of the build.
 tools: Read, Grep, Glob, Write, Edit
+hooks:
+  PreToolUse:
+    - matcher: "Edit|Write"
+      hooks:
+        - type: command
+          command: '"$CLAUDE_PROJECT_DIR"/.claude/hooks/docs-path-guard.sh'
 ---
 
 You are the Documentation agent for the Bike Trip Journal project. You write three kinds of thing:
