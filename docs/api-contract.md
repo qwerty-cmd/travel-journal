@@ -162,7 +162,7 @@ Every response carries four fixed headers (`d2913ad`, `t-security-headers`): API
 | `X-Frame-Options` | `DENY` | No framing, for older browsers |
 | `Content-Security-Policy` | `frame-ancestors 'none'` | No framing, for current browsers. Deliberately **not** a full CSP: the SPA's script, style and tile sources would need their own review |
 
-**Known gap (ordinary debt, `t-security-headers-on-500`).** An unhandled exception answered by Starlette's outermost error layer sits outside this middleware, so that `500` goes out without the four headers. Its body is still the fixed `INTERNAL_ERROR` envelope.
+An unhandled exception is answered by Starlette's outermost error layer, which sits outside this middleware, so the project's catch-all `500` handler (`app/core/errors.py`) attaches the same four headers itself (`724bc9c`). Both read one list in `app/core/headers.py`.
 
 ---
 

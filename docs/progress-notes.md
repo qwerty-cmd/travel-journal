@@ -174,7 +174,7 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 ## t-tests-readme-stale
 
-PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — docs pass, uncommitted at close-out. The `integration/` line was **kept** as the notes below require. The README now says the directory hasn't been created yet, and it maps each of the three priority failure modes to the root-level modules that already test it (the offline-queue scenario lives in the frontend Vitest suite). Nothing was moved.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — docs pass, committed in `d70ea7e`. The `integration/` line was **kept** as the notes below require. The README now says the directory hasn't been created yet, and it maps each of the three priority failure modes to the root-level modules that already test it (the offline-queue scenario lives in the frontend Vitest suite). Nothing was moved.
 
 First real test landed as tests/test_schema.py at the root. Cosmetic, pre-existing — was outside the schema task's scope.
 
@@ -1956,3 +1956,15 @@ OWNER TASK, `gate: none`, story `s-real-device-testing`. Run `docs/real-device-t
 ## t-owner-handover-finish
 
 OWNER TASK, `gate: none`, story `s-handover-docs`. After the cutover, fill the three TODOs in `docs/architecture-handover.md` "Deploy and operations": the live URL, the current and previous revision names, and the Graph refresh-token mint date plus the client-secret expiry date (dates only, never values). Everything else in that section was written in the 2026-09-29 docs pass. `docs` can write it if the owner supplies the values.
+
+## t-review-docs-sync
+
+DONE 2026-09-29. Scoped retroactively. The scrum-master's final post-flight found no task row for the orchestrator's CLAUDE.md/skills edit (`1a8e608`) or the three docs commits, which Entry 12 requires. The owner had asked for every review finding to be fixed, and this row records that doc work: CLAUDE.md commands (backend/.env, test prerequisites, Kubb import noise, commit types/scopes), the add-endpoint skill (step numbering, `error_responses`, snapshot-before-generate, the multipart exception) and the deploy skill (migrations before traffic, optional secrets) in `1a8e608`; the API README in `ffa4f26`; the frontend module headers and READMEs in `0e153fe`; and the contract, runbook, handover, test plan, Entry 26 and tracker in `ec2329f`.
+
+## t-frontend-fresh-clone-tests
+
+DONE 2026-09-29, from the final QA pass. On a fresh clone `npm test` failed 7 files ("Failed to resolve import ./routeTree.gen"), because the file is gitignored and `vitest.config.ts` deliberately leaves out the router plugin that generates it. This predates the branch, but it is what an owner following CLAUDE.md hits first. `frontend/scripts/ensure-route-tree.mjs` now runs as `pretest` and calls `@tanstack/router-generator`, the generator the plugin uses, pinned to the same 1.167.36 so the lockfile change is one line, with the options from `vite.config.ts`, only when the file is missing. Verified: with the file deleted, `npm test` regenerates it (identical to Vite's output apart from whitespace) and 385/385 tests pass. It is Node-only, so it works on a Windows host. The Docker build runs `npm run build`, not `pretest`, so it is unaffected.
+
+## t-queue-backoff-tab-handoff
+
+ORDINARY DEBT, from the final QA pass (2026-09-29). The retry backoff timer lives only in the tab that held the drain lock. If that tab closes mid-backoff, a hidden background tab doesn't retry until its next trigger: becoming visible, the `online` event, or an enqueue broadcast. Nothing is lost, only delayed, and showing any tab drains the queue. No current consumer; no promotion trigger.
