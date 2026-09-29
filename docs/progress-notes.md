@@ -1154,6 +1154,8 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 
 ## t-onedrive-preflight-check
 
+LOCAL RUN PASSED 2026-09-29 (owner). Full local stack (`docker compose up --build` with the boto3 `minio-init`, migrate, seed, a stop with a photo uploaded through the app) plus the owner's real Graph app registration and a refresh token minted with `get_refresh_token`: `python -m app.storage.onedrive_sync` archived the photo to OneDrive. This is the first confirmation against real Graph of the `/common` token flow, the `Files.ReadWrite offline_access` scope, the upload URL form and the `conflictBehavior=replace` placement, which were all previously unverified. Still open: the same run with **production** values (Neon/R2), and the re-run with a freshly minted token close to departure.
+
 ROW ADDED 2026-09-17 — it existed only as an id, cited by three places (`onedrive_sync.py`'s module docstring, the `s-photo-upload-onedrive-sync` story closeout above, and `t-onedrive-filename-url-encoding`) but was never written into `progress.json`. `qa`'s independent verification pass on `t-onedrive-sync-job` found the row missing and flagged it; `ba`'s original scoping text is transcribed verbatim as the task title and blocker.
 
 NO ACCEPTANCE CRITERIA, DELIBERATELY. This is not an implementable task — it is a manual verification step: a human runs the real sync against the live Microsoft Graph tenant and confirms the refresh token is healthy and the request shape `t-onedrive-sync-job` built (URL form, token scope, `conflictBehavior` placement — all UNVERIFIED per that task's note) is actually accepted by Graph, before the trip departs. An agent cannot hold Graph credentials or consent to an OAuth grant, so there is nothing here for `dev` to implement or `qa` to verify against a spec.
@@ -1928,6 +1930,8 @@ ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `a2a4579` review. Do not imple
 - Fix: pin both to a release tag (or digest) someone has actually pulled and run. Agent: `devops`.
 
 ## t-owner-compose-smoke-test
+
+PARTIAL 2026-09-29 (owner). `docker compose up --build` now works end to end on the owner's machine: `minio-init` creates the bucket, the api starts, and a stop with a photo uploads through the app. The runbook §3 production-image smoke test (`docker build` + `docker run`, no bind mount) is still to do.
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production image locally with `docker run` against compose's Postgres and MinIO, as in runbook §3 (smoke test). Keep `-e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`, or photos won't load. Pass: `/api/health` `200`, `/` shows the paste-link screen, a local rider link renders the trip, and `docker ps` shows `(healthy)`.
 
