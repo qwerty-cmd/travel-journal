@@ -18,6 +18,11 @@ from http import HTTPStatus
 from app.models.common import ErrorEnvelope
 
 ERROR_RESPONSES = {
+    HTTPStatus.UNAUTHORIZED: {
+        "model": ErrorEnvelope,
+        "description": "No valid session where one is required. The response carries "
+        '`WWW-Authenticate: Cookie realm="bike-trip-journal"`.',
+    },
     HTTPStatus.FORBIDDEN: {
         "model": ErrorEnvelope,
         "description": "The slug resolved, but it is the trip's viewer slug — read-only.",
@@ -33,6 +38,19 @@ ERROR_RESPONSES = {
     HTTPStatus.UNPROCESSABLE_ENTITY: {
         "model": ErrorEnvelope,
         "description": "The request failed schema validation.",
+    },
+    # The one entry that declares a response header: the offline queue waits
+    # `Retry-After` seconds before retrying a RATE_LIMITED item, so the generated
+    # client should know the header is part of this response.
+    HTTPStatus.TOO_MANY_REQUESTS: {
+        "model": ErrorEnvelope,
+        "description": "A rate limit or an account lockout. Retry after `Retry-After` seconds.",
+        "headers": {
+            "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {"type": "integer", "minimum": 1},
+            }
+        },
     },
 }
 

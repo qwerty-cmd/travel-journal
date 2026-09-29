@@ -17,9 +17,10 @@ Raise `ApiError` from application code (`core/security.py` raises FORBIDDEN and
 NOT_FOUND through it). The other three handlers exist to normalise failures that
 originate in the framework rather than in our code.
 
-**Raise it through the classmethod constructors** — `ApiError.forbidden(...)`,
-`ApiError.not_found(...)`, `ApiError.conflict(...)`, `ApiError.validation(...)`,
-`ApiError.internal(...)` — never by passing a status and a code as separate
+**Raise it through the classmethod constructors** — `ApiError.unauthenticated(...)`,
+`ApiError.forbidden(...)`, `ApiError.not_found(...)`, `ApiError.conflict(...)`,
+`ApiError.validation(...)`, `ApiError.rate_limited(...)`, `ApiError.internal(...)`
+— never by passing a status and a code as separate
 arguments. The contract's top-priority distinction is 403-vs-404 (spec Section
 12, decision-log entry 6), and a two-argument call site makes the transposed
 pair `(404, FORBIDDEN)` representable: a body that violates the contract,
@@ -52,8 +53,8 @@ INTERNAL_ERROR_MESSAGE = "Something went wrong on our end. Please try again."
 
 # Status -> contract code. Only the statuses the contract's eight endpoints
 # actually return get a specific code; everything else (including a 500) is an
-# INTERNAL_ERROR, because the contract defines exactly six codes and inventing a
-# seventh at runtime would produce a body the generated client cannot type.
+# INTERNAL_ERROR, because the contract defines exactly eight codes and inventing a
+# ninth at runtime would produce a body the generated client cannot type.
 #
 # `409` is the one row here that is *endpoint* contract rather than framework
 # level (decision-log Entry 14). `405` and `500` are produced by Starlette's
@@ -75,13 +76,28 @@ INTERNAL_ERROR_MESSAGE = "Something went wrong on our end. Please try again."
 # `http_exception_handler`: `tests/test_bare_409_raise_audit.py` fails the suite
 # if any module under `app/` raises an `HTTPException` with a 409 (or with a
 # status it cannot resolve statically). Do not "fix" this by dropping the row.
+#
+# `401` and `429` (decision-log Entry 29) are endpoint contract too: raised by our
+# own session gate and rate limiters, listed per endpoint wherever reachable. Each
+# carries a header the status is not actionable without — `WWW-Authenticate`
+# (RFC 9110 requires it on a 401) and `Retry-After` — which is why they are raised
+# through `ApiError.unauthenticated` / `ApiError.rate_limited`, the constructors
+# that attach them.
 _STATUS_TO_CODE: dict[int, ErrorCode] = {
+    HTTPStatus.UNAUTHORIZED: ErrorCode.UNAUTHENTICATED,
     HTTPStatus.FORBIDDEN: ErrorCode.FORBIDDEN,
     HTTPStatus.NOT_FOUND: ErrorCode.NOT_FOUND,
     HTTPStatus.CONFLICT: ErrorCode.CONFLICT,
     HTTPStatus.METHOD_NOT_ALLOWED: ErrorCode.METHOD_NOT_ALLOWED,
     HTTPStatus.UNPROCESSABLE_ENTITY: ErrorCode.VALIDATION_ERROR,
+    HTTPStatus.TOO_MANY_REQUESTS: ErrorCode.RATE_LIMITED,
 }
+
+# The `WWW-Authenticate` value on every 401 (docs/api-contract.md, "Sessions").
+# RFC 9110 makes the header a MUST on a 401; the `Cookie` scheme names how this
+# API authenticates without being one a browser knows, so it never triggers the
+# browser's own login dialog.
+WWW_AUTHENTICATE = 'Cookie realm="bike-trip-journal"'
 
 
 def code_for_status(status_code: int) -> ErrorCode:
@@ -101,7 +117,14 @@ class ApiError(Exception):
     the code for you, so a call site cannot emit a 404 that reports FORBIDDEN.
     """
 
-    def __init__(self, status_code: int, code: ErrorCode, message: str) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        code: ErrorCode,
+        message: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         expected = code_for_status(status_code)
         if code is not expected:
             # A backstop, not the primary guard — the classmethods are. Raised
@@ -112,12 +135,31 @@ class ApiError(Exception):
                 f"ApiError status {status_code} must carry {expected}, not {code}. "
                 f"The contract maps status to code (see code_for_status); a pair that "
                 f"disagrees would put a contract-violating body on the wire. Use "
-                f"ApiError.forbidden/.not_found/.conflict/.validation/.internal instead."
+                f"ApiError.unauthenticated/.forbidden/.not_found/.conflict/.validation/"
+                f".rate_limited/.internal instead."
             )
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        # Response headers the handler sends with the envelope. Set only by the
+        # constructors that owe one (401 -> WWW-Authenticate, 429 -> Retry-After).
+        self.headers = headers
+
+    @classmethod
+    def unauthenticated(cls, message: str) -> ApiError:
+        """
+        401 — no valid session where one is required, or wrong signin/recover credentials.
+
+        Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`, which RFC 9110
+        requires on every 401. `message` is shown to the rider.
+        """
+        return cls(
+            HTTPStatus.UNAUTHORIZED,
+            ErrorCode.UNAUTHENTICATED,
+            message,
+            headers={"WWW-Authenticate": WWW_AUTHENTICATE},
+        )
 
     @classmethod
     def forbidden(cls, message: str) -> ApiError:
@@ -152,6 +194,28 @@ class ApiError(Exception):
         `RequestValidationError`. This is for the checks Pydantic can't express.
         """
         return cls(HTTPStatus.UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR, message)
+
+    @classmethod
+    def rate_limited(cls, message: str, retry_after_seconds: int) -> ApiError:
+        """
+        429 — a rate limit or an account lockout. `message` is shown to the rider.
+
+        Carries `Retry-After: <retry_after_seconds>`, which the offline queue waits
+        out before retrying. The contract says whole seconds, at least 1; a value
+        below 1 is a caller bug (a `Retry-After: 0` would have the queue hammer the
+        limiter), so it raises `ValueError` here rather than reaching the wire.
+        """
+        if retry_after_seconds < 1:
+            raise ValueError(
+                f"retry_after_seconds must be at least 1, not {retry_after_seconds}. "
+                f"Round the wait up to whole seconds before raising."
+            )
+        return cls(
+            HTTPStatus.TOO_MANY_REQUESTS,
+            ErrorCode.RATE_LIMITED,
+            message,
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
 
     @classmethod
     def internal(cls, message: str) -> ApiError:
@@ -251,7 +315,7 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
         )
         return envelope_response(exc.status_code, exc.code, INTERNAL_ERROR_MESSAGE)
 
-    return envelope_response(exc.status_code, exc.code, exc.message)
+    return envelope_response(exc.status_code, exc.code, exc.message, exc.headers)
 
 
 def _format_validation_errors(errors: list[dict[str, Any]]) -> str:

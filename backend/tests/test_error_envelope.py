@@ -548,12 +548,12 @@ def test_conflict_pairing_backstop_raises_value_error_not_assertion_error() -> N
 
 def test_error_code_is_exactly_the_contract_list() -> None:
     """
-    The enum matches the contract's table — six members, these names, these values.
+    The enum matches the contract's table — eight members, these names, these values.
 
     A ratchet, in the shape of the convention ratchets in
     ``test_trip_metadata_endpoint.py`` and ``test_stops_list_endpoint.py``: the
     value is not in catching today's members, it is in failing at the moment a
-    seventh is added, next to the prose that has to be updated with it. Adding a
+    ninth is added, next to the prose that has to be updated with it. Adding a
     code is a contract change (decision-log entries 6 and 14) — twice now it has
     been escalated rather than invented, and twice the count in the surrounding
     prose went stale because nothing forced the author back to it.
@@ -563,6 +563,8 @@ def test_error_code_is_exactly_the_contract_list() -> None:
     wire-format change that a names-only check would wave through.
     """
     assert {member.name: member.value for member in ErrorCode} == {
+        "UNAUTHENTICATED": "UNAUTHENTICATED",
+        "RATE_LIMITED": "RATE_LIMITED",
         "FORBIDDEN": "FORBIDDEN",
         "NOT_FOUND": "NOT_FOUND",
         "VALIDATION_ERROR": "VALIDATION_ERROR",
