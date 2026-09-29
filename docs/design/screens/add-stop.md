@@ -29,7 +29,9 @@ Frame: phone 390, `surface/page`, column max 480, gap 16. The Save button lives 
 4. **Fallback map** (only in fallback / manual states): map frame 280 px, `radius/lg`, grid background (so an
    offline blank tile area still reads as a map), a fixed centre `crosshair` overlay (decorative), and the tapped
    point as the hollow dashed approximate pin. Under it a secondary md full-width "Use map centre" button (keyboard
-   and switch access, WCAG 2.1.1; DESIGN.md §13 C15) and caption "With no signal the map may look blank. Tap as
+   and switch access, WCAG 2.1.1; C15, scoped into `t-am-fe-rider-home-restyle`). It sets the same manual location
+   a tap sets (`locationSource: "manual"`), at the map's current centre, and follows the same rule that a late GPS
+   fix never replaces it. Then the caption "With no signal the map may look blank. Tap as
    close as you can." (existing guidance).
 5. TextField "Name" (required). Helper: "e.g. Roadhouse fuel stop".
 6. TextArea "Notes" (optional).
@@ -38,8 +40,9 @@ Frame: phone 390, `surface/page`, column max 480, gap 16. The Save button lives 
    screen readers). Below: a preview grid of 72 px tiles (object URLs), each with a 48 px Remove IconButton "Remove
    photo 2" at its top-right. "Processing 2 photos…" (status) while processing. An undecodable file shows the
    inline danger line "Couldn't read photo IMG_0042.HEIC" (existing copy).
-8. Public-trip note (members of public trips, small, muted, `globe` icon): "This stop is visible to the public 24
-   hours after it's saved."
+8. Public-trip note (members of public trips, small, muted, `globe` icon): "This stop is visible to the public <N>
+   hours after it's saved." with N from `TripOut.publicDelayHours`; for 0: "This stop is visible to the public as
+   soon as it's sent." Private trips: no note.
 9. **BottomActionBar**: a disabled-reason helper above the button when disabled ("Add a name and a location to
    save." / "Wait for photos to finish processing."), then primary lg "Save stop". On save: → the trip, where the
    global QueueNotice shows "Waiting to send: 1 stop, 2 photos" (or it clears in seconds online). No toast: the
@@ -58,14 +61,23 @@ Frame: phone 390, `surface/page`, column max 480, gap 16. The Save button lives 
 | Processing photos | Save disabled with reason |
 | Local save failure (IndexedDB) | Danger notice "Couldn't save the stop on this device" (existing copy) + "Try again" |
 | Offline | Works fully; the Offline notice is informational only |
-| Signed out while on this screen (401 happens later in the queue) | Saving still works: the queue pauses and shows "Sign in to send N items" (ADR §3) |
-| Revoked, items already queued | Items fail on send with "You're no longer a rider on this trip"; photos offer "Save photo to this device" (DESIGN.md §5.6) |
+| Session expired on the server while the device still shows the user as signed in (the 401 happens later, in the queue) | Saving still works: the entry records the `userId` from `btj.me`; on send the `401` **pauses** the queue (not failed, attempt not counted) and the stack shows "Sign in to send N items". Signing in as the same account resumes it; a different account leaves the entry held ("saved by another account") |
+| Revoked, items already queued | Items fail never-retry on send with the envelope message "You're no longer a rider on this trip"; photos offer "Save photo to this device" (DESIGN.md §5.6) |
+| Photo refused by the server (`422`: not a JPEG, or over 15 MiB) | Never-retry: the photo entry moves to Failed with the envelope message, blob kept, "Save photo to this device" offered. The client's ≤ 1600 px JPEG processing makes this rare |
+| Queue gets `429` | Retried after `Retry-After`; the entry stays "Waiting" (no separate notice) |
 | Cold trip cache (no trip data offline) | The trip shell's "Can't reach the server"; Add stop needs the trip to have been opened once (unchanged) |
 
 ## APIs called
-None directly. Reads `GET /api/v2/trips/{tripId}` from the shell's cache for `viewer.role`. The queue later sends
-the stop and photo writes: **the paths for app-created trips are `TBC`** (DESIGN.md §13 C2). Legacy slug-addressed
-entries keep `POST /api/trips/{slug}/stops` and `/photos` (ADR §7, §12).
+None directly. Reads `GET /api/v2/trips/{tripId}` from the shell's cache for `viewer.role` and `publicDelayHours`.
+The queue later sends, for entries captured here (`{tripId}` payload + `userId`):
+- `POST /api/v2/trips/{tripId}/stops` (`StopCreate`, client id fixed at mount): `201` new, `200` replay, `401`,
+  `403`, `404`, `409`, `422`, `429`.
+- `POST /api/v2/trips/{tripId}/stops/{stopId}/photos` (multipart `id`, `takenAt`, `file`; no `uploadedBy`, the
+  server stores the account's display name): same statuses.
+
+Entries queued before the upgrade keep their slug payloads and go to the legacy `POST /api/trips/{slug}/stops` and
+`/stops/{id}/photos`, which now also need a session and membership. Queue classification is the contract's
+"Offline-queue classification (Entry 29)" table; this screen doesn't change it.
 
 ## Handoff checklist
 - [ ] Viewers, anonymous users and pending requesters never get a geolocation prompt (fresh profile).
@@ -75,4 +87,6 @@ entries keep `POST /api/trips/{slug}/stops` and `/photos` (ADR §7, §12).
 - [ ] Save is disabled with visible reason text until a name and a location exist and no photo is processing.
 - [ ] In airplane mode: Save returns to the trip and "Waiting to send: 1 stop, N photos" appears.
 - [ ] The Remove buttons are ≥ 48 px and named with the photo number.
+- [ ] A new entry in IndexedDB carries `tripId` and `userId` and no slug; the photo form sends no `uploadedBy`.
+- [ ] Signed out, a saved stop shows "Sign in to send 1 item", and is still "Waiting" (not failed) after sign-in.
 - [ ] The bottom bar never hides the focused Notes field (focus Notes with the keyboard open on a phone).

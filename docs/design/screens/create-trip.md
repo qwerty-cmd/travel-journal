@@ -18,10 +18,13 @@ Frame: phone 390, column max 480, gap 16.
    = 2 px `brand/primary` + `primary-subtle` bg + `check-circle`):
    - **Public** (`globe`), default: "Anyone can find it and follow along. Stops appear publicly 24 hours after
      they're added."
-   - **Private** (`lock`): "Only members can see it."
+   - **Private** (`lock`): "Only members can see it. Nobody can ask to join a private trip."
 6. When Public is selected, an inline `warning` notice (not a dialog at creation; this is the Publish-dialog
    content from DESIGN.md §9, inline): "**Check your first stop.** Trips often start at someone's home. Public
    viewers see each stop's exact location."
+   When Private is selected, an inline `info` notice instead (C13 steer; no invite feature exists): "**Riders
+   can't join a private trip.** If others are riding with you, keep it public until they've joined. You can make it
+   private later in Trip settings, and members keep their access."
 7. Primary lg "Create trip". Loading: "Creating…".
 
 After success: navigate to `/trips/$tripId` with the **initial leader state**:
@@ -36,19 +39,24 @@ After success: navigate to `/trips/$tripId` with the **initial leader state**:
 | State | Presentation |
 |---|---|
 | Not signed in | Redirect to `/signin?next=/trips/new` |
-| Field errors | "Enter a trip name." · "Choose a start date." |
-| Validation (422) | Server message on the field or in the summary |
-| Limit reached (429 daily, or a server envelope for 20 total) | Warning notice with the server message; the daily case adds "Try again in N hours." from `Retry-After` |
-| Offline | Danger notice "You need a connection to create a trip." Input kept |
-| Retry after a timeout | Same client id; a replay that returns the existing trip navigates normally |
+| Field errors | "Enter a trip name." · "Use 100 characters or fewer." · "Choose a start date." |
+| Validation (`422`) | Error summary with the envelope message |
+| Daily limit (`429`, 3 trips per day) | Warning notice with the envelope message + "Try again in N hours." from `Retry-After` (DESIGN.md §5.6 rounding); Create disabled until then. A replay of the same id spends no token |
+| Lifetime cap (`409`, 20 trips created) | Warning notice with the envelope message verbatim; Create disabled for this visit. Not retryable |
+| Other `409` (the id already belongs to someone else, or the creator is no longer a member of the trip it names) | Error summary with the envelope message; a fresh id is generated on the next tap |
+| Offline | Danger notice "You need a connection to create a trip." Input kept. Creation is online-only and never queued |
+| Retry after a timeout | Same client id; a replay (`200`) returns the existing trip and navigates normally |
 | Cold start | Button loading + waking-up notice |
 
 ## APIs called
-- `POST /api/v2/trips` (ADR §4): `{id, name, startDate, visibility}` → 201 (idempotent by id).
+- `POST /api/v2/trips` (`TripCreate`: `id` canonical lowercase UUID generated at submit, `name`, `startDate`,
+  `visibility` default `public` → `TripOut` with `viewer.role = "leader"`): `201` new, `200` replay, `401`, `409`,
+  `422`, `429`.
 - Then `GET /api/v2/trips/{tripId}` as the trip screen.
 
 ## Handoff checklist
-- [ ] Public is preselected and the first-stop warning is visible while it's selected.
+- [ ] Public is preselected and the first-stop warning is visible while it's selected; selecting Private shows the
+  "Riders can't join a private trip" notice instead.
 - [ ] The radio cards are one fieldset with a legend; arrow keys move between options.
 - [ ] Double-tapping Create sends one trip (same id); a network retry doesn't create a duplicate.
 - [ ] After creation the header shows Leader, and the Members tab and settings icon are present.

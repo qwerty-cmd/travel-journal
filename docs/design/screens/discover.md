@@ -47,13 +47,18 @@ H1 on phones is visually the wordmark; give the page a visually hidden H1 "Disco
 | Error, no response | "Can't reach the server. Check your signal and try again." + "Try again". Your trips (if cached) still render |
 | Offline | Offline notice; list error state as above; the paste field still works (it only navigates) |
 | Load-more error | Inline danger text under the list "Couldn't load more trips" + "Try again"; loaded cards stay |
-| Rate limited (429) | Warning notice "Too many requests. Try again in N minutes." |
+| Rate limited (`429`, `public-read` bucket 120/min) | Warning notice "Too many requests. Try again in N seconds." from `Retry-After` (DESIGN.md §5.6 rounding) + "Try again" disabled until then |
+| Malformed cursor (`422`) | Treated as a load-more error: "Couldn't load more trips" + "Try again" restarts from the first page |
 | Signed out vs in | Onboarding card vs Your trips + Create a trip |
 | Queue non-empty | Status stack shows it here too (root shell) |
 
 ## APIs called
-- `GET /api/v2/trips?cursor=&limit=20` (ADR §2): public list, delay-applied `lastPublicStopAt`.
-- Signed in: `TBC: GET /api/v2/auth/me` (session check, DESIGN.md §13 C1) and `TBC: GET /api/v2/me/trips` (C3).
+- `GET /api/v2/trips?cursor=&limit=20` (`TripPageOut`: items + `nextCursor`, `null` on the last page): public trips
+  only, the same for every caller, sorted by `lastPublicStopAt` descending with nulls last. "Show more trips" is
+  hidden when `nextCursor` is `null`. The card reads name, start date, `riderCount` and `lastPublicStopAt` from
+  `TripSummaryOut`.
+- Signed in: `GET /api/v2/auth/me` (session check; a `401` just means signed out, no redirect),
+  `GET /api/v2/me/trips` and `GET /api/v2/me/join-requests` for "Your trips" (`rider-home.md`).
 - None for the paste field.
 
 ## Handoff checklist
@@ -63,4 +68,5 @@ H1 on phones is visually the wordmark; give the page a visually hidden H1 "Disco
 - [ ] "Show more trips" appends and moves focus to the first new card.
 - [ ] The paste field shows "That doesn't look like a trip link." for invalid input and navigates to `/t/<code>` for valid.
 - [ ] No search, filter or sort controls exist.
-- [ ] The page never auto-redirects (DESIGN.md D7).
+- [ ] The page never auto-redirects (DESIGN.md D7, confirmed by `ba` as C10).
+- [ ] "Show more trips" disappears on the last page (`nextCursor: null`).

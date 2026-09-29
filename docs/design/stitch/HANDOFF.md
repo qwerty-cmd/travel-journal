@@ -3,6 +3,11 @@
 > Written by `designer`, 2026-09-29, for the redesign that follows decision-log **Entry 29** (the access-model ADR).
 > Design source of truth: `docs/design/DESIGN.md` and `docs/design/screens/*.md`. Stitch output is **input** to those
 > specs. It never replaces them.
+>
+> **Reconciled 2026-09-29** with `docs/api-contract.md` (Entry 29) and the styling ruling (Entry 30). The prompts
+> below no longer depend on any unresolved API; P10, P11, P12 and P14 were revised to match the contract (recovery
+> code rotation, private-trip steer, server-worded join refusals, rider Leave). Stitch was still not available in
+> the reconciliation session.
 
 ## 1. Was Stitch available in the session that wrote this?
 
@@ -98,10 +103,11 @@ notice "You're offline…", the map area a grey grid with "Map needs a connectio
 **P03: Trip detail, rider (`/trips/$tripId/timeline`)**
 [Token line] Screen: the same trip for an approved rider, Timeline tab. The header shows "Public" and "Rider" badges.
 A light-green notice: "You see stops live. The public sees them after 24 hours." Four timeline stops; the newest has
-a small grey chip "Not public yet". A fixed bottom bar with a full-width 56 px green "Add stop" button with a plus
+a small grey chip "Public from 6:10 pm Wed ACST". A fixed bottom bar with a full-width 56 px green "Add stop" button with a plus
 icon. Variants: (a) online; (b) offline with a queue: a dark notice "You're offline. New stops are saved on this
 phone and sent later." and a light-green notice "Waiting to send: 1 stop, 2 photos" with a "Details" text button;
 (c) leader: a "Leader" badge, a settings icon in the header, a fourth tab "Members" with a round count badge "3".
+(Riders also have a "Members" tab, without a count badge.)
 
 **P04: Bikes tab (`/trips/$tripId/bikes`)**
 [Token line] Screen: trip Bikes tab. Cards per bike: rider display name (heading), "2019 Make Model", multi-line
@@ -148,18 +154,26 @@ above it. Variant: checkbox ticked, Continue green.
 
 **P10: Account (`/account`)**
 [Token line] Screen: "Account". Identity card: "Display name: Sam, shown on photos you add", "Username:
-sample-rider-07, private. Only you see this." "Your trips" compact list with role badges. "Password" card with
-Current and New password fields and a "Change password" button, helper "Changing your password signs you out on all
-other devices." "Sign out" (outlined) and "Sign out everywhere" (red outline). No avatar, no delete account.
+sample-rider-07, private. Only you see this." (no edit button). "Your trips" compact list with role badges. "My
+requests" list: one row "Desert Loop (sample)" with an amber "Pending" badge and a "Cancel request" text button, one
+row with "Not approved". "Password" card with Current and New password fields and a "Change password" button, helper
+"Changing your password signs you out on all other devices." "Recovery code" card: "It can't be shown again, but you
+can replace it with a new one. The old one stops working." and an outlined "Get a new recovery code" button. "Sign
+out" (outlined) and "Sign out everywhere" (red outline). No avatar, no delete account, no email. Variant: a bottom
+sheet "Get a new recovery code" with a password field, then the new code in a sunken monospace block with Copy,
+Download, the checkbox "I've saved my recovery code" and a disabled "Done".
 
 **P11: Create trip (`/trips/new`)**
 [Token line] Screen: "Create a trip". Fields "Trip name" (helper "For example: Spring loop 2026"), "Start date". A
 fieldset "Who can see it?" with two large radio cards: "Public" (globe, selected, green border and light-green fill:
 "Anyone can find it and follow along. Stops appear publicly 24 hours after they're added.") and "Private" (lock:
 "Only members can see it."). An amber warning: "Check your first stop. Trips often start at someone's home. Public
-viewers see each stop's exact location." A 56 px green "Create trip" button. Variant: after creation, the trip screen
-with a "Leader" badge, the success notice "Your trip is ready. You're its leader." and a "Next steps" card with
-"Copy trip link".
+viewers see each stop's exact location." A 56 px green "Create trip" button. Variants: (a) as described; (b)
+"Private" selected ("Only members can see it. Nobody can ask to join a private trip."), with a light-green info
+notice instead of the amber one: "Riders can't join a private trip. If others are riding with you, keep it public
+until they've joined. You can make it private later in Trip settings, and members keep their access."; (c) after
+creation, the trip screen with a "Leader" badge, the success notice "Your trip is ready. You're its leader." and a
+"Next steps" card with "Copy trip link". No "invite" control anywhere.
 
 **P12: Request to join (`/trips/$tripId/join`)**
 [Token line] Screen: "Ask to join this trip" for "Desert Loop (sample)" (Public badge). Body "A leader of this trip
@@ -167,16 +181,20 @@ will see your display name, Sam, and your message. Once they approve you, you ca
 how-it-works list. Textarea "Message to the leaders (optional)" with the counter "55 / 280". A 56 px "Send request"
 button. Variants: (a) form; (b) pending: an amber "Pending" badge, H1 "Request sent", a light-green notice "Waiting
 for a leader to approve you. You'll see Add stop on the trip once you're approved.", the quoted message, "Sent Fri 10
-Oct, 9:12 am ACST", "Back to the trip" and "Cancel request"; (c) rejected: an amber notice "A leader didn't approve
-your request. You can ask again 7 days after it was declined." with no form; (d) blocked: "You can't request to join
-this trip…".
+Oct, 9:12 am ACST", "Back to the trip" and "Cancel request"; (c) previously not approved: a light-green notice "A
+leader didn't approve your last request. You can ask again. If it's too soon, you'll be told when you send." above
+the form, which is still shown; (d) refused after sending: an amber notice holding a server message (sample text:
+"You can't ask to join this trip right now.") and no form. Never show the word "Blocked" or a date for when the user
+may ask again.
 
 **P13: Leader review (`/trips/$tripId/members?view=requests`)**
 [Token line] Screen: the trip Members tab for a leader. A segmented control "Requests 3 · Members · Blocked". Muted
 intro "Approve people you know are riding…". Request cards: checkbox + display name ("Alex"), "Requested 2 hours ago",
 a quoted message, a grey badge "Via old rider link" on one, buttons "Approve" (green) and "Reject" (outlined), and a
 "More options" (three dots) button. A bulk bar with a green border: "2 selected", "Approve 2", "Reject 2". Variants:
-(a) with selection; (b) empty "No requests right now" with "Copy trip link"; (c) a bottom-sheet confirm dialog
+(a) with selection; (b) empty "No requests right now" with "Copy trip link"; (b2) empty on a private trip: "Nobody
+can ask to join while the trip is private. Make it public in Trip settings to let riders ask." with a "Trip
+settings" button; (c) a bottom-sheet confirm dialog
 "Reject and block Kim?" with bullets and a red "Reject and block" button over an outlined "Cancel" that shows a blue
 focus ring.
 
@@ -184,8 +202,10 @@ focus ring.
 [Token line] Screen: segmented "Members" selected. "Leaders (2)": your own row "Sam (You)" with "Step down" (red
 outline) and "Leave trip" (red text link); the other leader's row has no buttons and a muted line "Leaders can't
 remove each other." "Riders (3)": rows with "Make leader" (outlined) and "Revoke" (red outline). Variants: (a) default;
-(b) you're the only leader: Step down and Leave disabled with the text "You're the only leader. Make someone a leader
-first."; (c) bottom-sheet confirm "Remove Sam as a rider?" listing the consequences, with a red "Remove Sam".
+(b) you're the only leader: Step down and Leave disabled with the text "You're the only leader. Promote another
+rider to leader first."; (c) bottom-sheet confirm "Remove Sam as a rider?" listing the consequences, with a red
+"Remove Sam"; (d) rider view: no segmented control, the same two lists with no action buttons, except "Leave trip"
+(red text) on the viewer's own row "Jo (You)".
 
 **P15: Add stop (`/trips/$tripId/add`)**
 [Token line] Screen: "Add stop" with an X close button. A location status card. Fields "Name (required)" (helper
@@ -216,8 +236,9 @@ send them."; (f) a dark toast "Request sent" at the bottom.
    - `P01-discover.html`, `P02-trip-public.html`, … (one HTML file per generated screen, named by prompt id);
    - `screens.md`: a list of prompt id → Stitch screen reference (as shown in Stitch).
    Don't save Figma files or screenshots containing anything but sample content.
-3. Stitch's HTML uses Tailwind. Treat the classes as a visual reference only until the owner rules on the styling
-   approach (DESIGN.md §14 D1).
+3. Stitch's HTML uses Tailwind. The styling approach is decided (Entry 30, DESIGN.md §14 D1): plain CSS with
+   custom properties, no Tailwind. Treat Stitch's classes as a visual reference only; anything accepted is expressed
+   as DESIGN.md tokens (Appendix A `tokens.css`) and screen specs, never as Tailwind markup.
 
 ## 7. Review checklist for the generated screens
 
@@ -235,7 +256,8 @@ Run this on every exported screen, then note the results in `screens.md` next to
 - [ ] **No invented features.** Anything Stitch added goes under "Not in scope — invented by Stitch" in `screens.md`
   and is **not** carried into any spec: likes, comments, shares, follows, avatars, search, filters, notifications,
   chat, email, social sign-in, dark mode, per-stop hide, photo delete, stop edit, trip cover images, weather widgets,
-  distance or speed stats, route planning.
+  distance or speed stats, route planning, invites or join links for private trips, display-name editing, a
+  "Blocked" status shown to a requester.
 - [ ] **Sample data only:** no real names, trip links, coordinates of real homes, or real photos.
 - [ ] **Translate, don't copy:** any accepted improvement updates `docs/design/DESIGN.md` or
   `docs/design/screens/*.md` in our format (Design feature → Design format → States → APIs called), by `designer`.

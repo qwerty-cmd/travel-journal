@@ -13,7 +13,8 @@ Frame: phone 390, gap 16, page padding 16.
 1. TopBar: back "Back to trip" (IconButton + visually the arrow; accessible name "Back to trip") · trip name.
 2. H1 stop name (title).
 3. Meta (small, muted): `<time>` "Tue 14 Oct 2026, 4:05 pm ACST" + " · approximate location" (with `pin-approx`
-   icon) when manual. Members of public trips, recent stop: "Not public yet" chip (or "Public from …", C5).
+   icon) when manual. Members of public trips, recent stop: the "Public from 4:05 pm tomorrow ACST" chip
+   (`arrivedAt + TripOut.publicDelayHours`; C5 resolved).
 4. *(Optional, second pass; not needed for parity)* Mini map, 160 px, static, with a single pin. Offline: grid
    background + "Map needs a connection". Omit it in the first implementation.
 5. Notes (body, `white-space: pre-line`, max 68ch), if any.
@@ -30,12 +31,14 @@ Frame: phone 390, gap 16, page padding 16.
 | Photos error | Envelope message or "Couldn't load photos" (existing) + Try again |
 | Offline | "Photos need a connection." (accepted limit) |
 | Expired URL | One silent refetch (existing); a tile that still fails shows "Photo unavailable" |
-| Unknown stop, or a stop inside the public delay for a non-member | "Stop not found" + "Back to trip" (existing copy). The delay must not be distinguishable from a nonexistent stop |
+| Unknown stop, or a stop inside the public delay for a non-member | "Stop not found" + "Back to trip" (existing copy). The server answers both with the same `404` (the stop is absent from `/stops`, and its `/photos` is `404`), and the UI must not distinguish them either |
 | Trip 404 | Trip-level "Trip not found" |
+| `429` | Warning notice "Too many requests. Try again in N seconds." |
 
 ## APIs called
-`GET /api/v2/trips/{tripId}/stops` (no stop-by-id endpoint; usually cached) and
-`GET /api/v2/trips/{tripId}/stops/{stopId}/photos` (ADR §2, §9). Photo credit uses `uploadedBy` (display name).
+- `GET /api/v2/trips/{tripId}/stops` (`StopOut[]`; no stop-by-id endpoint; usually cached): `200`, `404`, `429`.
+- `GET /api/v2/trips/{tripId}/stops/{stopId}/photos` (`PhotoOut[]`, presigned `url`s): `200`, `404`, `429`. Photo
+  credit uses `uploadedBy`: the uploader's display name at upload time (or the free-text label on older photos).
 
 ## Handoff checklist
 - [ ] The time shows a zone label; approximate stops show the icon and the words.

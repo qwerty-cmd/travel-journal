@@ -16,13 +16,21 @@ Same trip layout as `trip-detail.md` (header, tabs, timeline, stop detail), read
    - Title: "This is an old trip link"
    - Signed out: "Viewing still works. To add stops and photos, you now need an account and a leader's approval." +
      secondary md "Sign in" (`next` = this URL) + tertiary "Create an account".
-   - Signed in, not a member: "To add stops, ask to join this trip." + secondary md "Request to join" → calls the
-     claim endpoint (slug in the body, never in a new URL) → pending state: "Request sent. A leader of this trip will
-     review it." with the Pending badge.
-   - Signed in, member (v2 `viewer.role` rider or leader): "You're a member of this trip. Open it in the new view to
+   - Signed in, not a member (`viewer.role` `none`): "To add stops, ask to join this trip." + secondary md "Ask to
+     join as a rider" → calls the claim endpoint (the slug goes in the body as `riderSlug`, never in a new URL) →
+     pending state: "Request sent. A leader of this trip will review it." with the Pending badge. It never grants
+     access by itself.
+   - Signed in, pending (`viewer.role` `pending`): the pending state above, with "Cancel request" as in
+     `join-request.md`.
+   - Signed in, member (`viewer.role` rider or leader): "You're a member of this trip. Open it in the new view to
      add stops." + primary md "Open trip" → `/trips/$tripId`.
-2. **No Add stop and no bike editing on legacy routes**, regardless of the legacy `access` value (DESIGN.md §13 C8).
-   Members are sent to the v2 route to write.
+2. **No Add stop and no bike editing on legacy routes**, regardless of the legacy `access` value (C8: `access` is now
+   derived from membership, but the legacy routes stay read-only by design). Members are sent to the v2 route to
+   write.
+
+The UI can't tell a rider link from a viewer link (the slug grants nothing and the response doesn't say which it
+is), so "Ask to join as a rider" shows on every legacy link. Only a rider link can be claimed; a viewer link answers
+`404` (see States).
 3. The queue's already-stored legacy items continue to send against the legacy write paths with the session
    cookie (ADR §12). Their notices are the global ones.
 
@@ -31,20 +39,25 @@ Same trip layout as `trip-detail.md` (header, tabs, timeline, stop detail), read
 |---|---|
 | Waking up / error / offline cached | As today (`t.$slug.tsx` shell) with the new visual system |
 | Unknown slug | "Trip not found" (the same component and copy as DESIGN.md §7) |
-| Claim: already pending | The pending state (200 existing) |
-| Claim: already a member (409) | Replaced by the "Open trip" variant |
-| Claim: cooldown or blocked (409) | Warning notice with the envelope message |
-| Claim: 401 | → `/signin?next=<this URL>` |
-| Claim: 429 | Warning with minutes |
+| Claim: `201` new or `200` existing pending | The pending state |
+| Claim: `404` (a viewer link, or a slug that no longer matches) | Warning notice "This link can't be used to join." + detail "Ask a leader of this trip for the rider link, or to make the trip public." The notice never says whether the link was a viewer link |
+| Claim: already a member (`409`) | Replaced by the "Open trip" variant after the trip refetch |
+| Claim: cooldown, block or pending cap (`409`) | Warning notice with the envelope message verbatim |
+| Claim: `401` | → `/signin?next=<this URL>` |
+| Claim: `429` (`join` bucket) | Warning "Too many requests. Try again in N minutes." |
 | Leader (via operator `grant_leader`) opens the old link | Member variant, "Open trip" |
 
 ## APIs called
-Legacy reads `GET /api/trips/{slug}`, `/stops`, `/map`, `/stops/{id}/photos` (unchanged). `POST /api/v2/trips/claim`
-`{slug}` (ADR §11). `GET /api/v2/trips/{id}` (using `TripOut.id`) to learn `viewer.role` for signed-in users. A 404
-there simply means "not a member of a private trip" → show the non-member variant.
+- Legacy reads `GET /api/trips/{slug}`, `/stops`, `/map`, `/stops/{id}/photos`: either slug, full undelayed reads.
+  The legacy `GET /api/trips/{slug}` fills `TripOut.viewer` from the optional session, so `viewer.role` decides the
+  notice variant with no extra call.
+- `POST /api/v2/trips/claim` (`JoinClaimCreate`: `riderSlug` → `MyJoinRequestOut`): `201` new, `200` existing
+  pending, `401`, `404`, `409`, `422`, `429`. The slug is never echoed back or logged.
+- `POST /api/v2/join-requests/{requestId}/cancel` for the pending variant.
 
 ## Handoff checklist
 - [ ] A legacy rider link never shows Add stop or Edit bike, signed in or not.
-- [ ] Request to join posts the slug in the request body; the URL never gains a new slug parameter.
+- [ ] "Ask to join as a rider" posts the slug as `riderSlug` in the request body; the URL never gains a new slug parameter.
+- [ ] Claiming with a viewer link shows "This link can't be used to join."
 - [ ] After claiming, the Pending badge shows and no write control appears.
 - [ ] Members see "Open trip", which goes to `/trips/<id>`.
