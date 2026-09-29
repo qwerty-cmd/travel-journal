@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mockup: Leader review (docs/design/screens/leader-review.md)</title>
+<!-- Illustration only. Sample display names only. No external requests. -->
+<style>
+:root{
+  --color-brand-primary:#1f5c40;--color-brand-primary-subtle:#e3efe8;--color-brand-on-primary:#ffffff;
+  --color-surface-page:#f4f6f3;--color-surface-card:#ffffff;--color-surface-sunken:#eceeeb;--color-surface-scrim:rgba(23,32,27,.56);
+  --color-text-primary:#17201b;--color-text-muted:#4d5a52;
+  --color-border-strong:#6b776f;--color-border-subtle:#d5dbd6;
+  --color-status-danger:#b3261e;
+  --color-focus-ring:#1d4ed8;
+  --font-family-base:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;--radius-pill:999px;
+  --elevation-1:0 1px 2px rgba(23,32,27,.12),0 1px 1px rgba(23,32,27,.08);--elevation-2:0 4px 12px rgba(23,32,27,.16);--elevation-3:0 12px 32px rgba(23,32,27,.28);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:var(--space-6);background:var(--color-border-subtle);font-family:var(--font-family-base);color:var(--color-text-primary);font-size:17px;line-height:24px}
+.canvas{display:flex;gap:var(--space-8);flex-wrap:wrap;align-items:flex-start}
+.frame-label{font-size:15px;font-weight:600;margin:0 0 var(--space-2)}
+.frame{width:390px;height:844px;background:var(--color-surface-page);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--elevation-2);position:relative}
+.icon{width:24px;height:24px;flex:none}.icon--sm{width:18px;height:18px}
+.topbar{height:56px;display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-2);background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.topbar .t{flex:1;font-weight:600}
+.iconbtn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--color-text-primary);border-radius:var(--radius-md)}
+.header{background:var(--color-surface-card);padding:var(--space-3) var(--space-4);display:flex;align-items:center;justify-content:space-between}
+.h1{font-size:24px;line-height:30px;font-weight:700;margin:0}
+.meta{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.row{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);height:24px;padding:0 var(--space-2);border-radius:var(--radius-sm);font-size:15px;font-weight:600}
+.badge--leader{background:var(--color-brand-primary);color:#fff}
+.badge--legacy{background:var(--color-surface-sunken);color:var(--color-text-muted)}
+.badge--count{background:var(--color-brand-primary);color:#fff;border-radius:var(--radius-pill);min-width:24px;justify-content:center;padding:0 6px}
+.tabs{display:flex;background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.tab{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;gap:6px;font-weight:600;color:var(--color-text-muted);text-decoration:none;border-bottom:3px solid transparent;font-size:15px}
+.tab[aria-current="page"]{color:var(--color-brand-primary);border-bottom-color:var(--color-brand-primary)}
+.body{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.seg{display:flex;background:var(--color-surface-card);border:2px solid var(--color-border-strong);border-radius:var(--radius-md);overflow:hidden}
+.seg a{flex:1;min-height:48px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--color-text-primary);text-decoration:none;font-weight:600;font-size:15px}
+.seg a[aria-current="page"]{background:var(--color-brand-primary-subtle);color:var(--color-brand-primary)}
+.bulk{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;background:var(--color-surface-card);border:2px solid var(--color-brand-primary);border-radius:var(--radius-md);padding:var(--space-2) var(--space-3)}
+.card{background:var(--color-surface-card);border-radius:var(--radius-lg);box-shadow:var(--elevation-1);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)}
+.card--selected{outline:2px solid var(--color-brand-primary)}
+.check{display:flex;align-items:center;gap:var(--space-3);min-height:48px}
+.box{width:24px;height:24px;border:2px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-surface-card);flex:none;display:flex;align-items:center;justify-content:center}
+.box--on{background:var(--color-brand-primary);border-color:var(--color-brand-primary);color:#fff}
+.name{font-weight:600}
+.quote{border-left:3px solid var(--color-border-subtle);padding:0 var(--space-3);margin:0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:48px;padding:0 var(--space-4);border-radius:var(--radius-md);font:600 17px/24px var(--font-family-base);border:2px solid transparent;text-decoration:none}
+.btn--primary{background:var(--color-brand-primary);color:#fff}
+.btn--secondary{background:var(--color-surface-card);color:var(--color-brand-primary);border-color:var(--color-border-strong)}
+.btn--tertiary{background:transparent;color:var(--color-brand-primary);text-decoration:underline;padding:0 var(--space-2)}
+.btn--danger{background:var(--color-status-danger);color:#fff}
+.btn--full{width:100%}
+.btn:focus-visible,.iconbtn:focus-visible,a:focus-visible{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.focus{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.scrim{position:absolute;inset:0;background:var(--color-surface-scrim);display:flex;align-items:flex-end}
+.sheet{background:var(--color-surface-card);width:100%;border-radius:var(--radius-lg) var(--radius-lg) 0 0;box-shadow:var(--elevation-3);padding:var(--space-6) var(--space-4) calc(var(--space-6) + 8px);display:flex;flex-direction:column;gap:var(--space-3)}
+.sheet h2{font-size:20px;line-height:26px;margin:0}
+.sheet ul{margin:0;padding-left:20px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M18 13.5a7 7 0 0 1 4 6.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></symbol>
+  <symbol id="i-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></symbol>
+</defs></svg>
+
+<div class="canvas">
+
+<div>
+<p class="frame-label">Leader: Members tab, Requests (2 of 3 selected)</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button><span class="t">Desert Loop (sample)</span></header>
+  <div class="header">
+    <div class="row"><span class="badge badge--leader"><svg class="icon icon--sm"><use href="#i-users"/></svg>Leader</span></div>
+    <button class="iconbtn" aria-label="Trip settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+  </div>
+  <nav class="tabs" aria-label="Trip sections">
+    <a class="tab" href="#">Map</a><a class="tab" href="#">Timeline</a><a class="tab" href="#">Bikes</a>
+    <a class="tab" aria-current="page" href="#">Members <span class="badge badge--count" aria-label="3 pending requests">3</span></a>
+  </nav>
+  <div class="body">
+    <nav class="seg" aria-label="Members views"><a aria-current="page" href="#">Requests 3</a><a href="#">Members</a><a href="#">Blocked</a></nav>
+    <p class="meta">Approve people you know are riding. Approved riders can add stops and photos, and see the trip live.</p>
+    <div class="bulk" role="region" aria-label="Bulk actions"><strong style="flex:1">2 selected</strong><button class="btn btn--primary">Approve 2</button><button class="btn btn--secondary">Reject 2</button></div>
+
+    <article class="card card--selected">
+      <div class="row" style="justify-content:space-between">
+        <label class="check"><span class="box box--on"><svg class="icon icon--sm"><use href="#i-tick"/></svg></span><span class="name">Alex</span></label>
+        <button class="iconbtn" aria-label="More options for Alex"><svg class="icon"><use href="#i-more"/></svg></button>
+      </div>
+      <p class="meta">Requested 2 hours ago</p>
+      <p class="quote">Riding the red adventure bike with Sam.</p>
+      <div class="row"><button class="btn btn--primary">Approve</button><button class="btn btn--secondary">Reject</button></div>
+    </article>
+
+    <article class="card card--selected">
+      <div class="row" style="justify-content:space-between">
+        <label class="check"><span class="box box--on"><svg class="icon icon--sm"><use href="#i-tick"/></svg></span><span class="name">Jo</span></label>
+        <button class="iconbtn" aria-label="More options for Jo"><svg class="icon"><use href="#i-more"/></svg></button>
+      </div>
+      <p class="meta">Requested 2 hours ago</p>
+      <div class="row"><span class="badge badge--legacy">Via old rider link</span></div>
+      <div class="row"><button class="btn btn--primary">Approve</button><button class="btn btn--secondary">Reject</button></div>
+    </article>
+  </div>
+</div>
+</div>
+
+<div>
+<p class="frame-label">Reject and block: confirm (bottom sheet on phone)</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button><span class="t">Desert Loop (sample)</span></header>
+  <div class="body">
+    <article class="card">
+      <span class="name">Kim</span><p class="meta">Requested yesterday</p>
+    </article>
+  </div>
+  <div class="scrim">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dlg-t">
+      <h2 id="dlg-t">Reject and block Kim?</h2>
+      <ul>
+        <li>Kim can't ask to join this trip again until a leader unblocks them.</li>
+        <li>You can unblock Kim from Members → Blocked.</li>
+      </ul>
+      <button class="btn btn--danger btn--full">Reject and block</button>
+      <button class="btn btn--secondary btn--full focus">Cancel</button>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mockup: Sign up + recovery code (docs/design/screens/signup.md)</title>
+<!-- Illustration only. The recovery code below is a fake sample, not a real format guarantee. No external requests. -->
+<style>
+:root{
+  --color-brand-primary:#1f5c40;--color-brand-primary-subtle:#e3efe8;--color-brand-on-primary:#ffffff;
+  --color-surface-page:#f4f6f3;--color-surface-card:#ffffff;--color-surface-sunken:#eceeeb;
+  --color-text-primary:#17201b;--color-text-muted:#4d5a52;
+  --color-border-strong:#6b776f;--color-border-subtle:#d5dbd6;
+  --color-status-danger:#b3261e;--color-control-disabled-bg:#e4e8e5;--color-text-disabled:#5f6b64;
+  --color-focus-ring:#1d4ed8;
+  --font-family-base:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --font-family-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;
+  --elevation-2:0 4px 12px rgba(23,32,27,.16);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:var(--space-6);background:var(--color-border-subtle);font-family:var(--font-family-base);color:var(--color-text-primary);font-size:17px;line-height:24px}
+.canvas{display:flex;gap:var(--space-8);flex-wrap:wrap;align-items:flex-start}
+.frame-label{font-size:15px;font-weight:600;margin:0 0 var(--space-2)}
+.frame{width:390px;min-height:844px;background:var(--color-surface-page);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--elevation-2)}
+.icon{width:24px;height:24px;flex:none}
+.topbar{height:56px;display:flex;align-items:center;padding:0 var(--space-2);background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.iconbtn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--color-text-primary);border-radius:var(--radius-md)}
+.form{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
+.h1{font-size:24px;line-height:30px;font-weight:700;margin:0}
+.p{margin:0}
+.field{display:flex;flex-direction:column;gap:var(--space-2)}
+.label{font-weight:600}
+.helper{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.input{min-height:48px;border:2px solid var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-surface-card);padding:0 var(--space-3);font:17px/24px var(--font-family-base);color:var(--color-text-primary);width:100%}
+.input-wrap{position:relative}
+.input-wrap .input{padding-right:52px}
+.input-wrap .iconbtn{position:absolute;right:0;top:0}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:48px;padding:0 var(--space-4);border-radius:var(--radius-md);font:600 17px/24px var(--font-family-base);border:2px solid transparent;text-decoration:none}
+.btn--primary{background:var(--color-brand-primary);color:var(--color-brand-on-primary)}
+.btn--secondary{background:var(--color-surface-card);color:var(--color-brand-primary);border-color:var(--color-border-strong)}
+.btn--tertiary{background:transparent;color:var(--color-brand-primary);text-decoration:underline;padding:0 var(--space-2)}
+.btn--disabled{background:var(--color-control-disabled-bg);color:var(--color-text-disabled)}
+.btn--lg{min-height:56px}.btn--full{width:100%}
+.btn:focus-visible,.iconbtn:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.notice{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);background:var(--color-brand-primary-subtle);align-items:flex-start}
+.notice p{margin:0}
+.code{background:var(--color-surface-sunken);border-radius:var(--radius-md);padding:var(--space-4);font:600 20px/28px var(--font-family-mono);letter-spacing:.06em;word-spacing:.3em;text-align:center;user-select:all}
+.row{display:flex;gap:var(--space-2);flex-wrap:wrap;align-items:center}
+.check{display:flex;align-items:center;gap:var(--space-3);min-height:48px}
+.box{width:24px;height:24px;border:2px solid var(--color-border-strong);border-radius:var(--radius-sm);background:var(--color-surface-card);flex:none}
+.link{color:var(--color-brand-primary);text-decoration:underline}
+ul.tips{margin:0;padding-left:20px;font-size:15px;line-height:20px;color:var(--color-text-muted)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+</defs></svg>
+
+<div class="canvas">
+
+<div>
+<p class="frame-label">Step 1: Create an account</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Back"><svg class="icon"><use href="#i-back"/></svg></button></header>
+  <form class="form" onsubmit="return false">
+    <h1 class="h1">Create an account</h1>
+    <p class="p">An account lets you add stops and photos to a trip once a leader approves you. You don't need one to follow public trips.</p>
+    <div class="field">
+      <label class="label" for="dn">Display name</label>
+      <p class="helper" id="dn-h">Shown on photos you add and to trip leaders.</p>
+      <input class="input" id="dn" autocomplete="nickname" aria-describedby="dn-h" value="Sam">
+    </div>
+    <div class="field">
+      <label class="label" for="un">Username</label>
+      <p class="helper" id="un-h">Private. Only used to sign in.</p>
+      <input class="input" id="un" autocomplete="username" autocapitalize="none" spellcheck="false" aria-describedby="un-h" value="sample-rider-07">
+    </div>
+    <div class="field">
+      <label class="label" for="pw">Password</label>
+      <p class="helper" id="pw-h">15 to 128 characters. A short sentence you'll remember works well.</p>
+      <div class="input-wrap">
+        <input class="input" id="pw" type="password" autocomplete="new-password" aria-describedby="pw-h pw-c" value="••••••••••">
+        <button class="iconbtn" type="button" aria-label="Show password" aria-pressed="false"><svg class="icon"><use href="#i-eye"/></svg></button>
+      </div>
+      <p class="helper" id="pw-c" aria-live="polite">5 more characters needed</p>
+    </div>
+    <button class="btn btn--primary btn--lg btn--full" type="submit">Create account</button>
+    <a class="link" href="#" style="min-height:48px;display:flex;align-items:center">Already have an account? Sign in</a>
+  </form>
+</div>
+</div>
+
+<div>
+<p class="frame-label">Step 2: Save your recovery code (shown once)</p>
+<div class="frame">
+  <header class="topbar"></header>
+  <div class="form">
+    <div class="notice" role="status"><svg class="icon" style="color:#1f5c40"><use href="#i-check"/></svg><p>Account created. You're signed in as <strong>Sam</strong>.</p></div>
+    <h1 class="h1">Save your recovery code</h1>
+    <p class="p">If you forget your password, this code is the only way back in. We can't show it again.</p>
+    <div class="code" aria-label="Recovery code">SAMP LE00 CODE 4X7Q 9KDM 2RTW</div>
+    <div class="row">
+      <button class="btn btn--secondary" type="button">Copy code</button>
+      <button class="btn btn--tertiary" type="button"><svg class="icon"><use href="#i-download"/></svg>Download as text file</button>
+    </div>
+    <ul class="tips"><li>Save it in your password manager.</li><li>Or write it down and keep it with your licence.</li></ul>
+    <label class="check"><span class="box" aria-hidden="true"></span><span>I've saved my recovery code</span></label>
+    <p class="helper">Tick the box once you've saved the code.</p>
+    <button class="btn btn--disabled btn--lg btn--full" type="button" aria-disabled="true">Continue</button>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>
