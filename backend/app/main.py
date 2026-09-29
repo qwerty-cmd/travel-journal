@@ -19,9 +19,9 @@ app.include_router(api_router)
 
 @app.get(
     "/api/health",
-    description="Intended as the liveness probe for the container host — nothing is wired "
-    "to it yet (no `HEALTHCHECK`, no `docker compose` healthcheck on the `api` service). "
-    "Answers `200` with a fixed `status: ok` body as soon as the ASGI app is accepting "
+    description="Liveness probe for the container: the image's `HEALTHCHECK` and the "
+    "`docker compose` `api` healthcheck poll it (Azure Container Apps ignores `HEALTHCHECK` "
+    "and needs its own probe declared in `infra/`). Answers `200` with a fixed `status: ok` body as soon as the ASGI app is accepting "
     "requests; it touches neither Postgres nor object storage, so it reports that the "
     "process is up, not that the trip data is reachable.",
 )

@@ -22,6 +22,21 @@ services:
       # Anonymous volume masks the host's Windows-shaped .venv (Scripts/, no
       # bin/) so the image's Linux venv stays visible. Must follow the bind mount.
       - /app/backend/.venv
+    # Same probe as the Dockerfile HEALTHCHECK, on the faster local cadence the
+    # other services use. The venv path is the image's (the anonymous volume
+    # above keeps it visible under the bind mount).
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/backend/.venv/bin/python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   postgres:
     image: postgres:16-alpine
