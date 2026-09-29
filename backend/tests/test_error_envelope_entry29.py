@@ -13,6 +13,7 @@ from __future__ import annotations
 from http import HTTPStatus
 
 import pytest
+from conftest import make_test_client
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -29,7 +30,7 @@ def _client_raising(error: ApiError) -> TestClient:
     async def probe() -> None:
         raise error
 
-    return TestClient(app)
+    return make_test_client(app)
 
 
 def test_error_code_has_exactly_eight_members() -> None:

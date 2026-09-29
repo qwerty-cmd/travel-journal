@@ -52,9 +52,9 @@ from pathlib import Path as FilePath
 from typing import Annotated, Any, get_args
 
 import pytest
-from conftest import SeededTrip
+from conftest import SeededTrip, make_async_client
 from fastapi import Depends, FastAPI, params
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.errors import ApiError, register_exception_handlers
@@ -129,8 +129,7 @@ async def probe_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClien
 
     app.dependency_overrides[get_session] = session_override
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://probe") as client:
+    async with make_async_client(app) as client:
         yield client
 
 

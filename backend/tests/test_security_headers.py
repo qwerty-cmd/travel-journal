@@ -20,7 +20,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from fastapi.testclient import TestClient
+from conftest import make_test_client
 
 import app.main
 from app.core.config import get_settings
@@ -58,20 +58,20 @@ def spa(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]
 
 
 def test_api_route_has_security_headers() -> None:
-    response = TestClient(app.main.app).get("/api/health")
+    response = make_test_client(app.main.app).get("/api/health")
     assert response.status_code == 200
     assert_security_headers(response)
 
 
 def test_api_error_envelope_has_security_headers() -> None:
     """Responses built by an exception handler (here the unknown-/api 404) too."""
-    response = TestClient(app.main.app).get("/api/definitely-not-a-route")
+    response = make_test_client(app.main.app).get("/api/definitely-not-a-route")
     assert response.status_code == 404
     assert_security_headers(response)
 
 
 def test_spa_fallback_has_security_headers(spa: ModuleType) -> None:
-    response = TestClient(spa.app).get("/t/some-trip-slug/stops")
+    response = make_test_client(spa.app).get("/t/some-trip-slug/stops")
     assert response.status_code == 200
     assert "<title>SPA</title>" in response.text
     assert_security_headers(response)
@@ -79,7 +79,7 @@ def test_spa_fallback_has_security_headers(spa: ModuleType) -> None:
 
 @pytest.mark.parametrize("path", ["/assets/app.js", "/sw.js"])
 def test_static_file_has_security_headers(spa: ModuleType, path: str) -> None:
-    response = TestClient(spa.app).get(path)
+    response = make_test_client(spa.app).get(path)
     assert response.status_code == 200
     assert "html" not in response.headers["content-type"]
     assert_security_headers(response)
@@ -103,7 +103,7 @@ def test_unhandled_exception_500_has_security_headers() -> None:
     def boom() -> None:
         raise RuntimeError("postgresql://user:secret@db-host/bike_trip")
 
-    response = TestClient(throwaway, raise_server_exceptions=False).get("/api/boom")
+    response = make_test_client(throwaway, raise_server_exceptions=False).get("/api/boom")
     assert response.status_code == 500
     assert response.json() == {
         "error": {"code": "INTERNAL_ERROR", "message": INTERNAL_ERROR_MESSAGE}

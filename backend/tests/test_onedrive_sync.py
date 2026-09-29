@@ -151,6 +151,7 @@ class FakeGraph:
         return [uploaded_filename(r) for r in self.uploads]
 
     def client(self) -> httpx.AsyncClient:
+        # A mock Microsoft Graph, not our app: deliberately not the app-client factory.
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handler))
 
 

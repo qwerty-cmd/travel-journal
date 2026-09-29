@@ -54,9 +54,9 @@ from http import HTTPStatus
 from typing import Any, get_args
 
 import pytest
-from conftest import SeededBike, SeededTrip
+from conftest import SeededBike, SeededTrip, make_async_client
 from fastapi import params
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -106,8 +106,7 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        async with make_async_client(application) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)

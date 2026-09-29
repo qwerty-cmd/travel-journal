@@ -37,8 +37,8 @@ from uuid import uuid4
 import httpx
 import pytest
 from botocore.exceptions import ClientError
-from conftest import SeededTrip
-from httpx import ASGITransport, AsyncClient
+from conftest import SeededTrip, make_async_client
+from httpx import AsyncClient
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -70,8 +70,9 @@ async def _app_client(
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application, raise_app_exceptions=raise_app_exceptions)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        async with make_async_client(
+            application, raise_app_exceptions=raise_app_exceptions
+        ) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
@@ -545,7 +546,8 @@ async def assert_presigned_get(url: str, key: str, content: bytes) -> None:
     assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
     assert query["X-Amz-Expires"] == ["3600"]
 
-    # Straight to the object store, not through the agent proxy.
+    # Straight to the object store, not through the agent proxy. Not our app, so
+    # not the shared app-client factory.
     async with httpx.AsyncClient(trust_env=False) as s3_http:
         fetched = await s3_http.get(url)
     assert fetched.status_code == HTTPStatus.OK, fetched.text

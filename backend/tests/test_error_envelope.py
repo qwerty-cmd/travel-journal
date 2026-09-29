@@ -38,10 +38,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import make_async_client, make_test_client
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError, StatementError
@@ -159,7 +159,7 @@ def build_probe_app() -> FastAPI:
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     """Client that raises server exceptions — the default, for everything but the 500 test."""
-    return TestClient(build_probe_app())
+    return make_test_client(build_probe_app())
 
 
 @pytest.fixture(scope="module")
@@ -171,7 +171,7 @@ def quiet_client() -> TestClient:
     the response a real HTTP client receives — and the response is the thing
     under test.
     """
-    return TestClient(build_probe_app(), raise_server_exceptions=False)
+    return make_test_client(build_probe_app(), raise_server_exceptions=False)
 
 
 def assert_envelope(response: Any) -> ErrorDetail:
@@ -866,10 +866,9 @@ async def test_a_bound_slug_is_not_rendered_into_the_500_traceback(
                 raised.append(exc)
                 raise
 
-    transport = ASGITransport(app=probe, raise_app_exceptions=False)
     try:
         with caplog.at_level("ERROR", logger="app.core.errors"):
-            async with AsyncClient(transport=transport, base_url="http://probe") as probe_client:
+            async with make_async_client(probe, raise_app_exceptions=False) as probe_client:
                 response = await probe_client.get(SLUG_PATH.format(slug=SLUG_CANARY))
     finally:
         await db.engine.dispose()
@@ -987,7 +986,7 @@ def test_real_app_unknown_api_path_is_an_envelope() -> None:
     """
     import app.main
 
-    client = TestClient(app.main.app)
+    client = make_test_client(app.main.app)
 
     for method in ("GET", "POST", "DELETE"):
         response = client.request(method, "/api/unknown-path")
@@ -1035,7 +1034,7 @@ def spa_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Test
     ), "the SPA catch-all is not registered — the bug under test would be unreachable"
 
     try:
-        yield TestClient(spa_module.app)
+        yield make_test_client(spa_module.app)
     finally:
         monkeypatch.undo()
         get_settings.cache_clear()
@@ -1323,7 +1322,7 @@ def router_probe_client() -> TestClient:
     the production handler rather than a copy. Rebuilding costs microseconds and
     removes the ordering dependency.
     """
-    return TestClient(build_router_probe_app())
+    return make_test_client(build_router_probe_app())
 
 
 def allow_verbs(response: Any) -> set[str]:
@@ -1404,7 +1403,7 @@ def test_real_app_wrong_method_on_a_router_registered_route_is_405() -> None:
     """
     import app.main
 
-    response = TestClient(app.main.app).post("/api/trips/whatever")
+    response = make_test_client(app.main.app).post("/api/trips/whatever")
 
     assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
     assert assert_envelope(response).code is ErrorCode.METHOD_NOT_ALLOWED

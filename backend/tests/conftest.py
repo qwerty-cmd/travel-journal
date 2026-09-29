@@ -11,13 +11,16 @@ docker-compose ``postgres`` service (or any ``DATABASE_URL``) to be up.
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from starlette.types import ASGIApp
 
 from app.core.config import get_settings
 from app.data import tables
@@ -27,6 +30,61 @@ from app.data.migrate import run_migrations
 # backend/. `import app` itself comes from pyproject's `pythonpath`; this is kept
 # for tests that launch a subprocess from the backend directory.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# Every HTTP client a test points at one of our apps looks like the deployed
+# SPA calling its own API: HTTPS (so ``Secure`` cookies round-trip) and a
+# same-origin ``Origin`` header (so the CSRF check passes as it does for the
+# real frontend). Build clients through the two factories below, never by hand
+# -- a hand-built ``http://`` client with no ``Origin`` is a cross-site request
+# as far as the CSRF middleware is concerned.
+TEST_BASE_URL = "https://testserver"
+TEST_ORIGIN = "https://testserver"
+
+
+def _client_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    """The default same-origin headers, with any per-call overrides on top."""
+    return {"Origin": TEST_ORIGIN, **(headers or {})}
+
+
+def make_async_client(
+    asgi_app: ASGIApp,
+    *,
+    base_url: str = TEST_BASE_URL,
+    headers: Mapping[str, str] | None = None,
+    raise_app_exceptions: bool = True,
+) -> AsyncClient:
+    """
+    An ``httpx.AsyncClient`` talking to ``asgi_app`` in-process.
+
+    Use as ``async with make_async_client(app) as client:``. ``base_url`` and
+    ``headers`` (merged over the default ``Origin``) are overridable for a test
+    that deliberately probes a cross-origin or plain-HTTP request.
+    ``raise_app_exceptions=False`` returns the 500 a real client would see
+    instead of re-raising the app's exception into the test.
+    """
+    transport = ASGITransport(app=asgi_app, raise_app_exceptions=raise_app_exceptions)
+    return AsyncClient(transport=transport, base_url=base_url, headers=_client_headers(headers))
+
+
+def make_test_client(
+    asgi_app: ASGIApp,
+    *,
+    base_url: str = TEST_BASE_URL,
+    headers: Mapping[str, str] | None = None,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
+    """
+    The synchronous counterpart of ``make_async_client``: a Starlette ``TestClient``.
+
+    Same defaults and overrides; ``raise_server_exceptions=False`` returns the
+    500 instead of re-raising.
+    """
+    return TestClient(
+        asgi_app,
+        base_url=base_url,
+        headers=_client_headers(headers),
+        raise_server_exceptions=raise_server_exceptions,
+    )
 
 
 @pytest.fixture(scope="session")

@@ -189,5 +189,6 @@ async def test_photo_repository_returns_urls_on_the_public_host(
         [photo] = await photos_repo.list_by_stop(session, stop_id)
 
     assert urlsplit(photo.url).netloc == "localhost:9000"
+    # Fetches the presigned URL from the object store, not our app: no app-client factory.
     async with httpx.AsyncClient() as http:
         assert (await http.get(photo.url)).content == body
