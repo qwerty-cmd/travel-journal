@@ -2076,6 +2076,8 @@ DONE 2026-09-29 (docs).
 DONE 2026-09-29 (orchestrator). Checked against `CLAUDE.md` on disk: Stack has an "Identity & access" line (local accounts in Postgres, argon2id via `argon2-cffi>=25.1,<26`, one-time recovery code, `__Host-btj_session` cookie with only its SHA-256 stored, no identity provider, writes authorised by an active `trip_members` row, slugs are locators, cites Entry 29). The Frontend line gains the styling approach and cites Entry 30. Conventions say backend tests use `https://testserver` and send a same-origin `Origin`. The testing-rigor line reads "access control (incl. authentication/sessions/CSRF)". The architecture-invariants list is unchanged. The "no IdP" note sits in the Stack line, not under the invariants heading; that meets the AC's intent, but its wording is not exact.
 
 ## t-am-contract-models
+
+DONE 2026-09-29. QA PASS (9/9 AC, 17/17 mutations caught). Backend 842, frontend 385. Field lists decided by dev + orchestrator rulings X3/X4; RecoveryCodeIssuedOut = {account: MeOut, recoveryCode} (route tasks confirm).
 **Goal.** Machine-readable contract only. No routes.
 **Scope.** `models/common.py`, `models/account.py`, `models/join_request.py`, `models/member.py`, `models/trip.py` (new classes only; `TripOut` is **not** changed yet), `core/errors.py`, `api/responses.py`, tests, `frontend/openapi.json`, `frontend/src/api/gen/`.
 **AC.**
@@ -2159,6 +2161,8 @@ cd backend && uv run pytest tests/test_csrf.py && uv run pytest && uv run ruff c
 ```
 
 ## t-am-identity-core
+
+ADDED AC (from t-am-contract-models QA): (1) presented passwords — signin `password`, `currentPassword`, rotation `password` — are NFKC-normalised before verify, same as new passwords (else decomposed/fullwidth input can never sign in); add the sentence to api-contract.md Sessions. (2) presented credentials get a generous `max_length=1024` (not 128 — NFKC can shorten, and a far cap leaks no plausibility signal). (3) `ApiError.__init__` requires `WWW-Authenticate` for 401 and `Retry-After` for 429 (or extend test_bare_409_raise_audit.py to 401/429) so neither can go out without its header.
 **Goal.** Password and session primitives, plus the `require_session` dependency. No auth routes. CSRF moved to `t-am-csrf`, and the conftest client moved to `t-am-test-client-harness`.
 **Scope.**
 - `core/passwords.py`, `core/sessions.py`
@@ -2188,6 +2192,8 @@ cd backend && uv sync && uv run pytest tests/test_passwords.py tests/test_sessio
 ```
 
 ## t-am-auth-sessions
+
+ADDED AC (from t-am-contract-models QA): strip Pydantic's "Value error, " prefix from 422 messages (e.g. in `_format_validation_errors` for type `value_error`, or raise PydanticCustomError) — first custom ValueError validators are rider-facing on signup/recover.
 **Goal.** Signup, signin, signout and me, plus per-account lockout, exactly as in the contract. This task also restructures the route audit. The rework was moved here from `t-am-write-gate-legacy` (scrum change 4): `EXPECTED_GUARD` is keyed by HTTP method, so `GET /api/v2/auth/me` with `require_session` would fail the existing GET → `require_trip_access` rule.
 **Scope.** `api/routes/v2/auth.py` (new package `api/routes/v2/`), `api/routes/__init__.py`, the users and sessions repositories, `tests/test_route_dependency_audit.py`, tests, Kubb regen.
 **AC.**
@@ -2243,6 +2249,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 ```
 
 ## t-am-rate-limits
+
+ADDED AC (from t-am-contract-models QA): `ApiError.rate_limited` rounds a float wait UP to whole seconds (min 1) and rejects bool; Retry-After is always an integer string.
 **Goal.** In-process limits per the contract's bucket table.
 **Ordering (scrum change 5).** This task runs after `t-am-write-gate-legacy`. The `writes` bucket is keyed per user, and the legacy writes have no session until the write gate lands. Its blockers are the write gate and both auth tasks.
 **Scope.** `core/ratelimit.py`, `core/config.py` (`trusted_proxy_hops: int = 1`, with a description; **`.env.example` is not touched**), limiter dependencies on the existing routes, a new limiter audit test, Kubb regen.
@@ -2816,3 +2824,7 @@ ORDINARY DEBT, a gap found while scoping. A private trip created in the app retu
 
 ## t-am-display-name-edit
 ORDINARY DEBT, a gap found while scoping. No endpoint changes `displayName` after signup. Photos keep the name they were uploaded under. Not scoped.
+
+## t-am-json-body-limit
+
+ORDINARY DEBT (from t-am-contract-models QA, 2026-09-29). No request-body size limit exists for JSON routes; a 1 MB string field is parsed and held in memory on any JSON route. Promotion trigger: an abuse incident or a public-write surface beyond the auth routes. Fix: a small ASGI middleware refusing Content-Length > 64 KiB on non-multipart /api bodies with 422.
