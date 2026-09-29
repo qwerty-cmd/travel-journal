@@ -176,7 +176,7 @@
 
     { "id": "t-security-headers-on-500", "storyId": "s-deploy-cutover", "title": "An unhandled-exception 500 from Starlette's outermost error layer goes out without the four security headers", "status": "done", "agent": "dev", "blockers": [], "gate": "ordinary" },
     { "id": "t-stop-rider-offset", "storyId": "s-real-device-testing", "title": "Store the rider's UTC offset (arrived_offset_minutes / taken_offset_minutes) so rider-local time can be shown — decision-log Entry 26 option B", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
-    { "id": "t-queue-lock-path-coverage", "storyId": "s-real-device-testing", "title": "The core offline-queue suites only exercise the no-lock fallback — the navigator.locks drain-lock path has no automated coverage", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
+    { "id": "t-queue-lock-path-coverage", "storyId": "s-real-device-testing", "title": "The core offline-queue suites only exercise the no-lock fallback — the navigator.locks drain-lock path has no automated coverage", "status": "done", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
     { "id": "t-image-digest-pinning", "storyId": "s-deploy-cutover", "title": "compose's minio and minio/mc images are :latest — pin to a verified release tag or digest", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-owner-compose-smoke-test", "storyId": "s-deploy-cutover", "title": "Owner runs the production image locally against compose's Postgres and MinIO (runbook §3 smoke test)", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },

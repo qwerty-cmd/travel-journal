@@ -1913,6 +1913,8 @@ TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the architect's timezone ruling, 
 
 ## t-queue-lock-path-coverage
 
+DONE 2026-09-29 (owner: fix everything agent-fixable). `queue.test.tsx` and `queuePhotos.test.tsx` now run under `describe.each(LOCK_MODES)`: a Web Locks stand-in (shared `offline/testLocks.ts`, extracted from `queueTabs.test.tsx`) and no `navigator.locks`. Per-mode assertions stop the parametrisation collapsing: lock mode requires every send to happen under the held drain lock; fallback mode requires no `navigator.locks`. Removing the stand-in, or making `withDrainLock` ignore locks, fails 53 lock-mode tests. Frontend suite 315 → 385.
+
 ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `3d07c86` review. Do not implement on sight.
 - jsdom has no `navigator.locks`, so the core queue suites run only the no-lock fallback (each tab's in-memory guard). The Web Locks path, which is what real browsers run, has no automated test: acquiring `btj-queue-drain`, a second tab not draining, the lock being released after a timeout.
 - Why ordinary: the fallback is tested and the lock path is small. Real-device test day exercises it in a real browser.

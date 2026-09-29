@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import type { StopCreate } from "../api/gen/types/StopCreate";
+import { FakeLocks, setNavigatorLocks } from "./testLocks";
 
 // Cross-tab queue: two tabs are two module instances over one fake IndexedDB,
 // joined by an in-memory Web Locks and BroadcastChannel (jsdom has neither;
@@ -25,21 +26,6 @@ const setImmediate = (globalThis as unknown as { setImmediate: (f: () => void) =
 const flush = async (n = 60) => {
   for (let i = 0; i < n; i++) await new Promise<void>((r) => setImmediate(r));
 };
-
-// ---- in-memory Web Locks: exclusive, ifAvailable only ----
-class FakeLocks {
-  held = new Set<string>();
-  async request(name: string, opts: LockOptions, cb: (lock: Lock | null) => Promise<unknown>) {
-    if (!opts.ifAvailable) throw new Error("fake supports ifAvailable only");
-    if (this.held.has(name)) return cb(null);
-    this.held.add(name);
-    try {
-      return await cb({ name, mode: "exclusive" } as Lock);
-    } finally {
-      this.held.delete(name);
-    }
-  }
-}
 
 // ---- in-memory BroadcastChannel: async delivery to every other instance ----
 let channels: FakeChannel[];
@@ -106,7 +92,7 @@ beforeEach(() => {
   channels = [];
   vi.stubGlobal("BroadcastChannel", FakeChannel);
   locks = new FakeLocks();
-  Object.defineProperty(navigator, "locks", { configurable: true, value: locks });
+  setNavigatorLocks(locks);
   posts = [];
   handler = created;
   vi.stubGlobal(
@@ -130,7 +116,7 @@ afterEach(async () => {
     }
   }
   channels = [];
-  Object.defineProperty(navigator, "locks", { configurable: true, value: undefined });
+  setNavigatorLocks(undefined);
   vi.clearAllTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
