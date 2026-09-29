@@ -140,7 +140,7 @@ Rebuilt from `progress.json` on 2026-09-29. Every row below is `not_started`. Th
 
 **Ordinary debt.** No trigger; do it when convenient.
 - `t-queue-backoff-tab-handoff`: if the tab holding the drain lock closes while waiting out a retry backoff, a hidden tab doesn't retry until its next trigger (becoming visible, going online, or a new enqueue). Delayed, never lost.
-- `t-image-digest-pinning`: compose's `minio` and `minio/mc` images are `:latest`, because a known-good release tag could not be verified from the agent environment. Local dev only; production uses neither.
+- `t-image-digest-pinning`: compose's `minio` image is `:latest`, because a known-good release tag could not be verified from the agent environment. Local dev only; production uses neither.
 
 ## Deploy and operations
 

@@ -1,5 +1,5 @@
 # MinIO root credentials, shared by the minio server and the minio-init
-# one-shot so they cannot drift apart. Local-only throwaway values.
+# one-shot (bucket creation) so they cannot drift apart. Local-only throwaway values.
 x-minio-credentials: &minio-credentials
   MINIO_ROOT_USER: minioadmin
   MINIO_ROOT_PASSWORD: minioadmin
@@ -115,24 +115,42 @@ services:
       retries: 5
 
   # One-shot: creates the api's bucket in MinIO, then exits 0. The api waits for
-  # it (service_completed_successfully). The bucket name comes from the same
-  # backend/.env the api reads, so the two cannot disagree. --ignore-existing
-  # makes re-runs against the persisted minio-data volume a no-op.
+  # it (service_completed_successfully). Runs the api's own image with boto3, not
+  # the minio/mc image: minio/mc is gone from Docker Hub ("pull access denied"),
+  # and building from the same context adds no new image to pull. The bucket name
+  # comes from the same backend/.env the api reads, so the two cannot disagree;
+  # an existing bucket (persisted minio-data volume) is left alone.
   minio-init:
-    image: minio/mc:latest  # unpinned for the same reason as minio above
+    build:
+      context: .
+      dockerfile: Dockerfile
     depends_on:
       minio:
         condition: service_healthy
     env_file: backend/.env
     environment: *minio-credentials
-    entrypoint: ["/bin/sh", "-c"]
-    # $$ defers expansion to the container shell (compose would otherwise
-    # interpolate from the host environment, where these are unset).
     command:
-      - >-
-        : "$${S3_BUCKET_NAME:?S3_BUCKET_NAME must be set in backend/.env}" &&
-        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
-        mc mb --ignore-existing "local/$$S3_BUCKET_NAME"
+      - /app/backend/.venv/bin/python
+      - -c
+      - |
+        import os, sys
+        import boto3
+        from botocore.exceptions import ClientError
+
+        bucket = os.environ.get("S3_BUCKET_NAME") or sys.exit("S3_BUCKET_NAME must be set in backend/.env")
+        s3 = boto3.client(
+            "s3",
+            endpoint_url="http://minio:9000",
+            aws_access_key_id=os.environ["MINIO_ROOT_USER"],
+            aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"],
+            region_name=os.environ.get("S3_REGION") or "us-east-1",
+        )
+        try:
+            s3.head_bucket(Bucket=bucket)
+            print(f"bucket {bucket} already exists")
+        except ClientError:
+            s3.create_bucket(Bucket=bucket)
+            print(f"created bucket {bucket}")
     restart: "no"
 
 volumes:
