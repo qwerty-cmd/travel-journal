@@ -129,6 +129,11 @@ async def upload_photo(
     session: SessionDep,
     stop_id: str,
     response: Response,
+    # Inline `Form(...)` params on purpose; don't fold them into a Pydantic form model.
+    # A model carrying `UploadFile` as a field does bind on FastAPI 0.141.1, but the
+    # OpenAPI document then declares `application/x-www-form-urlencoded`, not the
+    # `multipart/form-data` the contract promises, and the Kubb client follows it.
+    # Decision-log Entry 24 (won't-fix) and Entry 16.
     id: Annotated[
         str,
         Form(

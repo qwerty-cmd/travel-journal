@@ -737,10 +737,11 @@ class TestTakenAtIsOffsetAware:
         zone, so a host-local re-resolution cannot coincidentally land on the right
         answer.
 
-        Compared as datetimes on purpose. The ``201`` body echoes the offset the
-        device sent while the column and every read-back are UTC, so one correct
-        instant has two spellings and a string comparison would fail on a
-        difference that is not a defect.
+        Compared as datetimes on purpose. The ``201`` body comes from the stored
+        row (``t-photo-insert-echoes-argument``), so it is UTC like the column and
+        every read-back, while ``submitted`` carries ``+09:30``. The instants match
+        and the spellings don't, so a string comparison would fail on a difference
+        that is not a defect.
         """
         trip = seeded_trips[0]
         stop = seeded_stops[0]

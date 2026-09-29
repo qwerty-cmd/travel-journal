@@ -36,13 +36,16 @@ empirically disproves another.
 | 13 | The one backlog item the gate promoted — Gate 2 vs "the slug is already in the access log" | `core/errors.py`, `progress.json` | `ba` classified `t-error-log-parameter-redaction` CURRENTLY OBSERVABLE (handler and route both run today; qa *observed* the slug in the rendered traceback). The note's own argument — marginal disclosure is zero, so ORDINARY DEBT — lost: Gate 2 tests whether a runtime path is current, not how severe it is. Orchestrator additionally found the task closes only **one of two** sinks; re-scoped, not re-classified |
 | 14 | A client-generated id that already exists under a *different* trip — the sixth `ErrorCode` | `models/common.py`, `core/errors.py`, `repositories/stops.py`, `api-contract.md` | `ba` escalated a second contract gap rather than inventing a code (Entry 6's rule, applied again); user ruled **`CONFLICT` / `409`**. Replay matches **`(parent, id)`**, never `id` alone, and the cross-parent branch is found **by a check, never a failed INSERT** (that renders `500` and the queue retries forever). Four readings rejected — the composite `(trip_id, id)` **primary key is rejected on cost, not correctness**: it cascades into `photos.stop_id` and the unbuilt photo-upload design. Entry 3 does **not** forbid `ON CONFLICT (id) DO NOTHING` here |
 | 15 | `StopCreate.arrivedAt` must be timezone-aware — a naive datetime is a `422` | `api-contract.md`, `models/stop.py` | **Architect ruling (user).** Supersedes an earlier scoping call that the description must *not* claim timezone-awareness *because nothing enforced it* — right about the gap, wrong about which side to close: enforce the claim rather than withdraw it. JSON Schema **cannot express** tz-awareness (`AwareDatetime` and a hand validator emit the same `format: date-time`), so Kubb types it `string` and this is **server-enforced only**. `VALIDATION_ERROR` is never-retry, so a naive value **loses the stop** instead of retrying it — accepted, because a stop silently filed at the wrong hour is unrecoverable. **The endpoint table does not change** — same `422` already on the row. The photo form's `takenAt` was explicitly **left open** here on an EXIF premise — **since ruled the same way by Entry 16, independently, after that premise was tested and failed**; do not cite this entry for it |
-| 16 | The photo form's `takenAt` must be timezone-aware — and `PhotoCreateForm` is deleted, not bound | `api-contract.md`, `routes/photos.py`, `models/photo.py` | Two losing arguments. (a) **The EXIF objection, disproved:** "`DateTimeOriginal` is naive by design so reject-naive may be unsatisfiable" — EXIF is never the wire source, the frontend composes the field and `getTimezoneOffset()` is always available. (b) **The gate classification was wrong:** filed TRIGGERED on "no route imports `PhotoCreateForm`" — true of the model, false of the behaviour, because `photos.py` re-declared `takenAt: datetime` inline. **"No route imports it" is not "no route implements it."** Measured: a naive value is resolved in the *host process's* zone by asyncpg, so the same upload stored `02:00Z` on a UTC+8 host and `10:00Z` in the container. Binding a form model was proven impossible on FastAPI 0.141.1 (`_should_embed_body_fields` returns `True` unconditionally past one body field), so the pre-authorised fallback shipped: model deleted, inline `Form(...)` params are the contract |
+| 16 | The photo form's `takenAt` must be timezone-aware — and `PhotoCreateForm` is deleted, not bound | `api-contract.md`, `routes/photos.py`, `models/photo.py` | Two losing arguments. (a) **The EXIF objection, disproved:** "`DateTimeOriginal` is naive by design so reject-naive may be unsatisfiable" — EXIF is never the wire source, the frontend composes the field and `getTimezoneOffset()` is always available. (b) **The gate classification was wrong:** filed TRIGGERED on "no route imports `PhotoCreateForm`" — true of the model, false of the behaviour, because `photos.py` re-declared `takenAt: datetime` inline. **"No route imports it" is not "no route implements it."** Measured: a naive value is resolved in the *host process's* zone by asyncpg, so the same upload stored `02:00Z` on a UTC+8 host and `10:00Z` in the container. Binding a form model was proven impossible on FastAPI 0.141.1 (`_should_embed_body_fields` returns `True` unconditionally past one body field), so the pre-authorised fallback shipped: model deleted, inline `Form(...)` params are the contract. **"Impossible" is too broad: see Entry 24** |
 | 17 | `ErrorEnvelope` in the OpenAPI document — the unreachable GET `422`, and the SPA catch-all | `api/responses.py`, `routes/*.py`, `main.py`, `api-contract.md` | Gate 3 item promoted before M3: its trigger (`s-stop-crud`) had fired and lapsed, and Kubb would have typed errors `ErrorEnvelope \| HTTPValidationError`. One constant (403/404/409/422; **405/500 never declared**), model from the constant, description from the route. **"Declare only reachable statuses" lost**: an undeclared `422` gets FastAPI's `HTTPValidationError`, so the four GETs declare an unreachable envelope `422` and deliberately differ from the contract table. The brief's "catch-alls out of scope" premise was disproved: the SPA fallback (registered only when `frontend/dist` exists) re-injected `HTTPValidationError` — `include_in_schema=False` added, qa mutant confirms |
 | 18 | M3 URL shape and first open: `/t/$slug`, and the paste-link screen at `/` | `frontend/src/routes/`, `vite.config.ts` (manifest), `docs/user-guide.md` | **Architect ruling (delegated by user, final).** Trip routes are `/t/$slug`. `/` redirects to localStorage `lastSlug`, or shows a one-field "paste your trip link" screen. Reason: an installed iOS web app has storage isolated from Safari and opens at `start_url` `/`, so `lastSlug` is empty on first launch. The same isolation applies to IndexedDB, so the user guide must say "capture from the installed app". The display-name prompt shows **only for `access === "rider"`**, which departs from the literal wording of spec §6.1. Rejected: `/$slug`, a per-trip dynamic manifest, and omitting `start_url`. **MEDIUM confidence on iOS `start_url`**, to verify on a real device in M4 |
 | 19 | M3 offline queue: one IndexedDB store drained FIFO from the page, with retry classification | `frontend/src/` (queue module), `api-contract.md` | **Architect ruling (delegated by user, final).** One auto-increment store holding `{kind, payload, blob?, attempts, lastError}`. A stop is always enqueued before its photos, so FIFO order replaces a dependency graph. The page drains the queue (**never SW Background Sync, which iOS lacks**) and stops at the first retryable failure, with backoff from 5s doubling to a 5min cap. Offline cold open works from TripOut persisted per slug and passed as `initialData`. Rejected: per-entity stores, Background Sync, and persisting the whole Query cache. The contract adds `403`/`404` as never-retry, treats no-envelope failures as retry, and keeps a failed item (blob included) until the rider dismisses it |
 | 20 | Photo upload is one idempotent request; the "resumable multipart" requirement is amended | `routes/photos.py`, `api-contract.md`, spec §4, `CLAUDE.md` Stack | **Architect ruling (delegated by user, final). Changes a sentence in CLAUDE.md's locked Stack section**, but not the technology (still S3), so it is flagged for the user's morning review. S3/R2 multipart parts must be ≥5 MiB except the last. A ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Spec §4's two lines cannot both hold, and compression wins. Resumability lives in the queue: the blob persists in IndexedDB, and a replay is `200` with no storage write, over a deterministic key. Rejected: presigned direct multipart and backend-proxied multipart (both still can't resume <5 MiB). **Supersedes** `t-photo-s3-multipart-upload`'s Gate 1 filing |
 | 21 | Write-PIN declined; the rider link stays the only write gate | spec §8, `offline/queue.ts`, `seed_trip.py`, `progress.json` | **Architect ruling (HIGH confidence, no escalation), flagged for the user's morning review because it closes spec §8's open item.** Spec calls the PIN optional everywhere. The rider slug is 256 random bits, so the only threat is a forwarded link, and a PIN is usually forwarded with it. **The PIN lost on cost:** `FORBIDDEN` is never-retry, so a wrong or rotated PIN would permanently fail every queued stop and photo. A safe version needs a 7th `ErrorCode`, a paused-queue state, a prompt UI, per-origin storage and a brute-force policy, all in the top-rigor queue. Mitigation instead: rotate `rider_slug` with one SQL `UPDATE`. Reopen trigger and reopen design are in the body. Spec file left untouched (Entry 20 policy) |
 | 22 | Graph refresh token: mint once and reuse, don't persist the rotated one | `storage/onedrive_sync.py`, `deploy-cutover-runbook.md`, `progress.json` | **Architect ruling (option A).** The code comment's premise that Graph "rotates" the token is wrong: Microsoft issues a new refresh token on redemption but **does not revoke the old one**. Each token dies ~90 days after issue (**MEDIUM confidence for personal accounts**, no published number), so the sync works until mint date + ~90 days. **Option B lost on cost, not correctness:** a single-row Postgres table for the rotated token breaks no invariant, but it touches off-limits token handling and puts a long-lived secret in Neon and its backups, for no gain on a trip under ~80 days. A lapse only pauses archiving; nothing is lost. Runbook now says mint close to departure and record the dates |
+| 23 | Malformed body → `422` before the access guard — won't-fix | `core/security.py`, `test_stops_create_endpoint.py`, `progress.json` | **Orchestrator, 2026-09-30.** FastAPI parses the body before it solves dependencies. The resulting `422` is **byte-identical for rider, viewer and unknown slugs**, so it is no slug oracle. **"Reorder so the guard answers first" lost:** FastAPI can't do it natively, so it needs a second copy of the access check ahead of parsing, and that copy can drift. Rationale is beside `require_rider_access` |
+| 24 | Bound form model for photo upload — won't-fix | `routes/photos.py`, `api-contract.md`, `progress.json` | **Orchestrator, 2026-09-30.** Corrects Entry 16's "impossible": a model carrying `UploadFile` **does** bind, but it flips the OpenAPI request type to `x-www-form-urlencoded`, which breaks the `multipart/form-data` contract and the Kubb client, for a cosmetic gain. Inline `Form(...)` params stay. Rationale is beside the params |
+| 25 | `qa`/`docs` write-boundary hooks, promoted ahead of their triggers | `.claude/hooks/*.sh`, `.claude/agents/{qa,docs}.md` | **User call, 2026-09-30, `c9d6b64`.** Triage had these as triggered/ordinary debt with no trigger fired. **Limits:** the `qa` tree guard **detects, doesn't prevent**, misses change-and-revert within one command, and **false-positives when another agent edits the same checkout in parallel**. The `docs` path guard **can't tell a doc comment from a logic edit** inside app/test source. Both narrow prose rules; neither replaces them |
 
 ---
 
@@ -1950,3 +1953,133 @@ list above.
 right beside the misleading comment. That file is off-limits, so `docs` could not add the rationale
 there. `t-onedrive-rotate-comment-misleading` must replace the comment with the corrected fact **and
 cite this entry**, so that "persist the rotated token" is not re-proposed from the wrong premise.
+
+---
+
+## 23. A malformed body returns 422 before the access guard runs — closed won't-fix
+
+**Ruling:** orchestrator, 2026-09-30, while clearing the debt backlog at the user's request ("clear all
+tech debt that doesn't need me"). `t-malformed-body-precedes-access-guard` set to `done` with the title
+suffix "CLOSED WON'T-FIX".
+
+**Who disagreed:** the finding's own framing vs the ruling. `qa` found it during
+`t-validation-message-offset`: FastAPI parses and validates the request body **before** it solves route
+dependencies. So `'{"id": '` on a write route returns `422` for a rider slug, a viewer slug and an
+unknown slug alike, and `require_rider_access` never runs. A body that is valid JSON but fails field
+validation still gets `403`/`404` first.
+
+### The position that lost: reorder, so the guard answers first
+
+The spec ranks access control first for testing rigour, and "the access guard is not the first thing
+that answers" reads like a violation of that. The fix would be to resolve the slug (404/403) before
+the body is parsed.
+
+### Why it lost
+
+- **It is no oracle.** Status and message are byte-identical across all three slug classes, as `qa`
+  observed on real uvicorn. The response tells the caller only that its own body was unparseable,
+  which it already knew. Nothing that needs authorisation happens on the 422 path: no row is read,
+  written or disclosed.
+- **FastAPI has no switch for the order.** Getting the guard in first means hand-rolling the body read,
+  or adding a slug check (middleware, or a pre-parse dependency trick) that runs ahead of the body.
+  Either way that is **a second copy of the access check that can drift** from `require_rider_access`.
+  That is the same failure Entry 7(b) recorded for routing-duplicating middleware. A drifted copy would
+  be a real access-control defect, which is worse than a harmless ordering.
+
+### Why it matters
+
+"Reorder so the guard answers first" is the obvious suggestion from anyone reading a 422 on a viewer
+slug, and the spec's priority order makes it sound urgent. It isn't a leak. The rationale sits beside
+`require_rider_access` in `backend/app/core/security.py`, and the real ordering is recorded in a
+test docstring in `backend/tests/test_stops_create_endpoint.py`.
+
+**Reopen trigger:** the 422 bodies stop being identical across slug classes (for example, a message
+that interpolates something trip-specific), or FastAPI gains a supported way to run dependencies
+before body parsing.
+
+---
+
+## 24. A bound form model for the photo upload — closed won't-fix
+
+**Ruling:** orchestrator, 2026-09-30, same debt-clearing pass. `t-photo-form-model-binding` set to
+`done` with the title suffix "CLOSED WON'T-FIX".
+
+**Who disagreed:** Entry 16's summary line vs `dev`'s later finding. Entry 16 recorded that binding a
+form model "was proven impossible on FastAPI 0.141.1". `dev` then found, during `t-takenat-tz-question`,
+that a Pydantic form model carrying `UploadFile` as a **field** does bind flat. So "impossible" was too
+broad. The debt row stayed open on the chance that the model was worth bringing back.
+
+### The position that lost: bring the model back
+
+A single `PhotoUploadForm` model is tidier than three inline `Form(...)` parameters plus a `File`. It
+matches how every JSON route takes a model, and it gives the fields one home.
+
+### Why it lost
+
+- **It changes the wire contract.** With `UploadFile` inside the model, FastAPI declares the request
+  body as `application/x-www-form-urlencoded` in the OpenAPI document, not the `multipart/form-data`
+  that `docs/api-contract.md` promises. Kubb generates the frontend client from that document, so the
+  generated upload call and its types follow the wrong content type. The offline queue's photo drain
+  (top rigour tier) sits on top of that call.
+- **The gain is cosmetic.** Behaviour, validation and field descriptions are identical either way.
+  The descriptions already live on the inline params, and `takenAt` is already `AwareDatetime` there.
+
+### Why it matters
+
+Entry 16's "impossible" is corrected here to the precise claim: **a bound form model is possible, but
+only with a contract change.** Anyone proposing it is proposing a content-type change to the contract,
+not a refactor. The rationale sits beside the inline params in `backend/app/api/routes/photos.py`.
+
+**Reopen trigger:** a FastAPI release that keeps `multipart/form-data` in the OpenAPI document for a
+form model carrying `UploadFile`. Verify that against the generated spec, not the changelog.
+
+---
+
+## 25. Agent write-boundary hooks for `qa` and `docs`, promoted ahead of their triggers
+
+**Ruling:** user, 2026-09-30 ("clear all tech debt that doesn't need me"), shipped in `c9d6b64`. Closes
+`t-qa-mutation-hook` and `t-docs-agent-unscoped-grant`.
+
+**Who disagreed:** the backlog triage vs the user's call. Both items had been triaged as not-yet-work:
+- `t-qa-mutation-hook` was **TRIGGERED DEBT**. Its trigger was the first non-empty
+  `git status --porcelain` after a `qa` dispatch, and the prose rule in `qa.md` had never been
+  breached.
+- `t-docs-agent-unscoped-grant` was **ORDINARY DEBT with deliberately no trigger**, because nothing
+  watched `docs`'s writes, so "first breach" would have been unobservable.
+
+The triage position was that a working control shouldn't be replaced before it fails, and that a hard
+command-line match fails closed against legitimate mutation testing (see the `t-qa-mutation-hook`
+note). The user promoted both anyway. That is a priority call the gate allows, not a
+re-classification. Neither trigger fired.
+
+### What shipped
+
+- **`qa`**: `.claude/hooks/qa-tree-guard.sh`, wired as a `PreToolUse` + `PostToolUse` pair on Bash
+  in `.claude/agents/qa.md`. Before and after each Bash call it fingerprints the working tree (tracked
+  plus untracked, `.gitignore` respected) through a throwaway index, so the real index is never touched.
+  If the fingerprint changed, it fails the call and tells `qa` to report, not restore. This sidesteps
+  the objection that won the first time: it doesn't parse command lines, so mutation work in a scratch
+  tree is unaffected however the path was spelled.
+- **`docs`**: `.claude/hooks/docs-path-guard.sh`, a `PreToolUse` hook on Edit/Write in
+  `.claude/agents/docs.md`. It resolves the target path and allows only `docs/`, `backend/app/`,
+  `backend/tests/` and `frontend/src/`, and it blocks `frontend/src/api/` (Kubb-generated).
+
+### Known limits — both hooks are narrower than they look
+
+- **The `qa` guard detects; it does not prevent.** It runs after the command. A file changed and
+  reverted within one command leaves identical fingerprints and is not seen at all. A change that is
+  left behind is reported, but it has already happened.
+- **The `qa` guard gives false positives under parallel work.** It fingerprints the whole checkout,
+  so any other agent (or the user) editing the same checkout during a `qa` Bash call trips it. The
+  message tells `qa` to say so rather than assume, but the hook itself can't tell whose change it was.
+- **The `docs` guard can't tell a doc comment from a logic edit.** It is a path check. Inside
+  `backend/app/`, `backend/tests/` and `frontend/src/` (except `api/`), any edit passes, including one
+  to executable code. There the "doc comments only" rule is still prose, as before. What the hook
+  enforces is that `docs` cannot write `.claude/**`, `CLAUDE.md`, `infra/`, the `Dockerfile`, compose
+  or `.env*` (Entry 12's self-modifying-permissions concern).
+
+### Why it matters
+
+These hooks narrow two prose boundaries; they don't replace them. Anyone reading "qa is hook-guarded"
+or "docs is path-scoped" as complete enforcement is overreading the hooks. The two prose rules in
+`qa.md` and `docs.md` still carry the parts the hooks can't see.

@@ -22,6 +22,8 @@ No API contract change — this task touches no endpoint, request/response shape
 
 ## t-dockerignore-route-tree
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `93a30bf`.
+
 Filed by qa during `t-frontend-build-order`, TRIGGERED DEBT — no current consumer, do not implement on sight.
 
 `.dockerignore` excludes `**/node_modules`, `frontend/dist` and `frontend/.vite` but not `frontend/src/routeTree.gen.ts`. That file is gitignored yet present in any dev working tree, so `docker build` run from the project directory copies a host-generated route tree into the `frontend-build` stage — meaning that stage is *not* a clean checkout when built from a dev machine. With `t-frontend-build-order` in place the present cost is only docker layer-cache churn, because `vite build` regenerates the file before anything reads it.
@@ -138,6 +140,8 @@ Dependency + repository only; no endpoint wired. GET /trips/{slug} follows under
 
 ## t-pytest-pythonpath
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (`pythonpath = ["."]` in `backend/pyproject.toml`; the commit is inferred from the batch, not confirmed from the diff).
+
 The project has no [build-system] so uv never installs it into .venv; `import app` fails under the pytest console script without the bootstrap. QA confirmed `uv run python -m pytest` works without it — that invocation-dependent fragility is why pyproject is the right fix. pyproject.toml was out of scope for the schema task.
 
 GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
@@ -149,6 +153,8 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
 
 ## t-schema-type-drift-check
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+
 QA confirmed Text vs VARCHAR(20), Double vs REAL, and Integer vs BigInteger all compare equal under column.type.python_type. A migration creating varchar(20) where tables.py declares Text would pass the drift guard. Low urgency: current schema is text/double precision throughout.
 
 GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
@@ -159,6 +165,8 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 - Promotion trigger: the first migration introducing a narrower or length-constrained column type where `tables.py` declares the wider one.
 
 ## t-tests-readme-stale
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — docs pass, uncommitted at close-out. The `integration/` line was **kept** as the notes below require. The README now says the directory hasn't been created yet, and it maps each of the three priority failure modes to the root-level modules that already test it (the offline-queue scenario lives in the frontend Vitest suite). Nothing was moved.
 
 First real test landed as tests/test_schema.py at the root. Cosmetic, pre-existing — was outside the schema task's scope.
 
@@ -202,6 +210,8 @@ CLOSEOUT 2026-09-28 — `done`. qa: all 7 acceptance criteria PASS.
 - Findings, filed not fixed (ORDINARY DEBT, no promotion trigger): (1) 4 pre-existing `ruff check` errors — `tests/test_photo_endpoints.py` L40/46/180, `tests/unit/test_stop_model.py` L108; (2) `routes/photos.py` ~L190 fails `ruff format --check` — falls under the standing `t-ruff-format-gate` decision; (3) the brief's inline OpenAPI spot-check stops at its first `assert`, so it reports only one violation per run — the guard test file supersedes it.
 
 ## t-ruff-format-gate
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `8ea0786` (backend formatted, `ruff format --check` joins the gate).
 
 ruff format --check would reformat app/core/errors.py and three other files; ruff check alone doesn't cover formatting. Decide whether format joins the validation gate.
 
@@ -268,6 +278,8 @@ TWO ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-route-audit-non-apiroute-gap`
 
 ## t-route-audit-non-apiroute-gap
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+
 ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
 `_walk` treats `hasattr(route, "dependant")` as "this is a leaf", so a plain Starlette `Route`, a `Mount`ed sub-app, or anything registered via `app.add_route` under `/api` is DROPPED SILENTLY rather than failed. qa demonstrated it: injecting `Route("/api/leaky", ..., methods=["GET", "POST"])` left the audit at 15 passed while `POST /api/leaky` served a live 200.
@@ -277,6 +289,8 @@ WHY IT IS NOT WORK TODAY. No such handler exists — all 22 `/api` pairs are `AP
 THE FRAGILITY POINT, IN ITS SHARPENED FORM — record this even if the gap above is never fixed: **`test_audit_is_not_vacuous` covers a TOTAL break, not a PARTIAL one.** It fires only if the walk returns zero routes or loses an entire HTTP method. A future FastAPI that flattened one nesting level but not another would leave the set non-empty with all four methods present, so the guard goes green while the audit covers less than it did. There is no better hook available today; that is the reason it was left, not an oversight.
 
 ## t-route-audit-new-verb-double-failure
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (the equality stays; its message now names both sides).
 
 ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO TRIGGER TODAY.
 
@@ -324,6 +338,8 @@ THREE ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-s3-bucket-fixture-duplicati
 
 ## t-s3-bucket-fixture-duplication
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (one `s3_bucket` fixture, in `conftest.py`).
+
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
 An `s3_bucket` fixture exists twice: `backend/tests/test_no_slug_in_response_bodies.py:203-212` and `backend/tests/test_photo_endpoints.py:169-178`. The executable bodies are identical — `head_bucket`, and on any exception `create_bucket`, against `BUCKET_NAME` from `app.storage.s3_client`. (They are *not* byte-identical: the docstrings differ and the newer copy carries a `# noqa: BLE001` on its `except Exception:`. Same behaviour, different text.) `head_bucket`/`create_bucket` appear in these two modules and nowhere else in the suite.
@@ -334,6 +350,8 @@ WHY IT IS NOT WORK TODAY: no current consumer, and nothing depends on the two co
 
 ## t-slug-audit-minio-overrequest
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
 `s3_bucket` is a plain parameter on `test_no_slug_value_comes_back_from_any_route` (`test_no_slug_in_response_bodies.py:363`), with no marker and no conditional — so **all 36** parametrised cases set up a MinIO bucket, though only `POST …/photos` (3 of the 36) has a storage leg. With MinIO down, 36 cases error at setup instead of 3.
@@ -341,6 +359,8 @@ ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOT
 WHY IT IS NOT WORK TODAY: no current consumer — CI and local dev both bring MinIO up via `docker compose`, so the fixture always succeeds. Worth noting it *compounds* the already-known papercut that the suite does not fail cleanly without `docker compose up -d postgres minio`: it widens the blast radius of that failure without creating a new one.
 
 ## t-slug-audit-replay-and-conflict-bodies
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
 
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
@@ -403,6 +423,8 @@ STATUS CORRECTED `not_started` -> `done` 2026-09-16. NO PATCH WAS WRITTEN FOR TH
 
 ## t-bike-order-collation
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+
 QA: the local Postgres is Alpine/musl, where en_US.utf8 is unimplemented so the default collation is byte order, identical to C and to Python's sorted(). Neon runs glibc and orders differently — default gives 'ALEX, Alex, Ana, Zoe, alex, Ana-with-accent'; en-US-x-icu gives 'alex, Alex, ALEX, Ana, Ana-with-accent, Zoe'. test_bikes_are_ordered_by_rider_name_then_id compares against Python's sorted(), which agrees with musl by construction. Today the seeded_bikes fixture masks it because rider names differ in their first letter. The moment anyone adds a case- or accent-differing rider name, the test passes locally and fails on Neon. Determinism itself is unconditional (bikes_pkey on id alone makes ORDER BY rider_name, id a total order under any collation) — only the concrete sequence differs. Not urgent; nothing may depend on order per the contract. Note for whoever next edits seeded_bikes.
 
 GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
@@ -429,6 +451,8 @@ QA VERIFIED ALL TEN CRITERIA ON REAL UVICORN against the production session, wit
 QA raised two findings, both filed rather than fixed here: t-head-route-kwarg-divergence (Finding 1) and t-api-healthcheck-wiring (Finding 2 remainder).
 
 ## t-head-route-kwarg-divergence
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (shares `test_route_dependency_audit.py`'s traversal, as the notes below asked).
 
 From qa's Finding 1 on t-head-on-get-routes. The two registrations on a path SHARE A HANDLER, so dependencies declared in the HANDLER SIGNATURE stay in sync automatically — that is what makes the second-registration mechanism safe and it is not in question. Dependencies declared as a route-level dependencies=[...] KWARG do NOT: that kwarg belongs to the decorator, not the handler, so it reaches one route of the pair. QA demonstrated it, it did not reason about it — adding Depends(require_rider_access) to the @router.get decorator in app/api/routes/trips.py yields GET -> route_level_dependencies = ['require_rider_access'], HEAD -> [], and ALL 5 TESTS IN test_head_method.py STILL PASS. GET would enforce rider-only while HEAD kept serving viewers.
 
@@ -462,6 +486,8 @@ DECIDED, NOT OVERLOOKED — the part worth keeping. Silencing access logs wholes
 
 ## t-api-healthcheck-wiring
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `f0a1d99`. Dockerfile `HEALTHCHECK` and compose `api` healthcheck only; the `/api/health` `description=` was updated in the same commit. The `infra/` half is split out as `t-infra-container-apps-probe` (needs the user).
+
 From qa's Finding 2 remainder on t-head-on-get-routes. LOW PRIORITY. /api/health exists and NOTHING PROBES IT: docker-compose.yml has healthcheck blocks on postgres and minio but none on the api service, Dockerfile has no HEALTHCHECK instruction, and nothing in infra/ references the path. Filed under s-deploy-cutover rather than s-local-dev-env because the latter is closed and this needs devops plus approval; the compose half is local-dev work and could land earlier if that is preferred.
 
 NEEDS EXPLICIT HUMAN APPROVAL before anything in infra/ is touched (CLAUDE.md off-limits list). The compose and Dockerfile halves are ordinary devops scope; the infra/ half is not.
@@ -477,6 +503,15 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 - BOTH EXISTING CONDITIONS ABOVE SURVIVE THIS CLASSIFICATION UNCHANGED. (1) The `infra/` half needs explicit human approval per the CLAUDE.md off-limits list — **a gate classification is not clearance**, and a fired trigger is not approval either. (2) The `/api/health` `description=` in `backend/app/main.py` becomes false the moment this lands, and it feeds the OpenAPI document and the generated client, so it needs a `dev` follow-up in the same patch or `devops` stops and hands it back.
 
 GATE RULING 2026-09-30 (orchestrator) — still `gate: triggered`. The promotion trigger above means **the cutover actually happening, i.e. the app being provisioned**. It does *not* mean `s-deploy-cutover` being `in_progress`: that story moving to `in_progress` does not fire it. This task stays triggered debt until the app is provisioned. The reading matches `docs/deploy-cutover-runbook.md`, which lists it under "Triggered debt to decide at cutover".
+
+## t-infra-container-apps-probe
+
+FILED 2026-09-30, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
+
+- Why: Azure Container Apps **ignores the Dockerfile `HEALTHCHECK`**, so `f0a1d99` covers only local `docker`/compose. In production nothing probes `/api/health` until the Container App definition declares a probe.
+- Change: in the Container App definition under `infra/`, add a **Liveness** `httpGet` probe on path `/api/health`, port `8000`, with `initialDelaySeconds` about 10, `periodSeconds` 30, `timeoutSeconds` 5, `failureThreshold` 3. A **Startup** probe on the same path is optional, to cover a slow cold start.
+- Don't: make it a **Readiness** "dependencies are up" probe. `/api/health` is liveness only and doesn't check Postgres or S3; wiring it as readiness would claim something the endpoint doesn't test.
+- Related: `docs/deploy-cutover-runbook.md` (cutover steps).
 
 ## t-add-endpoint-head-convention
 
@@ -736,6 +771,8 @@ Its sibling framing was also right and worth keeping: this task was about what t
 
 ## t-photo-insert-echoes-argument
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`insert()` returns the stored row; `201` and its replay are now identical, `takenAt` UTC `Z`). Left over: `PhotoOut.takenAt`'s `description=` still says the `201` echoes the device offset (see `api-contract.md`).
+
 Filed by qa during `t-takenat-tz-question`, 2026-09-17. **TRIGGERED DEBT (Gate 3) per qa, with a live counter-reading for Gate 1 — the orchestrator has not ruled. Do not implement on sight, and do not file the counter-reading away.** Full statement under `## t-takenat-tz-question`, "FINDINGS RECORDED, NOT FIXED", item 1.
 
 One line: `backend/app/data/repositories/photos.py` `insert()` (L122-149) builds its `PhotoOut` from the arguments passed in instead of reading the inserted row back, so a fresh `201` echoes the device's offset (`...+09:30`) while the `200` replay and `GET` return UTC (`...Z`). Same instant, two spellings — and the pair that disagrees is the `201` and its **own replay**, inside the idempotency path.
@@ -743,6 +780,8 @@ One line: `backend/app/data/repositories/photos.py` `insert()` (L122-149) builds
 Needs a concrete promotion event before it becomes work. The obvious candidate is `s-offline-queue`: a queue that reconciles its local copy against the returned entity by comparing fields would see a spurious difference. Fix is one line — read the row back.
 
 ## t-photo-form-model-binding
+
+CLOSED WON'T-FIX 2026-09-30 (user: clear all debt not needing them) — decision-log Entry 24. No code change; rationale added beside the inline `Form(...)` params in `routes/photos.py`.
 
 Filed by dev during `t-takenat-tz-question`, 2026-09-17. **ORDINARY DEBT (Gate 4).** Not a defect and not scheduled — recorded so a precise claim is not remembered as a broader one.
 
@@ -823,6 +862,8 @@ SUPERSEDED 2026-09-28 — closed `done` without implementation. The tracker has 
 
 ## t-photo-upload-stream-to-s3
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`upload_fileobj` via `asyncio.to_thread`; replay check still precedes the upload). Test-gap finding **F2** from this batch is closed by the same commit and was not filed separately. The sibling tests in `backend/tests/test_photo_upload_storage.py` (`test_cross_stop_conflict_writes_nothing_under_the_other_stop`, `test_viewer_slug_writes_nothing_to_storage`, `test_unknown_slug_writes_nothing_to_storage`) pin that a 409, 403 or 404 writes nothing to S3.
+
 FILED 2026-09-28 from the Entry 20 ruling. TRIGGERED DEBT (Gate 3).
 
 - Change: in `backend/app/api/routes/photos.py` (~L182-187), replace `file_bytes = await file.read()` + `s3.put_object(...)` with `s3.upload_fileobj(file.file, BUCKET_NAME, object_key)`, still run through `asyncio.to_thread`. This streams the body, and boto3 switches to multipart on its own for large bodies. The key stays deterministic, and the replay-before-upload order stays unchanged.
@@ -876,6 +917,8 @@ NO OPEN BACKLOG ID IS ATTACHED TO THIS TASK, and that is why `s-map-geojson-endp
 
 ## t-bare-409-envelope-bypass
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40` (`backend/tests/test_bare_409_raise_audit.py`, a static raise-site guard; the mapping row stays).
+
 `qa` finding from `t-conflict-code-tests`. Since `7ca82ab` the `409` row in `_STATUS_TO_CODE` is keyed on status, so a bare `HTTPException(409)` renders a well-formed `CONFLICT` envelope with `message: "Conflict"` — Starlette's default phrase — without ever passing through `ApiError.conflict`. THE LEAK BOUNDARY LIVES AT THE CLASSMETHOD: the contract's rule that a conflict message carries no value from the conflicting record is enforced where the message is built, and a bare raise skips it. The envelope looks correct, which is the whole difficulty.
 - Gate classification: TRIGGERED DEBT (Gate 3).
 - Current consumer: none. Nothing raises a 409 today, and the only `HTTPException` raise site anywhere in `backend/app/` is the 405 at `main.py:189`.
@@ -883,6 +926,8 @@ NO OPEN BACKLOG ID IS ATTACHED TO THIS TASK, and that is why `s-map-geojson-endp
 - DO NOT "FIX" THIS BY REMOVING THE MAPPING ROW. The row is the contract (Entry 14) and it is also what makes `ApiError(409, CONFLICT, ...)` constructible at all — `__init__` checks the pair against `code_for_status`. Whatever this becomes, it is a guard at the raise site, not a retreat from the mapping.
 
 ## t-errors-docstring-dangling-line
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40` (inferred: the batch's `errors.py` commit; not confirmed from the diff).
 
 Cosmetic. The constructor-list reflow left a dangling line in `backend/app/core/errors.py`'s module docstring.
 - Gate classification: ORDINARY DEBT (Gate 4). A docstring has no runtime path — nothing imports, executes or serves it, so no behaviour depends on it.
@@ -902,6 +947,8 @@ THE HOOK — the third option, neither prose nor removing Bash — was deliberat
 
 ## t-qa-mutation-hook
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `c9d6b64`. Trigger never fired. The hook is a before/after tree fingerprint, not a command-line match, and it detects rather than prevents. Limits are in decision-log Entry 25.
+
 The structural version of the rule `t-qa-mutation-scratch-tree` shipped as prose. `.claude/agents/qa.md` now forbids mutating the live working tree (committed `0b5bcde`), but that guarantee is words — a `PreToolUse` hook matching write-shaped Bash commands against the project path would make it ENFORCED rather than REQUESTED. It is not an edit to `qa.md`: hooks live in settings, which is why it was left out of that patch rather than overlooked.
 
 GATE TRIAGE 2026-09-16 — `gate: triggered`.
@@ -914,6 +961,8 @@ GATE TRIAGE 2026-09-16 — `gate: triggered`.
 WHY PROSE WAS TRIED FIRST, WHICH IS THE PART WORTH KEEPING. The rule permits an experiment that is genuinely valuable: deliberately breaking a fix to prove a test catches its absence. That is mutation testing, and Entry 7 is the record of it catching two real defects a green suite missed — it is not a practice to design a control against. A hook that is too blunt blocks the legitimate case along with the illegitimate one, and a `qa` agent that cannot mutate anything anywhere cannot do the thing it is most valuable for. So the hook has to distinguish "writes inside the project directory" from "writes in a scratch tree" — and that distinction is easy to state in prose and hard to match on a command line (a path can be relative, constructed in a variable, reached after a `cd`, or written by a tool invoked with its own `-C`/`--work-tree`). THAT is the reason the cheaper control went first: the expensive one is not merely more work, it is harder to make CORRECT, and an incorrect version fails closed against the useful case. Not reluctance, and not "prose is good enough" — a judgment that the precise control is the harder one to build.
 
 ## t-docs-agent-unscoped-grant
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `c9d6b64`. A path guard (`docs/`, `backend/app/`, `backend/tests/`, `frontend/src/` minus `api/`). It can't tell a doc comment from a logic edit inside those trees; decision-log Entry 25.
 
 The `docs` agent is described everywhere as `docs/`-only, but its grant is Edit/Write with no path scoping — the same class of prose-only boundary as `t-qa-mutation-scratch-tree`, through a different channel. `qa`'s gap is "no edit access, but Bash writes files"; this one is "edit access, but nothing bounds where."
 
@@ -930,6 +979,8 @@ RELATED, NOT DUPLICATE: decision-log Entry 12 records that widening `docs` to `.
 
 ## t-validation-empty-body-message
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40`. It now renders `The request body is missing.`, from a type-keyed branch in `_format_validation_errors` as the notes below prescribe.
+
 `qa` finding from `t-validation-message-offset`. An **empty** request body on a body-taking route renders `The request could not be validated. Field required` — a pydantic message with no subject. FastAPI reports that case as `{"type": "missing", "loc": ("body",)}`, a **different error type** from the `json_invalid` that task fixed, and `_format_validation_errors` strips the literal `"body"` out of the location, leaving the bare message.
 
 GATE TRIAGE 2026-09-17 — `gate: ordinary`.
@@ -941,6 +992,8 @@ GATE TRIAGE 2026-09-17 — `gate: ordinary`.
 - If it is ever fixed, fix it in the same place and the same way: a type-keyed branch in `_format_validation_errors`, not a per-route message. `missing` with `loc == ("body",)` is the whole condition.
 
 ## t-malformed-body-precedes-access-guard
+
+CLOSED WON'T-FIX 2026-09-30 (user: clear all debt not needing them) — decision-log Entry 23. No code change; rationale added to `require_rider_access`'s docstring in `core/security.py`.
 
 `qa` finding from `t-validation-message-offset`. FastAPI parses and validates the request body **before** it solves route dependencies, so a malformed body short-circuits the access guard: `'{"id": '` returns `422` on a rider slug, a viewer slug **and** an unknown slug alike, while a body that is valid JSON but fails field validation still gets the expected `403`/`404` first.
 
@@ -979,6 +1032,8 @@ Two debt rows filed, neither implemented: `t-mark-archived-overwrite-guard` (TRI
 
 ## t-mark-archived-overwrite-guard
 
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`AND one_drive_file_id IS NULL`, as prescribed below). Side effect: `rowcount == 0` now also means "an overlapping sweep already archived it", which makes `onedrive_sync.py`'s "orphaned" warning wrong in that case. Filed as `t-onedrive-archived-log-wording`.
+
 TRIGGERED DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. Do not implement on sight.
 
 `mark_archived`'s update matches on `id` alone (`backend/app/data/repositories/photos.py:202-206`), so a second write silently replaces a `one_drive_file_id` that is already recorded — the first archived copy becomes unreferenced with no error and no signal.
@@ -998,6 +1053,8 @@ The trigger does not change. What fires it is still a *second concurrent sweep* 
 TRIGGER RE-EVALUATED AT `t-onedrive-sync-scheduler` 2026-09-29: **did not fire.** The scheduled job cannot overlap its own ticks (900 × (0+1) < 1800, parallelism 1). A person running it by hand during a scheduled run is covered by the runbook §5 caveat. Full reasoning is under that task.
 
 ## t-pending-archive-limit-validation
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (a non-positive limit is refused up front).
 
 ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigger today.
 
@@ -1034,6 +1091,8 @@ ALSO ASPIRATIONAL: acceptance criterion 2's "state of CI" clause. **There is no 
 FOUR DEBT ROWS FILED OUT OF qa'S PASS, **NONE IMPLEMENTED** — a finding from task X is not work for task X. See the four sections below. Separately, the two rows from Patch 1 had their triggers evaluated here: `t-mark-archived-overwrite-guard` **did not fire** (recorded in full under that row — do not re-litigate) and `t-pending-archive-limit-validation` did not fire either.
 
 ## t-onedrive-main-untested
+
+PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (configured-path tests in `test_onedrive_sync.py`).
 
 ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1108,6 +1167,15 @@ ORDINARY DEBT, filed 2026-09-30 out of decision-log Entry 22. Do not implement o
 - The code's behaviour is right (the new token is deliberately unused). Only the stated reason is wrong. It matters because that premise is what makes "persist the rotated token" (Entry 22's rejected option B) look required.
 - Fix: correct the comment and **cite decision-log Entry 22**. This is where Entry 22's rationale must live beside the code, since `docs` cannot edit this file.
 - Gate: ORDINARY (Gate 4). A comment, no runtime effect.
+
+## t-onedrive-archived-log-wording
+
+FILED 2026-09-30 from the `d534ea7` close-out. ORDINARY DEBT, `gate: ordinary`. **NEEDS EXPLICIT USER APPROVAL: `backend/app/storage/onedrive_sync.py` is off-limits** (OneDrive token handling file, CLAUDE.md).
+
+- Finding: at ~L217-221, when `record(...)` (`mark_archived`) returns `0`, the job logs "Photo %s was gone by the time it archived -- its OneDrive copy is orphaned".
+- Since `d534ea7` (`t-mark-archived-overwrite-guard`), the update carries `AND one_drive_file_id IS NULL`, so a `0` has **two** causes. Either the row is gone (orphaned, as the log says), or an overlapping sweep already archived the photo. In the second case the upload went to the same path with `conflictBehavior=replace`, so nothing is orphaned and the warning is false.
+- Impact: log text only; no data effect. Overlapping sweeps aren't expected (see `t-onedrive-sync-scheduler`), but a hand-run during a scheduled run can cause one.
+- Fix shape: reword the warning to cover both causes, or tell them apart. Don't add a read-back just to make the log exact.
 
 ## t-frontend-kubb-client
 
