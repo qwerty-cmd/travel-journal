@@ -161,5 +161,5 @@
     { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-30T00:31:00Z"
+  "lastUpdated": "2026-09-30T00:40:00Z"
 }

@@ -188,8 +188,9 @@ devops runs these steps after you have confirmed the cutover.
 
 ## Triggered debt to decide at cutover
 
-This cutover fires the triggers on the four items below. A fired trigger is not approval: each still
-goes through `ba` and the pipeline, or you decide to accept it.
+This cutover fires the triggers on the items below. (`t-onedrive-main-untested` is ordinary debt, not
+triggered debt: provisioning the Job is the point where it gets re-classified.) A fired trigger is not
+approval: each still goes through `ba` and the pipeline, or you decide to accept it.
 
 | Task | Why it matters now | Options |
 |---|---|---|
@@ -197,3 +198,6 @@ goes through `ba` and the pipeline, or you decide to accept it.
 | `t-access-log-slug-exposure` | The uvicorn access log records trip slugs from request URLs. Container Apps sends stdout to Log Analytics by default, so the slugs become stored and searchable. | Accept it, turn off the Log Analytics destination, or add a uvicorn flag or logging config at startup (devops). **Don't** have the app reconfigure `uvicorn.access` at import time: that approach was rejected (decision-log Entries 7b and 13; `core/errors.py`). |
 | `t-dockerignore-route-tree` | A build from a dev working tree carries a stale `routeTree.gen.ts` into the image. | Build from a fresh clone (step 3). Add the file to `.dockerignore` if any CI or build step reads `frontend/src/` before `vite build`. |
 | `t-onedrive-preflight-check` | Nothing is known about whether Graph accepts the request until this runs. | Step 5. Scheduling is decided (step 0, `t-onedrive-sync-scheduler`), so once the job exists, follow step 5's caveat about overlapping runs. |
+| `t-settings-error-hides-input` | If an app revision or the sync Job starts with a required env var missing, pydantic's `ValidationError` includes `input_value` tails of the other settings, **including the `GRAPH_*` secrets**. That stderr goes to the platform logs. | **Recommended before you provision the app or the Job (step 1):** have dev add `hide_input_in_errors=True` to `Settings.model_config` in `backend/app/core/config.py`. Until then, check that every secret in step 2 is set before the first revision or Job run starts. |
+| `t-onedrive-per-photo-isolation` | Fires once the sync Job is actually scheduled (step 1). The S3 read and the read of Graph's returned `id` sit outside the per-photo `try`, so a missing S3 object or a 2xx body without an `id` aborts the whole run instead of skipping that one photo. No path today produces either case, and qa confirmed the traceback leaks no secret. | Accept it, or have dev move both statements inside the existing `try` and `continue`, the same way HTTP failures are handled. |
+| `t-onedrive-main-untested` | `main()`'s configured path (real session, real repositories, real refresh token) has no automated test. qa verified it is correct by running it, so what's missing is regression protection. Once the Job is provisioned, `main()` has a real consumer. | Re-classify it when the Job is provisioned (step 1), not before. |
