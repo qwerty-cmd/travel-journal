@@ -6,27 +6,32 @@
 
 /**
  * BikePatch
- * @description PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. All fields optional — only sent fields change.
+ * @description PATCH /trips/{slug}/bikes/{id} body. Rider-slug only. Every field may be omitted --\nonly fields present in the body change -- but none may be null.
 */
 export type BikePatch = {
     /**
-     * @description Whose bike this is — free text, not tied to a user account. Omit the field to leave the stored name alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none.
+     * @description Whose bike this is — free text, not tied to a user account. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how \'no change\' is spelled.
+     * @type string | undefined
     */
-    riderName?: (string | null);
+    riderName?: string;
     /**
-     * @description Manufacturer, e.g. \'Honda\'. Free text — not a fixed list. Omit the field to leave the stored make alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none.
+     * @description Manufacturer, e.g. \'Honda\'. Free text — not a fixed list. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how \'no change\' is spelled.
+     * @type string | undefined
     */
-    make?: (string | null);
+    make?: string;
     /**
-     * @description Model name, e.g. \'Africa Twin\'. Free text — not a fixed list. Omit the field to leave the stored model alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none.
+     * @description Model name, e.g. \'Africa Twin\'. Free text — not a fixed list. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how \'no change\' is spelled.
+     * @type string | undefined
     */
-    model?: (string | null);
+    model?: string;
     /**
-     * @description Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to leave the stored year alone; omitting is not the same as sending it explicitly as null, which asks to write null into a column that holds none.
+     * @description Model year of the bike, as a four-digit year, e.g. 2019. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how \'no change\' is spelled.
+     * @type integer | undefined
     */
-    year?: (number | null);
+    year?: number;
     /**
-     * @description Free text: engine, suspension, tyres, etc. Omit the field to leave the stored specs alone; omitting is not the same as sending it explicitly as null. To clear specs send an empty string — that is how \'nothing written yet\' is spelled, never null.
+     * @description Free text: engine, suspension, tyres, etc. To clear specs send an empty string — that is how \'nothing written yet\' is spelled, never null. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: the column holds no null, and omitting is how \'no change\' is spelled.
+     * @type string | undefined
     */
-    specs?: (string | null);
+    specs?: string;
 };
