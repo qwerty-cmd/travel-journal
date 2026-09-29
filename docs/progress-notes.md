@@ -1645,3 +1645,57 @@ Every deploy also updates the job's image. The orchestrator changed step 3 of `.
 **Docs updated.** `docs/deploy-cutover-runbook.md` (§0, §1, §5, §6 and the triggered-debt table) and `docs/architecture-diagram.md` (the sync edge label, plus a note that the one-artifact invariant still holds because the job runs the same image).
 
 NO DECISION-LOG ENTRY: the user made the choice, and no two agents' positions conflicted.
+
+## t-graph-refresh-token-helper
+
+**Closeout (done).** Story `s-cloud-service-setup`, agent `dev`, gate `none`. Commits `9573e52`, `e48bd85`, `7207880`. **User-approved OneDrive token work.** CLAUDE.md puts OneDrive token handling on the off-limits list, and the user explicitly approved this task.
+
+**What was built.** `backend/app/storage/get_refresh_token.py` is a one-time helper that only the owner runs. It gets the initial `GRAPH_REFRESH_TOKEN` that `onedrive_sync` needs.
+- Run it with `cd backend && uv run python -m app.storage.get_refresh_token`. The full `backend/.env` must be present. `DATABASE_URL` and the `S3_*` vars are required too, because `Settings` validates as a whole even though the helper only reads `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET`.
+- It runs the OAuth authorization-code flow with PKCE (S256) and scope `offline_access Files.ReadWrite`. It uses the same `/common` tenant endpoint that `onedrive_sync` redeems against, so `onedrive_sync` can use the printed token as-is.
+- It opens the browser, serves exactly one request on `http://localhost:8765` with the default access log suppressed (that log would print the code), checks `state` with `compare_digest`, redeems the code, and prints the refresh token once. It writes no file.
+- It never prints the client secret, authorization code, PKCE verifier or access token. On a token-endpoint failure it prints only Graph's `error` / `error_description`. If loading settings fails, it reports **field names only, never values**.
+- It defines its own `TOKEN_URL` instead of importing `onedrive_sync`. That import pulls in `s3_client`, which loads settings at import time. The reason is also recorded in a comment next to the constant, and a test pins `TOKEN_URL == onedrive_sync.TOKEN_URL`.
+
+**Tests.** `backend/tests/test_get_refresh_token.py`, 25 tests.
+
+**QA, two rounds.**
+- Round 1 found a **secret leak**. The first version imported `onedrive_sync` to reuse `TOKEN_URL`. With a required env var missing, importing the helper loaded settings through `s3_client`, and pydantic's `ValidationError` printed `input_value` tails of the `GRAPH_*` secrets before `main()`'s field-names-only handler could run. Round 1 also found test gaps. `dev` fixed both: the constant was duplicated, the import was dropped, the equality test was added, and the gaps were covered.
+- Round 2: **PASS**.
+
+**Verification limits.** The live Microsoft sign-in has **not** been verified. No agent can hold Graph credentials or consent to an OAuth grant, so the tests stop at the HTTP boundary. The owner runs the real flow as part of `t-onedrive-preflight-check`, which is still `not_started`. The steps are in `docs/deploy-cutover-runbook.md` §1, "Microsoft Graph app registration".
+
+**Filed, not implemented.** These are three new rows under `s-cloud-service-setup`. See their sections below.
+- `t-settings-error-hides-input` (TRIGGERED)
+- `t-token-helper-import-leak-regression-test` (ORDINARY)
+- `t-token-helper-error-body-stdout-test` (ORDINARY)
+
+NO DECISION-LOG ENTRY: QA's round-1 leak was a review finding that `dev` fixed without dispute, not a contested call.
+
+## t-settings-error-hides-input
+
+TRIGGERED DEBT, filed out of `t-graph-refresh-token-helper` 2026-09-29. Do not implement on sight.
+
+`backend/app/core/config.py`'s `SettingsConfigDict` does not set `hide_input_in_errors=True`. So any process that loads `Settings` with a required env var missing gets a pydantic `ValidationError` whose text includes `input_value` tails of the other fields, including the `GRAPH_*` secrets.
+
+- Gate classification: TRIGGERED DEBT (Gate 3). The token helper, the only path this task touched, no longer reaches it: it avoids import-time settings and reports field names only. No deployed process exists yet whose stderr is persisted anywhere.
+- Promotion trigger: a Container Apps revision or the OneDrive sync Job starting with a required env var missing, because that stderr goes to the platform logs.
+- Fix at that point: add `hide_input_in_errors=True` to `Settings.model_config`. Agent: `dev`.
+
+## t-token-helper-import-leak-regression-test
+
+ORDINARY DEBT, filed out of `t-graph-refresh-token-helper` 2026-09-29. Do not implement on sight.
+
+No subprocess test pins that importing `app.storage.get_refresh_token` does not load settings. If someone re-adds the `onedrive_sync` import (the round-1 leak), all 25 tests still pass. The equality test on `TOKEN_URL` does not catch it.
+
+- Gate classification: ORDINARY DEBT (Gate 4). The current code is correct, so this is missing regression protection. The rationale comment next to `TOKEN_URL` is the only guard today.
+- Suggested shape: import the module in a subprocess with a required env var unset, and assert it exits cleanly with no `input_value` in stderr. Agent: `test-writer`.
+
+## t-token-helper-error-body-stdout-test
+
+ORDINARY DEBT, filed out of `t-graph-refresh-token-helper` 2026-09-29. Do not implement on sight.
+
+The error-path test for `exchange_code` asserts on the `SystemExit` message. It does not check that no part of the token endpoint's response body reaches stdout.
+
+- Gate classification: ORDINARY DEBT (Gate 4). The current code prints only `error` / `error_description`. Nothing is broken; the test just doesn't guard it.
+- Agent: `test-writer`.

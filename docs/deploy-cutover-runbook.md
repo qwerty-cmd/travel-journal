@@ -56,8 +56,20 @@ Tick each box as you go.
 - [ ] **You. Microsoft Graph app registration (for the OneDrive archive).**
   - Register an app that allows personal Microsoft accounts.
   - Grant the delegated `Files.ReadWrite` and `offline_access` permissions.
-  - Add a redirect URI and create a client secret.
-  - Complete the one-time OAuth consent as yourself, then store the resulting refresh token.
+  - Add a platform of type **Web** and register the redirect URI `http://localhost:8765` on it.
+  - Create a client secret.
+  - Get the refresh token with the one-time helper (`t-graph-refresh-token-helper`). **You run this
+    yourself in your own terminal, never an agent.** It opens a real Microsoft sign-in and prints a
+    live credential.
+    1. Make sure `backend/.env` is complete. `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET` must be set, and
+       so must `DATABASE_URL` and the `S3_*` vars, because settings are validated as a whole. If
+       something is missing, the helper lists the missing field names (never their values) and stops.
+    2. Run `cd backend && uv run python -m app.storage.get_refresh_token`.
+    3. Sign in with the Microsoft account whose OneDrive gets the archive, and accept the consent
+       prompt. If the browser doesn't open, visit the URL the helper prints.
+    4. Copy the refresh token it prints into your password manager and into the Azure secret
+       `GRAPH_REFRESH_TOKEN` (step 2). The helper writes no file.
+    5. Never paste the token into chat, including an agent session, and never commit it.
   - The exact scope and request shape have not been checked against Graph. Step 5 checks them.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
@@ -83,7 +95,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
 | `S3_REGION` | plain env | `auto` |
 | `GRAPH_CLIENT_ID` | secret | app registration |
 | `GRAPH_CLIENT_SECRET` | secret | app registration |
-| `GRAPH_REFRESH_TOKEN` | secret | OAuth consent |
+| `GRAPH_REFRESH_TOKEN` | secret | printed by the `get_refresh_token` helper (step 1) |
 | `GRAPH_ONEDRIVE_FOLDER` | plain env | target folder path |
 | `ENVIRONMENT` | plain env | a non-`local` value |
 

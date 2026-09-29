@@ -8,7 +8,7 @@
   "stories": [
     { "id": "s-session0-scaffolding", "milestoneId": "m1-foundations", "title": "Session 0 — architecture scaffolding", "status": "done" },
     { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO)", "status": "in_progress" },
-    { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon, R2, Graph, Container Apps, budget alert", "status": "not_started" },
+    { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon, R2, Graph, Container Apps, budget alert", "status": "in_progress" },
     { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record (script built, human must run it)", "status": "in_progress" },
     { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1)", "status": "done" },
     { "id": "s-finding-triage-gate", "milestoneId": "m1-foundations", "title": "Finding triage gate — classify discovered issues before implementing them", "status": "done" },
@@ -128,7 +128,10 @@
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
 
-    { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "in_progress", "agent": "dev", "blockers": [], "gate": "none" },
+    { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
+    { "id": "t-settings-error-hides-input", "storyId": "s-cloud-service-setup", "title": "config.py lacks hide_input_in_errors=True — any process loading Settings with a required env var missing prints tails of GRAPH_* secret values in pydantic's ValidationError", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-token-helper-import-leak-regression-test", "storyId": "s-cloud-service-setup", "title": "No subprocess test pins that importing get_refresh_token does not load settings — re-adding the onedrive_sync import passes all 25 tests", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
+    { "id": "t-token-helper-error-body-stdout-test", "storyId": "s-cloud-service-setup", "title": "get_refresh_token error-path test does not check stdout for a printed token-endpoint response body", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
     { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": ["t-onedrive-sync-job"] },
 
     { "id": "t-frontend-kubb-client", "storyId": "s-frontend-first-open", "title": "Kubb-generated TS types + TanStack Query hooks for the eight contract operations from a committed OpenAPI snapshot", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
@@ -157,6 +160,6 @@
     { "id": "t-neon-sslmode-url", "storyId": "s-cloud-service-setup", "title": "normalize_database_url translates libpq sslmode/channel_binding for asyncpg", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
   ],
-  "currentTask": "t-graph-refresh-token-helper",
-  "lastUpdated": "2026-09-30T00:30:00Z"
+  "currentTask": null,
+  "lastUpdated": "2026-09-30T00:31:00Z"
 }
