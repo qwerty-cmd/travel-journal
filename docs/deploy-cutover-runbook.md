@@ -246,15 +246,28 @@ devops runs these steps after you have confirmed the cutover.
 Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be **lower case**
 (GHCR rejects upper case). It is the same image path as `infra/azure/README.md`.
 
-- [ ] **You. Log in to GHCR** with a GitHub classic personal access token that has `write:packages`.
-  This is a different token from the `read:packages` one the Container App pulls with. Paste it at the
-  prompt so it stays out of shell history, then press Ctrl-D:
+**Images are built by CI, not by hand.** `.github/workflows/ci.yml` publishes
+`ghcr.io/<owner>/<repo>:<full-commit-sha>` on every merge to `main`, after the backend and frontend
+checks pass. It never deploys: every step below stays manual. See `infra/azure/README.md`,
+"Image publishing (GitHub Actions to GHCR)", for package visibility and access.
+
+- [ ] **devops. Pick the tag.** Use the full 40-character SHA of the `main` commit being deployed. Its
+  CI run must be green, and that run's summary shows the image and digest. `$TAG` is used by every
+  step below:
+  `TAG=<full-commit-sha>`
+  For a public package, `docker buildx imagetools inspect ghcr.io/<owner>/<repo>:$TAG` confirms that
+  the image exists.
+- [ ] **Fallback only: build and push by hand.** Use this only if CI cannot publish (see the
+  `infra/azure/README.md` section named above). **You. Log in to GHCR** with a GitHub classic personal access token that has
+  `write:packages`. This is a different token from the `read:packages` one the Container App pulls with.
+  Paste it at the prompt so it stays out of shell history, then press Ctrl-D:
   `docker login ghcr.io -u <github-user> --password-stdin`
-- [ ] **devops. Build, tag and push** from a clean tree (step 3), with the commit hash as the tag.
-  Never reuse a tag and never use `latest`: rollback depends on each revision naming a distinct image.
-  `--platform linux/amd64` is what Container Apps runs, and it matters if you build on Apple Silicon.
+  **devops. Build, tag and push** from a clean tree (step 3), with the full commit hash as the tag,
+  the same scheme CI uses. Never reuse a tag and never use `latest`: rollback depends on each revision
+  naming a distinct image. `--platform linux/amd64` is what Container Apps runs, and it matters if you
+  build on Apple Silicon.
   ```sh
-  TAG=$(git rev-parse --short=12 HEAD)
+  TAG=$(git rev-parse HEAD)
   docker build --platform linux/amd64 -t bike-trip-journal:$TAG .
   docker tag bike-trip-journal:$TAG ghcr.io/<owner>/<repo>:$TAG
   docker push ghcr.io/<owner>/<repo>:$TAG
@@ -271,10 +284,11 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
   revision keeps serving during and after this, so a migration must keep working with the previous image
   too (see step 8, "Schema is forward-only").
 - [ ] **devops. Update the Container App** to the new tag. In multiple-revision mode this creates a new
-  revision. The suffix makes its name `<app-name>--rel-<tag>`:
+  revision. The suffix makes its name `<app-name>--rel-<tag>`, where `<tag>` is the **first 12
+  characters** of the SHA. The full 40 would push the revision name past Azure's length limit:
   ```sh
   az containerapp update --name <app-name> --resource-group <resource-group> \
-    --image ghcr.io/<owner>/<repo>:$TAG --revision-suffix rel-$TAG
+    --image ghcr.io/<owner>/<repo>:$TAG --revision-suffix rel-${TAG:0:12}
   ```
 - [ ] **devops. Read the new revision's name and check its health**:
   ```sh

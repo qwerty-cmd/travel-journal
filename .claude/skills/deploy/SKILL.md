@@ -16,8 +16,8 @@ Deployment target is Azure Container Apps (free tier), built from the repo-root 
    - **The Graph secrets go on the Job only.** The web app never reads them (only `onedrive_sync.py` does), so least privilege keeps the long-lived OneDrive credential off the internet-facing app.
 
 **Every deploy:**
-1. Build the image from the repo-root `Dockerfile` (multi-stage: builds the frontend, then the Python runtime serves both).
-2. Push to GitHub Container Registry (GHCR) — the user's choice; ACR has no free tier and is not used.
+1. **Pick the image — don't build it.** Every push to `main` that passes CI publishes `ghcr.io/<owner>/<repo>:<full-commit-sha>` via `.github/workflows/ci.yml` (never `latest`; the workflow only builds and pushes, it never deploys). Deploy that exact SHA tag; the run summary shows the image reference and digest.
+2. Only if CI can't publish (e.g. GitHub Actions down): build the repo-root `Dockerfile` and push to GHCR by hand with the same full-SHA tag — runbook §6 "fallback". ACR has no free tier and is not used.
 3. **Apply migrations against Neon before moving traffic** (`python -m app.data.migrate`, run by the owner with the production `DATABASE_URL`). Migrations are forward-only; a new revision must never serve an old schema.
 4. Update the Container App to the new image tag. Update the OneDrive sync Container Apps Job to the same tag (`az containerapp job update --image`), so it never runs a stale image against a newer schema — see `infra/azure/README.md`.
 5. Confirm `/api/health` responds and the SPA loads, before considering the deploy done.

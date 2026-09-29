@@ -1,0 +1,253 @@
+# CI: validate every PR and every push to main; on main, publish the image to GHCR.
+#
+# SCOPE: this workflow BUILDS AND PUBLISHES ONLY. It never deploys.
+#   - No Azure login, no `az` commands, no Container App revision or traffic
+#     change, and no OneDrive sync Job update.
+#   - It uses no secret other than the built-in, per-run GITHUB_TOKEN (scoped to
+#     `packages: write` in the publish job only). There is no long-lived PAT here.
+#   - Deploying stays a manual, human-approved step: see
+#     docs/deploy-cutover-runbook.md section 6, which picks up the image this
+#     workflow publishes as ghcr.io/<owner>/<repo>:<full-commit-sha>.
+#
+# Jobs:
+#   backend  - ruff lint + format check, OpenAPI snapshot drift check, pytest
+#              against Postgres 16 (service container) and a moto S3 stub.
+#   frontend - npm ci, vitest, vite build + tsc --noEmit.
+#   publish  - needs both; runs only for a push to main, or a manual
+#              workflow_dispatch run on main. Never runs for pull requests.
+#
+# All env values below are throwaway test values for disposable CI services,
+# not real credentials.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Workflow-wide default: read-only. Only the publish job widens this.
+permissions:
+  contents: read
+
+# A newer PR push supersedes the older run. Runs on main are never cancelled,
+# so every merged commit gets its own published image.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bike_trip
+          POSTGRES_PASSWORD: bike_trip
+          POSTGRES_DB: bike_trip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bike_trip -d bike_trip"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Read by app.core.config.Settings (no backend/.env exists in CI).
+    env:
+      DATABASE_URL: postgresql://bike_trip:bike_trip@localhost:5432/bike_trip
+      S3_ENDPOINT_URL: http://127.0.0.1:9000
+      S3_ACCESS_KEY_ID: ci-test-access-key
+      S3_SECRET_ACCESS_KEY: ci-test-secret-key
+      S3_BUCKET_NAME: bike-trip-photos
+      # `auto`, as in .env.example and R2 prod: NOT us-east-1. For us-east-1
+      # botocore presigns S3 GETs with legacy SigV2 (AWSAccessKeyId/Signature),
+      # which fails the SigV4 assertions in test_presign_public_endpoint.py and
+      # test_photo_upload_storage.py.
+      S3_REGION: auto
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Same uv and Python as the Dockerfile (uv==0.8.17, python:3.12), so
+      # `uv sync --frozen` reads uv.lock with the resolver that wrote it.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.8.17"
+          python-version: "3.12"
+          working-directory: backend
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+      # A stale frontend/openapi.json means the Kubb-generated client no longer
+      # matches the API. Same dump command as CLAUDE.md; a diff fails the job.
+      - name: OpenAPI snapshot drift check
+        run: |
+          uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+          git diff --exit-code -- ../frontend/openapi.json || {
+            echo "::error file=frontend/openapi.json::frontend/openapi.json is stale. Regenerate it (see CLAUDE.md > Commands) and commit the result together with the regenerated client."
+            exit 1
+          }
+
+      # S3-compatible stub for the storage tests. A MinIO service container is
+      # not usable here: GitHub service containers cannot be given a command,
+      # and the MinIO image needs `server /data`. moto is pinned so a new
+      # release cannot change CI behaviour silently. Note moto does not verify
+      # SigV4 signatures; test_presign_public_endpoint.py checks them itself.
+      - name: Start S3 stub (moto)
+        run: |
+          nohup uvx --from 'moto[server]==5.2.3' moto_server -H 127.0.0.1 -p 9000 > "$RUNNER_TEMP/moto.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -s -o /dev/null http://127.0.0.1:9000/; then
+              echo "moto is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::moto S3 stub did not become ready on 127.0.0.1:9000"
+          cat "$RUNNER_TEMP/moto.log"
+          exit 1
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Show S3 stub log
+        if: failure()
+        run: cat "$RUNNER_TEMP/moto.log" || true
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Node 22 matches the Dockerfile's node:22-alpine build stage;
+      # frontend/package.json declares no engines field.
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `pretest` generates src/routeTree.gen.ts (gitignored) before vitest runs.
+      - name: Tests
+        run: npm test
+
+      # `vite build && tsc --noEmit`: the type-check is part of the build.
+      - name: Build
+        run: npm run build
+
+  publish:
+    name: publish image to GHCR
+    needs: [backend, frontend]
+    # Push to main, or an intentional manual run on main. Never pull_request.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # GHCR rejects upper-case repository names, and github.repository keeps
+      # the owner's casing. Context values go in via env, not inline in the script.
+      - name: Compute image reference
+        id: ref
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          name="ghcr.io/${REPOSITORY,,}"
+          {
+            echo "name=${name}"
+            echo "image=${name}:${SHA}"
+            echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Exactly one tag: the full commit SHA. Never `latest`, no floating tags;
+      # rollback depends on every revision naming a distinct, immutable image.
+      # provenance/sbom left at the action's defaults (provenance attestation
+      # on, SBOM off).
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ref.outputs.image }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.ref.outputs.created }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Job summary
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Published image"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`${IMAGE}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo ""
+            echo "Not deployed. Deploying is manual: docs/deploy-cutover-runbook.md section 6."
+          } >> "$GITHUB_STEP_SUMMARY"
