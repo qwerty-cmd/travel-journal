@@ -50,6 +50,7 @@ empirically disproves another.
 | 27 | Graph credentials on the OneDrive sync Job only, not the web app | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1/§2/§5, `.claude/skills/deploy/SKILL.md` | **Job only** (least privilege) |
 | 28 | Applying the probes: keep the hand-rolled `az rest` PATCH, reject `az containerapp update --yaml` | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1 | `--yaml` **does not wipe secrets** (it re-reads and repopulates via `list_secrets`) — that objection was wrong and is recorded so it is not re-raised. It lost on three other grounds: a temp YAML file breaks this repo's "az CLI blocks in the README, no YAML/Bicep/Terraform" convention, the `containerapp` module pins `CURRENT_API_VERSION = "2025-07-01"`, and its merge depth into the `containers` array could not be verified. Its one real advantage — the SDK polls `Azure-AsyncOperation`/`Location` to completion, which `az rest` cannot — was priced at ~6 lines of retry loop, not a convention change |
 | 29 | Public trips, local accounts, leader-gated membership (supersedes the two-link access model) | spec §2, `core/security.py`, `core/{passwords,sessions,csrf,ratelimit}.py`, `offline/queue.ts`, `0003_accounts_membership.sql`, `architecture-diagram.md` | **Architect ADR, accepted by the orchestrator under the owner's delegation, 2026-09-29.** Entry 21's per-person trigger fired. Username + argon2id password + one-time recovery code, with a `__Host-` cookie session (hash stored). Passkeys, magic links, OAuth, device tokens and bearer tokens lost. Authorization is session + an active `trip_members` row, read every request; **no slug is a write credential**. Trips are public by default with a 24 h delay; legacy trips migrate to private; private → 404. Join requests are per person; peer leaders can't remove each other. Revoked riders' queued items get 403 with no grace window. **The `ErrorCode` ruling Entries 6/14 require:** `UNAUTHENTICATED` 401 (queue pauses) and `RATE_LIMITED` 429 (retries). New dependency `argon2-cffi`. Invariants unchanged. Reopen on passkeys, or on max-replicas > 1 (rate limits to Postgres) |
+| 30 | Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7 | `frontend/src/styles/{tokens,base}.css`, `main.tsx`, `TripMap.{tsx,css}`, `vite.config.ts`, `frontend/src/icons/LICENSE`, `CLAUDE.md` Stack | **Architect ruling, accepted by the orchestrator under the owner's delegation, 2026-09-29.** `tokens.css` + `base.css` + one BEM-lite `Component.css` per component, with no new dependency. **CSS Modules lost on cost:** tokens and `.leaflet-*` overrides stay global anyway, and switching later is mechanical. **Tailwind lost:** it changes the locked stack, duplicates the tokens and gives nothing a DESIGN.md-driven spec needs. **No `@layer`**, because unlayered Leaflet CSS would beat it. D2 light only, D3 system fonts, D4 16 vendored MIT/ISC icons, D5 stock OSM, D6 56px bottom Add-stop bar, D7 Discover with "Your trips" on top and no redirect. Reopen: class collisions → CSS Modules |
 
 ---
 
@@ -2375,3 +2376,101 @@ To verify during implementation: that Azure Container Apps ingress appends exact
 - **A group sign-up need** (e.g. the leader asks for one link for a whole group): §5's `join_parties` table, which still binds grants to accounts.
 - **Live public position requested**: the 24 h default was chosen for rider safety, and changing it for all trips needs that reason answered.
 - **Per-stop hiding**: promote the ordinary-debt "hide from public" item if a published first stop is seen to be a home.
+
+### Contract-level defaults (BA, accepted)
+Where the ADR was silent, `ba` chose these while writing the contract. The orchestrator accepted them as written (2026-09-29), and they now stand in `docs/api-contract.md`. Each can be reversed without reopening this entry. Defaults 1, 3 and 10 are the three places the ADR was ambiguous or missing something; the others fill smaller gaps.
+1. **Session check first on v2 writes:** session → trip → role on v2, while legacy keeps the ADR's slug → session → role; this avoids a never-retry 404 on private-trip queue items whose only problem is an expired session.
+2. **"Non-member" for private-trip 404s:** for v2 writes and the members list it means no membership row at all (a revoked member gets 403 "no longer a rider"); for v2 reads it means anyone who isn't an active member.
+3. **Photo cap is 422, not 413:** 413 maps to INTERNAL_ERROR and would retry forever, a new code would need its own ruling; a `Content-Length` over 16 MiB is refused before the body is read.
+4. **`CONFLICT` covers state conflicts:** username taken, caps, cooldown, block, last leader, re-deciding a request, unblocking one that isn't blocked, the 20-trip lifetime cap.
+5. **Locked account returns 429 with `Retry-After` even for correct credentials:** signup's 409 already reveals username existence, and an unknown username still runs a dummy argon2 verify, so nothing new leaks.
+6. **Wrong-credential statuses:** wrong current password on password change or rotation → 403 (so the app doesn't treat it as signed out); signin and recover failures → 401; a disabled account → the same 401.
+7. **401 carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`:** RFC 9110 requires it, the scheme triggers no browser dialog, and a 401 clears the cookie when one was sent.
+8. **Input rules:** username `^[a-z0-9][a-z0-9_.-]{2,31}$` after lowercasing; displayName 1–40; password NFKC, 15–128 code points, no control characters, not trimmed; trip name 1–100; `TripCreate.id` a canonical UUID, the one create that validates id format.
+9. **Recovery code format:** 26 Crockford base32 characters, stored as SHA-256 (128-bit random, so no argon2 needed); input ignores case, hyphens and spaces.
+10. **Two added endpoints:** `POST /api/v2/auth/recovery-code` (rotation, password re-entry required) and `GET /api/v2/me/trips`.
+11. **Session re-issue:** a password change or recovery revokes all sessions then signs in the requesting device; signing up while signed in deletes the previous session.
+12. **Cookie refresh:** when `last_used_at` is bumped (at most daily), the cookie is re-issued with a fresh `Max-Age`.
+13. **CSRF details:** the `Origin` check compares host and port only (TLS terminates at the ingress), `Origin: null` fails, and the CSRF 403 is middleware-level and not listed per endpoint, like 405.
+14. **Rate limits:** "public GETs" is every `/api` GET/HEAD except health; unbucketed session-gated unsafe routes share the 600/hour `writes` bucket; `signin` also covers password change and rotation; trip-create replays spend no token; signout, health and the catch-all are unlimited; `TRUSTED_PROXY_HOPS` defaults to 1 in `config.py` and `.env.example` is untouched.
+15. **Public list:** trips with no visible stops are listed last; sort is `lastPublicStopAt` descending nulls last, then `id`; the cursor is opaque; `limit` defaults to 20 within 1–50; the list is identical for every caller.
+16. **`TripOut` is one model for both paths:** it gains `visibility`, `viewer`, `publicDelayHours`, `riderCount` and `lastPublicStopAt`; `access` is kept, deprecated, and derived from membership.
+17. **Revoked and blocked users report `viewer.role` = `none`:** the requester sees `blocked` as `rejected`.
+18. **Unblock:** `blocked` → `rejected`, keeping the original `decided_at`, so the 7-day cooldown still counts from the original decision; no new state.
+19. **Self-leave doesn't start the cooldown:** only a revocation by someone else does.
+20. **Decisions are one per request:** bulk approve/reject is the UI looping over the endpoint; the same decision repeated is idempotent, a different one is 409.
+21. **Legacy writes accept either slug as the locator:** the membership gate is the only authorisation.
+22. **Legacy GETs stay full and undelayed** for either slug, rider slugs included, until the removal task.
+23. **Photos store a name snapshot:** `photos.uploaded_by` holds the account's `display_name` at upload time, and `created_by` records the account.
+24. **Delete behaviour:** `trip_members.user_id` and `join_requests.user_id` are `ON DELETE RESTRICT`, authorship columns `SET NULL`, sessions `CASCADE`; `trip_members` has a surrogate id plus a partial unique index on active rows, so revocation history is kept.
+25. **No EXIF backfill for existing S3 objects:** production hasn't been seeded, and local legacy photos went through the client's canvas re-encode.
+26. **Membership changes lock the trip row** (`SELECT … FOR UPDATE`) to keep the last-leader rule safe under concurrency.
+27. **Tests use `https://testserver` and a default `Origin` header** so Secure cookies and CSRF behave as in production.
+28. **Local dev on Safari is not supported** for `__Host-`/Secure cookies over `http://localhost`; Chrome and Firefox accept them.
+
+**Passkeys trigger (orchestrator, 2026-09-29).** The ADR filed passkeys as triggered debt without a concrete trigger, and `ba` declined to derive one. The orchestrator supplied it: a rider is locked out with no recovery code, a phishing incident against a trip account, or the owner asks for passwordless sign-in (`t-am-passkeys`).
+
+---
+
+## 30. Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7
+
+**Ruling:** the `architect`, for `t-am-styling-ruling`. The orchestrator accepted it on 2026-09-29 under the autonomy the owner delegated (Entry 29's delegation covers documented stack changes). The owner did not rule on it personally. HIGH confidence. No escalation, because there is no new dependency and no config change.
+
+**Who disagreed:** this is not an agent-vs-agent dispute. CLAUDE.md makes the styling approach, fonts, icon set and map theme locked-stack calls that the `designer` **recommends and never assumes**. `t-am-design-spec` left them open as recommendations (D1–D7), and the architect ruled on each one. Three styling approaches were compared, and the two that lost are recorded below so they are not re-proposed without new evidence.
+
+### D1: plain CSS with custom properties (chosen)
+- **Layout.**
+  - `frontend/src/styles/tokens.css` holds `:root { --… }` and nothing else.
+  - `frontend/src/styles/base.css` holds the reset, `html`/`body` type, the focus ring, `.visually-hidden`, and a `prefers-reduced-motion` rule that zeroes the `--motion-*` tokens.
+  - Both are imported once, tokens first, at the top of `frontend/src/main.tsx`.
+  - Each component gets a plain `Component.css` beside `Component.tsx`, which imports it.
+  - Class names are BEM-lite with one block per file (`.btn`, `.btn--primary`, `.btn__icon`), and the block is named after the component.
+- **Tokens.** Names follow the DESIGN.md §4 rule: replace `/` with `-` and add a `--` prefix (`color/brand/primary` → `--color-brand-primary`, `space/4` → `--space-4`). Sizes are in rem (§4.2). Breakpoints can't be custom properties inside `@media`, so they are literal `768px`/`1024px` with a comment naming the token. The `theme_color` in `vite.config.ts` stays a literal and **must equal `--color-brand-primary`**, because nothing enforces that.
+- **Leaflet.** Keep `import "leaflet/dist/leaflet.css"` in `TripMap.tsx` and import `./TripMap.css` after it, so the `.leaflet-*` overrides win by source order.
+  - **No `@layer`.** Leaflet's CSS is unlayered, and unlayered rules beat layered ones, so layering our overrides would make them lose.
+  - `base.css` may set `img { max-width: 100% }`, because Leaflet 1.9's `!important` `.leaflet-container img` rule protects the tiles.
+  - The map frame gets `isolation: isolate`, which keeps Leaflet's z-indexes (up to 1000) under the bars, toasts and dialogs.
+- **Vitest/jsdom.** No CSS config is needed, because CSS imports become empty modules. This was verified: `TripMap.test.tsx` passes while it imports `leaflet.css`. Tests assert role, text and ARIA, and never computed style.
+- **Service-worker precache.** `globPatterns` already include CSS. Vite emits CSS per chunk and Workbox precaches all of it, which adds a few KB.
+
+### Rejected alternatives: the losing positions
+- **(b) CSS Modules.** The case for them: locally scoped class names, so two components can never collide. Why they lost on cost:
+  - the tokens and the `.leaflet-*` overrides have to stay global anyway, so the scoping covers only part of the CSS;
+  - they add `styles.x` ceremony, hashed class names in the DOM and `*.module.css` typings.
+
+  Switching later is mechanical (rename the file, swap string class names for `styles.x`), so nothing is lost by waiting until collisions actually appear.
+- **(c) Tailwind.** The case for it: utility classes, and parity with Stitch's exported markup. Why it lost:
+  - **it changes the locked stack and adds a build dependency;**
+  - it duplicates the tokens in its own config, so DESIGN.md's tokens would live in two places;
+  - it produces long class strings and makes design review harder.
+
+  Stitch export parity isn't needed, because DESIGN.md is the spec and a Stitch export is only a mockup.
+
+### D2–D7: design defaults, confirmed as recommended
+- **D2.** No dark mode in v1. Ship `color-scheme: light`.
+- **D3.** System font stack, no web font.
+- **D4.** 16 in-house icons with no runtime icon package.
+  - SVG paths may only be vendored from Lucide (ISC; Feather-derived parts MIT), Feather (MIT) or Tabler (MIT).
+  - The upstream copyright/permission notice goes in `frontend/src/icons/LICENSE`, and each file gets a source comment.
+  - No GPL, CC-BY-SA or unlicensed sources.
+- **D5.** Stock OSM tiles with visible attribution. Revisit after the trip.
+- **D6.** Add stop is a full-width bottom bar, 56px tall, with the safe-area inset.
+- **D7.** A returning rider lands on Discover with "Your trips" on top, with no auto-redirect. This confirms DESIGN.md C10, and it is consistent with Entry 29 replacing Entry 18's `/` redirect.
+
+### What follows
+- `t-am-fe-styling-foundation` implements D1 exactly as laid out above. CLAUDE.md's Frontend stack line now names the approach and cites this entry (`t-am-claude-md`).
+- **Rationale that must live beside code when it is built.** The files don't exist yet, and `docs` can't write app source, so `dev` should add these comments in the implementing patch:
+  - in `TripMap.css`, why there is no `@layer` and why the import order matters;
+  - in `tokens.css`, the `theme_color` = `--color-brand-primary` pairing and the literal-breakpoint rule;
+  - a pointer to this entry at the top of `base.css`.
+
+  Those are the places where someone would reintroduce `@layer` or a framework.
+
+### Reopen triggers
+- **Class collisions appear** (two blocks fight over a name, or BEM-lite discipline breaks down in review): move to **CSS Modules**. It is a per-file mechanical upgrade and needs no dependency.
+- **The owner asks for Tailwind, or a design tool's export becomes the source of truth instead of DESIGN.md:** reopen (c). That is a locked-stack change and needs the owner, not just the delegation.
+- **Leaflet ships layered CSS** (or the map library changes): revisit the no-`@layer` rule.
+- **A dark-mode request** reopens D2. The tokens make it a `:root` override, not a rewrite.
+- **A brand font is wanted** reopens D3. Check the precache size and the licence first.
+- **More icons than the in-house set can sensibly carry**, or an icon from a source outside the D4 licence list, reopens D4.
+- **After the trip, or if OSM tile usage policy / attribution becomes a problem**, reopens D5.

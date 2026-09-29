@@ -2027,3 +2027,525 @@ TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the qa pass on `t-probe-patch-scr
 - Current consumer: none. The owner has not run either block, and a fence label does not change what Git Bash does with a pasted block.
 - **Promotion trigger: anyone running those blocks under `sh`/dash** (a `sh infra-create.sh`, a CI step, or a non-bash default shell). Also fires if either block is lifted into a script file.
 - Agent: `devops`.
+
+## t-am-contract-doc
+**Goal.** Put the Entry 29 contract into writing before any code.
+**Scope.**
+- `docs/api-contract.md`: the text from ba's Deliverable 1, placed as marked.
+- `docs/decision-log.md`: Entry 29 plus an index row. It records the ADR, the orchestrator ruling, supersedes spec §2 "Friend access", and reopens Entry 21 with the trigger that fired being "writes gated per person". Include ba's defaults list.
+- `docs/architecture-diagram.md`: the Entry 29 §13 edits.
+- `docs/progress.json` and these notes.
+**AC.**
+- The contract contains all eight `ErrorCode`s, the status map, the queue classification table, the Access / Sessions / CSRF / Rate limits sections, the v2 endpoint table, the changed legacy rows, the photo JPEG/EXIF/15 MiB → 422 section and its justification, the models-by-file additions, and the identity × trip matrix.
+- The old "no accounts" text is gone from the Access section.
+- Entry 29 cites the ADR's §15 test obligations.
+- The diagram shows the "Anonymous viewer / signed-in rider" client box, the "HTTPS /api/* (session cookie)" arrow, the "Identity: local accounts in Postgres, no IdP" note, and the authZ / rate-limit / single-replica bullet.
+**Validation.**
+- `git diff --stat` touches only `docs/`.
+- `grep -c "UNAUTHENTICATED" docs/api-contract.md` returns ≥ 3.
+- `grep -n "Entry 29" docs/decision-log.md` hits the index row.
+
+DONE 2026-09-29 (docs).
+
+## t-am-claude-md
+**Goal.** Bring CLAUDE.md in line with Entry 29. The orchestrator writes it (Entry 12).
+**AC.**
+- Stack names local accounts, argon2id, the `argon2-cffi>=25.1,<26` dependency and cookie sessions.
+- Architecture invariants are unchanged, with a note that identity is Postgres-only with no IdP.
+- Conventions say tests use an `https://testserver` base URL and send `Origin`.
+- The testing-rigor priority adds "authentication/session" under access control.
+**Validation.** `git diff --stat` shows `CLAUDE.md` only; review.
+
+DONE 2026-09-29 (orchestrator). Checked against `CLAUDE.md` on disk: Stack has an "Identity & access" line (local accounts in Postgres, argon2id via `argon2-cffi>=25.1,<26`, one-time recovery code, `__Host-btj_session` cookie with only its SHA-256 stored, no identity provider, writes authorised by an active `trip_members` row, slugs are locators, cites Entry 29). The Frontend line gains the styling approach and cites Entry 30. Conventions say backend tests use `https://testserver` and send a same-origin `Origin`. The testing-rigor line reads "access control (incl. authentication/sessions/CSRF)". The architecture-invariants list is unchanged. The "no IdP" note sits in the Stack line, not under the invariants heading; that meets the AC's intent, but its wording is not exact.
+
+## t-am-contract-models
+**Goal.** Machine-readable contract only. No routes.
+**Scope.** `models/common.py`, `models/account.py`, `models/join_request.py`, `models/member.py`, `models/trip.py` (new classes only; `TripOut` is **not** changed yet), `core/errors.py`, `api/responses.py`, tests, `frontend/openapi.json`, `frontend/src/api/gen/`.
+**AC.**
+- `ErrorCode` has exactly eight members.
+- `code_for_status(401)` is `UNAUTHENTICATED` and `code_for_status(429)` is `RATE_LIMITED`.
+- `ApiError.unauthenticated(msg)` renders a 401 envelope with `WWW-Authenticate: Cookie realm="bike-trip-journal"`.
+- `ApiError.rate_limited(msg, n)` renders a 429 envelope with `Retry-After: n`, and n < 1 raises `ValueError`.
+- The `__init__` pairing backstop rejects `(401, RATE_LIMITED)` and similar mismatches.
+- `ERROR_RESPONSES` has 401 and 429, and the 429 declares a `Retry-After` header.
+- Every new model field has a real `description=`. Constraints match the contract: username regex, password 15–128 after NFKC with no `Cc`, displayName 1–40, message ≤ 280, `TripCreate.id` a canonical UUID, `TripPatch` rejects null.
+- The queue's `NEVER_RETRY` set is unchanged.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_error_envelope.py tests/test_openapi_error_responses.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-migration-0003
+**Goal.** Deliverable 2's schema.
+**Scope.** `backend/migrations/0003_accounts_membership.sql`, `migrations/README.md` (files table), `app/data/tables.py`, `tests/test_schema.py`, new `tests/test_migration_0003.py`.
+**AC.**
+- The SQL is exactly as specified.
+- A second `migrate` run applies nothing.
+- `test_schema` is green, and `tables.py` mirrors every column, constraint and partial index.
+- Obligation 13: on a database seeded before 0003 (two trips with slugs, stops, photos, bikes), after migrating:
+  - every trip has `visibility='private'` and `public_delay_hours=24`;
+  - slugs are byte-identical;
+  - row counts are unchanged in every table;
+  - `trip_members` and `join_requests` are empty.
+- The partial unique index rejects a second pending request for the same (trip, user) and allows a second non-pending one.
+- `ux_trip_members_active` rejects two active rows and allows an active row plus a revoked row.
+- `trips_slugs_paired_check` rejects a row with one slug `NULL`.
+- **The pre-0003 image still works:** the previous commit's endpoint tests pass against the migrated database.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run python -m app.data.migrate && uv run python -m app.data.migrate
+cd backend && uv run pytest tests/test_schema.py tests/test_migration_0003.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+git worktree add ../btj-pre0003 HEAD~1 && cd ../btj-pre0003/backend && uv sync && uv run pytest tests/test_trip_metadata_endpoint.py tests/test_stops_create_endpoint.py tests/test_photo_endpoints.py tests/test_bikes_create_endpoint.py tests/test_bikes_patch_endpoint.py tests/test_seed_trip.py
+```
+Adjust `HEAD~1` to the commit before this patch. Remove the worktree afterwards.
+
+## t-am-identity-core
+**Goal.** Password, session and CSRF primitives, plus the `require_session` dependency. No auth routes.
+**Scope.**
+- `core/passwords.py`, `core/sessions.py`, `core/csrf.py`
+- `data/repositories/users.py`, `data/repositories/sessions.py`
+- `core/security.py`: `require_session` only
+- `main.py`: CSRF middleware wiring
+- `pyproject.toml` / `uv.lock`: `argon2-cffi>=25.1,<26`
+- `tests/conftest.py`: default client base URL `https://testserver` and `Origin: https://testserver`
+- tests
+**AC.**
+- **Passwords.**
+  - argon2id with m=19456 KiB, t=2, p=1.
+  - Hashing and verifying run in `asyncio.to_thread` behind a module-level `Semaphore(2)`.
+  - A dummy-hash verify is available for unknown users.
+  - Passwords are NFKC-normalised before hashing.
+- **Sessions** (obligation 9, core half):
+  - Tokens are 32 bytes from `secrets` and base64url-encoded.
+  - The database holds only the 32-byte SHA-256, which a test asserts by reading the row.
+  - A token is valid iff it is within 90 days of `last_used_at` and before `absolute_expires_at` (created + 365 d).
+  - `last_used_at` is written only when more than 24 h old.
+  - `require_session` returns 401 `UNAUTHENTICATED` for a missing, garbage, expired, over-cap or deleted token, and for a disabled user. It clears the cookie when one was sent.
+- **CSRF** (obligation 8), for every unsafe method on a real `/api` path:
+  - `Sec-Fetch-Site: cross-site` or `same-site` → 403 `FORBIDDEN` envelope with the security headers.
+  - `same-origin` or `none` → passes.
+  - With `Sec-Fetch-Site` absent: a missing `Origin`, `Origin: null` or a mismatched host → 403; a matching `Origin` → passes.
+  - GET, HEAD and OPTIONS are never checked.
+  - The existing suite stays green with the conftest defaults.
+- **Nothing sensitive in output** (obligation 16, core half): a caplog test drives hash, verify and session create/resolve and asserts that no password, token or hash string appears in any log record.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv sync && uv run pytest tests/test_passwords.py tests/test_sessions.py tests/test_csrf.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+## t-am-auth-endpoints
+**Goal.** The eight `/api/v2/auth` endpoints and per-account lockout, exactly as in the contract.
+**Scope.** `api/routes/v2/auth.py` (new package `api/routes/v2/`), `api/routes/__init__.py`, the users and sessions repositories, `tests/test_route_dependency_audit.py`, tests, Kubb regen.
+**AC.**
+- Every status code and body in the contract table and notes.
+- **Cookie attributes** (obligation 9): `Set-Cookie` is exactly `__Host-btj_session=…; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`, with no `Domain`.
+- **Revocation** (obligation 9):
+  - signout deletes only the current row;
+  - signout-all deletes all of the user's rows;
+  - a password change deletes all rows, then exactly one new row exists;
+  - after each, the old cookie gets 401.
+- **Recovery** (obligation 10):
+  - a code works once, and a second use gets 401;
+  - a successful recover revokes every earlier session;
+  - the response carries a new code that works.
+- **Lockout** (obligation 10):
+  - 10 failures → 429 with `Retry-After` ≈ 900 even for the correct password;
+  - the lock is still in force after the app and engine are rebuilt (a new `TestClient` on a fresh app import), because it is read from Postgres;
+  - a success resets the counter.
+- Unknown-username signin runs a verify: a test patches the verifier and asserts it is called.
+- **Me** returns the username. No other auth response contains `password`, `recoveryCode`, the token, or a hash, except signup, recover and rotate, which return `recoveryCode`.
+- **Nothing sensitive in output** (obligation 16): a caplog test over signup, signin, bad signin, recover and password change shows none of the password, code or token in any log record, error message or `pytest` output.
+- **Route audit, interim form:**
+  - signup, signin, signout and recover are exempt from the guard by name (anonymous);
+  - the other auth routes must declare `require_session`;
+  - the "everything under `/api/trips`" test is generalised to `/api/trips` or `/api/v2`.
+- OpenAPI declares 401 / 409 / 422 / 429 per the table, and Kubb is regenerated.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_auth_endpoints.py tests/test_route_dependency_audit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-rate-limits
+**Goal.** In-process limits per the contract's bucket table.
+**Scope.** `core/ratelimit.py`, `core/config.py` (`trusted_proxy_hops: int = 1`, with a description; **`.env.example` is not touched**), limiter dependencies on the existing routes, a new limiter audit test, Kubb regen.
+**AC.**
+- `public-read` covers every legacy and v2 GET/HEAD except `/api/health`.
+- `signup-ip` plus `signup-global`; `signin` shared by signin, recover, password and recovery-code.
+- `writes` on the legacy writes, signout-all and the auth session writes.
+- `trip-create` and `join` are defined, and attached by later tasks.
+- **Obligation 15:**
+  - the (N+1)th request → 429 envelope `RATE_LIMITED` with an integer `Retry-After` ≥ 1;
+  - the key is the right-most `X-Forwarded-For` entry;
+  - requests varying only the left-most entry share one bucket;
+  - with no `X-Forwarded-For`, the socket address is used;
+  - with `trusted_proxy_hops=0`, `X-Forwarded-For` is ignored.
+- Time is injectable, so tests refill without sleeping.
+- A limiter audit asserts that every `/api` route except health, the catch-all and signout declares exactly one limiter dependency.
+- OpenAPI declares 429 on every limited operation, and Kubb is regenerated.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_ratelimit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-write-gate-legacy
+**Goal.** One membership gate. Slugs locate trips but never authorise.
+**Scope.**
+- `core/security.py`: `require_trip_writer` and `require_trip_leader` with a slug locator (a tripId locator is added in `t-am-v2-rider-writes`); module docstring rewritten.
+- `data/repositories/memberships.py` (read side).
+- `routes/stops.py`, `photos.py`, `bikes.py`, `trips.py`.
+- The stops, photos and bikes repositories: `created_by`.
+- `test_route_dependency_audit.py`.
+- `tests/test_access_matrix.py` (new; later tasks extend it).
+- Kubb regen.
+**AC.**
+- The legacy write order is slug (404) → session (401) → active membership (403).
+- 403 messages:
+  - a revoked member gets "You're no longer a rider on this trip.";
+  - any other non-member gets "You're not a rider on this trip."
+- **Obligation 3:** a valid rider slug with no session → 401 on all four legacy writes; the same slug with a non-member session → 403; with an active rider → 201.
+- Stops, photos and bikes store `created_by`.
+- The photo row's `uploaded_by` is the account's `display_name`, whatever the form sends. The form's `uploadedBy` becomes optional and is ignored.
+- Legacy GET `TripOut.access` is `rider` iff the session user is an active member.
+- **Route audit** (obligation 4):
+  - every unsafe route under `/api/trips/{slug}` declares `require_trip_writer` or `require_trip_leader`;
+  - a synthetic app with an unguarded POST fails the audit;
+  - the `EXPECTED_GUARD` mapping is replaced by per-route-class rules: trip-scoped unsafe → writer/leader; account-scoped unsafe → `require_session` via a named allowlist; anonymous → exempt by name; reads → reader/access;
+  - DELETE is added as an agreed verb.
+- Legacy rows of the obligation 1 matrix are covered in `test_access_matrix.py`.
+- **Known interim state:** until `t-am-queue-accounts`, the current frontend's writes get 401 and retry with backoff. Nothing is lost.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_access_matrix.py tests/test_route_dependency_audit.py tests/test_slug_access.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-v2-public-reads
+**Goal.** Anonymous browsing of public trips, with the delay applied.
+**Scope.** `routes/v2/trips.py` (the GETs plus HEAD siblings), `require_trip_reader`, repository filters, the `TripOut` extension (the legacy GET fills the new fields too), `TripSummaryOut`, `TripPageOut`, cursor encoding, tests, Kubb regen.
+**AC.**
+- **Obligation 2:** GET and HEAD of each v2 trip-scoped read on a private trip, as anonymous, a signed-in non-member, pending and revoked callers, returns a body, status and header set **byte-identical** (after dropping `date`) to the same request with a random nonexistent UUID.
+- **Obligation 11:** with delay 24 and stops at now−30h, now−1h and now+1h:
+  - a non-member sees one stop in `/stops`, one Point and no trail in `/map`, and photos only for that stop;
+  - `/stops/{hiddenStopId}/photos` → 404;
+  - `lastPublicStopAt` equals that stop's time;
+  - a member sees all three;
+  - `publicDelayHours=0` shows everything except the future stop.
+- **Obligation 11, leak check:** `test_no_slug_in_response_bodies.py` is extended to assert that no v2 public response contains either slug, any username, any user id or the string `email`.
+- **List:**
+  - sort order and `nextCursor` paging across 3 pages with `limit=2`;
+  - `limit` 0 or 51 → 422; a garbage cursor → 422;
+  - private trips never appear.
+- `viewer.role` is right for all five roles, and `access` is derived as specified.
+- Reader rows of the obligation 1 matrix are added.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_public_reads.py tests/test_access_matrix.py tests/test_no_slug_in_response_bodies.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-photo-exif-strip
+**Goal.** The server never stores photo metadata, and it accepts JPEG only.
+**Scope.** `core/jpeg.py` (pure Python, no new dependency), `routes/photos.py` (the shared upload helper), tests with fixture JPEGs, Kubb regen only if descriptions change.
+**AC.**
+- **Obligation 12:**
+  - a JPEG carrying APP1/EXIF (including GPS), APP2/ICC, APP13 and COM is stored in MinIO with none of the markers `FFE1`–`FFEF` or `FFFE` before SOS;
+  - APP0, DQT, SOF, DHT, SOS and the image data are byte-identical;
+  - the stored object decodes.
+- PNG, HEIC, GIF, empty and truncated inputs, and a JPEG with no SOS → 422 `VALIDATION_ERROR`, with nothing in S3 and no database row.
+- 15 MiB + 1 byte → 422; exactly 15 MiB → accepted. `Content-Length` over 16 MiB → 422 without the body being read.
+- A replay performs no S3 write (existing test still green).
+- Fill bytes (`FF FF`) and RST markers are handled.
+- The walker has unit tests independent of HTTP.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_jpeg_strip.py tests/test_photo_endpoints.py tests/test_photo_upload_storage.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+## t-am-v2-rider-writes
+**Goal.** v2 creates and patches located by tripId, session checked first.
+**Scope.** `routes/v2/` (stops, photos, bikes writes), a tripId locator for `require_trip_writer`, tests, Kubb regen.
+**AC.**
+- The idempotency three-way branch is identical to legacy, and the gate runs before the replay lookup.
+- The v2 photo form is `id`, `takenAt`, `file` only. EXIF and size rules apply.
+- **Obligation 1, v2 write rows:**
+  - anonymous → 401 for an existing public trip, an existing private trip and a random UUID alike (byte-identical);
+  - a non-member on a private trip → the byte-identical 404;
+  - a non-member on a public trip → 403;
+  - revoked → 403;
+  - rider and leader → 201.
+- Rate bucket `writes`.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_rider_writes.py tests/test_access_matrix.py tests/test_route_dependency_audit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-trip-create-leadership
+**Goal.** Create trips and manage peer leadership.
+**Scope.** The v2 trips create and patch routes, `/me/trips`, the members GET, promote, step-down and leave; the memberships repository (write side); the `trip-create` bucket attached; tests; Kubb regen.
+**AC.**
+- Create is one transaction: the trip (slugs `NULL`, `created_by`, visibility default `public`) plus a leader membership.
+- Replay by the creator → 200. Someone else's id or a legacy id → 409. A non-UUID id → 422.
+- The 4th create in a day → 429, and a replay doesn't spend a token.
+- The 21st lifetime create → 409.
+- PATCH: omit = no change, null → 422, delay outside 0–168 → 422.
+- `/me/trips` lists active memberships with their role.
+- Members GET follows member-read ordering (401 / 404 / 403).
+- **Obligation 6:**
+  - the last leader's step-down or leave → 409 with nothing changed;
+  - with two leaders, one can step down;
+  - two concurrent step-downs (two sessions, `asyncio.gather`) leave at least one leader, because of the trip-row `FOR UPDATE`.
+- Promote on a non-member → 404; on an existing leader → 200.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_trip_leadership.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-join-requests
+**Goal.** The per-person join lifecycle.
+**Scope.** `routes/v2/join_requests.py`, `data/repositories/join_requests.py`, the `join` bucket, tests, Kubb regen.
+**AC.**
+- **Obligation 7:**
+  - a duplicate create while pending → 200 with the same id, message unchanged;
+  - after a reject, a re-request inside 7 days → 409 and at 7 days + 1 s → 201 (injected clock);
+  - reject_and_block → every later create → 409 until unblock, and after unblock the cooldown from the original decision still applies;
+  - cancel, then an immediate re-request → 201.
+- Caps: the 21st pending across trips → 409; the 101st pending on a trip → 409.
+- Private trip create → the byte-identical 404.
+- Approve inserts a rider membership, and the requester's next write succeeds.
+- Repeating the same decision → 200; a different decision on a decided request → 409.
+- The leader list never contains a username.
+- `/me/join-requests` reports blocked as `rejected`.
+- Leader-route rows of the obligation 1 matrix are added.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_join_requests.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-member-revoke
+**Goal.** A leader revokes a rider, effective on the next request.
+**AC.**
+- **Obligation 6:** DELETE on a leader, including yourself → 403.
+- DELETE on a rider → 204 and the row is kept with `revoked_at` and `revoked_by`. Repeating → 204. A never-member → 404.
+- **Obligation 5:**
+  - after revocation, the very next request from the rider's live session is 403 with "You're no longer a rider on this trip", on legacy and v2 stop, photo and bike writes;
+  - that includes replaying a stop id and a photo id already stored;
+  - the database row counts and the MinIO object listing are unchanged by those requests.
+- A revoked rider's re-request inside 7 days → 409. Self-leave does not start the cooldown.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_member_revoke.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-legacy-claim
+**AC.**
+- The rider slug in the body → 201 pending request with `via='legacy_rider_link'`; a repeat → 200 with the same id.
+- **Obligation 7, claim half:** after a claim, the claimant's writes on that trip → 403, and v2 reads of the private trip → 404, until a leader approves.
+- A viewer slug or an unknown slug → 404 with a message identical to `UNKNOWN_TRIP_MESSAGE`.
+- Every join rule applies: cooldown, block, caps, already a member.
+- The slug does not appear in any response, and caplog shows it in no log record.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_legacy_claim.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-operator-clis
+**Goal.** The only ways to make a legacy leader, reset an account or remove a rogue leader.
+**Scope.**
+- `app/data/grant_leader.py` (`--trip-id --username`)
+- `app/data/reset_account.py` (`--username [--disable]`)
+- `app/data/revoke_member.py` (`--trip-id --username`)
+- `seed_trip.py` (`--leader-username`)
+- tests
+**AC.**
+- **grant_leader** inserts or upgrades an active leader membership and is idempotent.
+- **reset_account**, in one transaction:
+  - writes a new recovery-code hash;
+  - deletes all of the user's sessions (**obligation 10**);
+  - clears the lockout;
+  - prints the code once, **after commit**, following the Entry 9 pattern.
+  - `--disable` sets `disabled_at` and deletes the sessions.
+- **revoke_member** can revoke a leader and refuses to remove the last leader (exit 1).
+- **seed_trip `--leader-username`** creates the leader membership in the same transaction as the trip. Without the flag, the behaviour is unchanged.
+- An unknown username or trip → a non-zero exit with no traceback.
+**Human approval.** Agents never run these CLIs against production. Production use is owner-only.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_operator_clis.py tests/test_seed_trip.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+## t-am-runbook-accounts
+**AC.** `docs/deploy-cutover-runbook.md` covers:
+- migration 0003;
+- seeding with `--leader-username`, or `grant_leader` after the owner signs up;
+- the reset, disable and revoke procedures;
+- an explicit warning that rolling back the image restores slug-bearer writes (Entry 29 §12) and is security-degrading;
+- the `TRUSTED_PROXY_HOPS` check.
+**Validation.** `git diff --stat` shows `docs/` only.
+
+## t-am-verify-aca-xff
+**Owner step. NEEDS THE USER.** Against the deployed app, a request with a spoofed `X-Forwarded-For: 1.2.3.4` must be bucketed by the real client IP, which should be the right-most hop. If the ingress appends more than one hop, `TRUSTED_PROXY_HOPS` has to change in the Container App env, which is `infra/` and off-limits without approval.
+**Validation.** A diagnostic log line or a scripted 121-request burst from two networks, recorded in the handover.
+
+## t-am-design-spec
+**Goal.** `docs/design/DESIGN.md` (tokens) plus one spec per screen named in the title.
+**AC.**
+- Each spec names its data sources (the v2 endpoints) and its states: loading, empty, error envelope, offline, and each `viewer.role`.
+- The Publish warning copy covers the first-stop-is-home risk.
+- The recovery-code screen requires an acknowledgement before continuing.
+- Any styling approach, font, icon set or map theme is marked as a recommendation for `t-am-styling-ruling`.
+**Validation.** Files exist under `docs/design/` only.
+
+IN PROGRESS 2026-09-29. `DESIGN.md`, 15 screen specs and 6 mockups were committed in `ee45465`. A reconciliation pass is now running, so do not treat `docs/design/` as final until it closes. `t-am-fe-styling-foundation`'s "tokens match DESIGN.md" AC depends on that final version.
+
+## t-am-styling-ruling
+**Goal.** An architect ruling on the recommended styling approach, recorded in the decision log (next free entry). Escalate only if it changes the locked stack in a way Entry 29's delegation doesn't cover.
+
+DONE 2026-09-29. The ruling is decision-log Entry 30: plain CSS with custom properties (D1), with D2–D7 confirmed. The architect wrote it and the orchestrator accepted it under the owner's delegation. No new dependency, so no escalation. It ran before `t-am-design-spec` closed (that task is still reconciling), even though the tracker lists the spec as its blocker. `t-am-fe-styling-foundation`'s only tracker blocker is this ruling, which is now done, but see the note under `t-am-design-spec`. Its scope is the file layout Entry 30 names: `frontend/src/styles/tokens.css`, `base.css`, and imports at the top of `main.tsx`.
+
+## t-am-fe-styling-foundation
+**Scope.** Only the style layer the ruling names (tokens file(s) and `__root.tsx` shell). No screen logic.
+**AC.**
+- The tokens match DESIGN.md.
+- Existing screens render with no behaviour change: the test suite is green and snapshot-free.
+- The build output stays one artifact.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-fe-auth-screens
+**AC.**
+- `/signup` validates with the contract's rules client-side and shows the server's `message` on 409 / 422 / 429.
+- The recovery code is shown once with copy and a required "I saved it" checkbox, and is never stored in localStorage or IndexedDB (a test asserts this).
+- `/signin` handles 401 and 429 (with a `Retry-After` countdown).
+- `/account` offers sign out, sign out everywhere, change password (403 = wrong current password) and a new recovery code.
+- The current user comes from generated `GET /me`. `{id, displayName}` (no username) is cached in localStorage `btj.me` for offline cold opens and cleared on signout.
+- A `BroadcastChannel` `auth` message fires on sign-in and sign-out.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-verify-ios-cookie
+**Owner step on a real iPhone.**
+1. Sign in in Safari, then open the installed app. Record whether the session is shared or whether you must sign in again.
+2. Capture offline in the installed app, reconnect, and confirm the items send under that app's session.
+
+Record the outcome in `docs/real-device-test-plan.md`.
+
+## t-am-fe-discover-trip-detail
+**AC.**
+- `/` shows Discover: `GET /api/v2/trips` with Load more on `nextCursor`, a "My trips" section from `/me/trips` when signed in, and a "Continue: last trip link" card when `lastSlug` exists. The auto-redirect of Entry 18 is replaced; the Entry 29 routes supersede it.
+- `/trips/$tripId` shows the map, timeline, gallery and bikes from the v2 hooks, a delay note for non-members, and the persisted `TripOut` per tripId as `initialData`.
+- 404 shows "Trip not found" for missing and private alike.
+- No write UI unless `viewer.role` is `rider` or `leader`.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-fe-create-trip
+**AC.**
+- `/trips/new` is signed-in only and generates a UUID at submit time.
+- Choosing public shows the Publish warning.
+- 201 or 200 navigates to `/trips/$tripId`. 409 and 429 show `message`.
+- It is online-only and not queued.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-fe-join-flow
+**AC.**
+- The Request button shows for `viewer.role` none or anonymous; anonymous goes to `/signin` and back.
+- The message counter enforces 280.
+- The pending state offers Cancel.
+- `/account` lists My requests.
+- `/t/$slug`, when signed in and not a member, offers "Ask to join as a rider" (claim). 404 shows "This link can't be used to join".
+- Every 409 message is shown verbatim.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-fe-leader-review
+**AC.**
+- `/trips/$tripId/manage` is leader-only (UI gate; the server enforces).
+- Pending requests have approve, reject, and reject & block with a confirm step. Multi-select loops over the decision endpoint and reports each outcome.
+- The blocked tab offers Unblock.
+- Members: promote, revoke with a confirm step (not shown for leaders), step down, leave. A 409 last-leader message is shown.
+- Settings PATCH covers name, visibility and delay; switching private → public shows the Publish warning.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-queue-accounts
+**Scope.** `offline/queue.ts`, `api/client.ts` (`ApiError.retryAfter` parsed from the header), `offline/QueueNotice.tsx`, queue tests. The IndexedDB schema version is unchanged.
+**AC. Obligation 14, scripted tests:**
+- **401:** the entry is not failed and attempts are unchanged. The drain stops and the notice reads "Sign in to send N items". An `auth` broadcast restarts the drain.
+- **403:** failed, blob kept. "Save photo to this device" downloads the stored JPEG through an object URL and an `<a download>` link.
+- **429 with `Retry-After: 7`:** the next attempt is scheduled at 7 s (fake timers) and does not advance the doubling backoff.
+- **userId hold:**
+  - an entry with a different `userId`, or with a `userId` while signed out, is held: not sent, not failed, counted separately in the notice;
+  - entries without a `userId` (from before the upgrade) are sent.
+- New entries carry `userId` and `{tripId}` payloads sent through the v2 generated clients. Slug payloads still go to the legacy clients.
+- A test pins a frozen copy of the old five-code `NEVER_RETRY` classification and asserts that it retries `UNAUTHENTICATED` and `RATE_LIMITED`.
+- Restart persistence: pause and hold survive a reload.
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-fe-rider-home-restyle
+**AC.**
+- Members see the rider home at `/trips/$tripId`.
+- `/trips/$tripId/add` enqueues v2 payloads with `userId`.
+- `/trips/$tripId/bikes` add and edit go through v2, online-only.
+- The display-name prompt is removed; the name comes from the account.
+- `/t/$slug` is read-only. If the user is an active member (`viewer.role`), it links to `/trips/$tripId`.
+- All restyled screens use DESIGN.md tokens.
+- Add stop has a keyboard-operable "Use map centre" control (DESIGN.md C15).
+**Validation.** `cd frontend && npm test && npm run build`
+
+## t-am-user-guide
+**AC.** `docs/user-guide.md` explains, for friends rather than developers:
+- signup and keeping the recovery code;
+- public vs private trips and the 24 h delay;
+- requesting to join, and what leaders do;
+- old links (claim);
+- queued items waiting for sign-in;
+- saving a failed photo;
+- capturing from the installed app.
+
+No slug or credential values.
+**Validation.** `git diff --stat` shows `docs/` only.
+
+## t-am-legacy-removal
+TRIGGERED DEBT (Entry 29 §12). Filed with its promotion trigger only. **Not scoped.** Trigger: at least 120 days since release **and** no legacy trip still `private` **and** 14 consecutive days of zero hits to `/api/trips/<redacted>` in the redacted access logs.
+
+## t-am-ratelimit-postgres
+TRIGGERED DEBT (Entry 29 §10). Not scoped. Trigger: Container App `max-replicas` > 1.
+
+## t-am-passkeys
+TRIGGERED DEBT (Entry 29 §3). Not scoped. Trigger: a rider is locked out with no recovery code, a phishing incident against a trip account, or the owner asks for passwordless sign-in. (The ADR named no concrete trigger; the orchestrator supplied this one on 2026-09-29.)
+
+## t-am-stop-hide-from-public
+ORDINARY DEBT (Entry 29 §1, accepted residual risk). Not scoped.
+
+## t-am-private-trip-invites
+ORDINARY DEBT, a gap found while scoping. A private trip created in the app returns 404 to non-members and has no slug, so nobody can ever request to join it. Mitigation until then: the leader publishes it, or creates it public (the default). Not scoped.
+
+## t-am-display-name-edit
+ORDINARY DEBT, a gap found while scoping. No endpoint changes `displayName` after signup. Photos keep the name they were uploaded under. Not scoped.
