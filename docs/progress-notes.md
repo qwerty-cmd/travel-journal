@@ -1698,6 +1698,8 @@ NO DECISION-LOG ENTRY: QA's round-1 leak was a review finding that `dev` fixed w
 
 ## t-settings-error-hides-input
 
+PROMOTED AND DONE 2026-09-30 — the user prioritised pre-provisioning debt. `hide_input_in_errors=True` added to `Settings.model_config`; `backend/tests/test_config.py` proves a missing `DATABASE_URL` error names the field and carries no fragment of the GRAPH_* sentinels (fails with the line removed — the refresh-token tail leaked). The token helper test dropped its now-false "raw error echoes a sentinel" precondition; its `main()` assertions are unchanged. Full suite 620 passed.
+
 TRIGGERED DEBT, filed out of `t-graph-refresh-token-helper` 2026-09-29. Do not implement on sight.
 
 `backend/app/core/config.py`'s `SettingsConfigDict` does not set `hide_input_in_errors=True`. So any process that loads `Settings` with a required env var missing gets a pydantic `ValidationError` whose text includes `input_value` tails of the other fields, including the `GRAPH_*` secrets.

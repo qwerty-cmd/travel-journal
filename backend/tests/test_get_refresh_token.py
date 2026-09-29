@@ -27,7 +27,6 @@ from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
-import pydantic
 import pytest
 
 from app.core.config import Settings
@@ -360,13 +359,6 @@ def test_main_invalid_settings_exits_with_field_names_only(
 
     def failing_settings() -> Settings:
         return Settings(_env_file=None)  # type: ignore[call-arg]
-
-    # Precondition: the real error's str() echoes env values (pydantic truncates
-    # the repr, but a sentinel still shows), so this test is meaningful only if
-    # main() avoids echoing it.
-    with pytest.raises(pydantic.ValidationError) as raw:
-        failing_settings()
-    assert "SENTINEL" in str(raw.value)
 
     monkeypatch.setattr(helper, "get_settings", failing_settings)
 
