@@ -42,6 +42,7 @@ empirically disproves another.
 | 19 | M3 offline queue: one IndexedDB store drained FIFO from the page, with retry classification | `frontend/src/` (queue module), `api-contract.md` | **Architect ruling (delegated by user, final).** One auto-increment store holding `{kind, payload, blob?, attempts, lastError}`. A stop is always enqueued before its photos, so FIFO order replaces a dependency graph. The page drains the queue (**never SW Background Sync, which iOS lacks**) and stops at the first retryable failure, with backoff from 5s doubling to a 5min cap. Offline cold open works from TripOut persisted per slug and passed as `initialData`. Rejected: per-entity stores, Background Sync, and persisting the whole Query cache. The contract adds `403`/`404` as never-retry, treats no-envelope failures as retry, and keeps a failed item (blob included) until the rider dismisses it |
 | 20 | Photo upload is one idempotent request; the "resumable multipart" requirement is amended | `routes/photos.py`, `api-contract.md`, spec §4, `CLAUDE.md` Stack | **Architect ruling (delegated by user, final). Changes a sentence in CLAUDE.md's locked Stack section**, but not the technology (still S3), so it is flagged for the user's morning review. S3/R2 multipart parts must be ≥5 MiB except the last. A ~1600px JPEG is under 1 MiB, so it is always one part and there is nothing to resume. Spec §4's two lines cannot both hold, and compression wins. Resumability lives in the queue: the blob persists in IndexedDB, and a replay is `200` with no storage write, over a deterministic key. Rejected: presigned direct multipart and backend-proxied multipart (both still can't resume <5 MiB). **Supersedes** `t-photo-s3-multipart-upload`'s Gate 1 filing |
 | 21 | Write-PIN declined; the rider link stays the only write gate | spec §8, `offline/queue.ts`, `seed_trip.py`, `progress.json` | **Architect ruling (HIGH confidence, no escalation), flagged for the user's morning review because it closes spec §8's open item.** Spec calls the PIN optional everywhere. The rider slug is 256 random bits, so the only threat is a forwarded link, and a PIN is usually forwarded with it. **The PIN lost on cost:** `FORBIDDEN` is never-retry, so a wrong or rotated PIN would permanently fail every queued stop and photo. A safe version needs a 7th `ErrorCode`, a paused-queue state, a prompt UI, per-origin storage and a brute-force policy, all in the top-rigor queue. Mitigation instead: rotate `rider_slug` with one SQL `UPDATE`. Reopen trigger and reopen design are in the body. Spec file left untouched (Entry 20 policy) |
+| 22 | Graph refresh token: mint once and reuse, don't persist the rotated one | `storage/onedrive_sync.py`, `deploy-cutover-runbook.md`, `progress.json` | **Architect ruling (option A).** The code comment's premise that Graph "rotates" the token is wrong: Microsoft issues a new refresh token on redemption but **does not revoke the old one**. Each token dies ~90 days after issue (**MEDIUM confidence for personal accounts**, no published number), so the sync works until mint date + ~90 days. **Option B lost on cost, not correctness:** a single-row Postgres table for the rotated token breaks no invariant, but it touches off-limits token handling and puts a long-lived secret in Neon and its backups, for no gain on a trip under ~80 days. A lapse only pauses archiving; nothing is lost. Runbook now says mint close to departure and record the dates |
 
 ---
 
@@ -1878,3 +1879,74 @@ Do not re-derive this. The agreed shape is:
 
 **Rationale beside the code:** a PIN would be added in `frontend/src/offline/queue.ts`
 (retry classification) and the rider write routes. Anyone reopening it should start from this entry.
+
+---
+
+## 22. Graph refresh token: mint once and reuse — don't persist the rotated one
+
+**Ruling:** architect, 2026-09-30, option A. No escalation: neither option breaks an architecture
+invariant.
+
+**Who disagreed:** the premise written into `backend/app/storage/onedrive_sync.py` (the comment at
+~L132-135, from `t-onedrive-sync-job`) vs the architect's research. The comment says Graph "rotates the
+refresh token on every redemption". Read literally, that means the configured `GRAPH_REFRESH_TOKEN`
+stops working after its first use, so a job that throws the new token away would fail on its second
+run. If that were true, persisting the rotated token (option B) would be required, not optional.
+
+### What the research showed
+
+- Microsoft **issues** a new refresh token when one is redeemed, but **does not revoke the old one**.
+  The configured token keeps working. The comment's premise is wrong.
+- Each refresh token has its own lifetime of about **90 days from issue**. **MEDIUM confidence for
+  personal Microsoft accounts:** Microsoft publishes no specific number for them. So the sync keeps
+  working until **mint date + ~90 days**.
+- A token can die **earlier** than that if:
+  - the account owner revokes sessions,
+  - the app's consent is removed,
+  - an admin resets the account or password, or
+  - `GRAPH_CLIENT_SECRET` expires. The client secret has its own expiry date, set when it was created.
+- Sources: learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens,
+  …/configurable-token-lifetimes, …/v2-oauth2-auth-code-flow.
+
+### The position that lost: option B, persist the rotated token
+
+Store each newly issued refresh token in a single-row Postgres table and redeem that one next time.
+That would keep the token fresh indefinitely, with no 90-day horizon. It is a fair design, and it
+**breaks no invariant**: Postgres is already a synchronous dependency, and access would go through
+`data/`.
+
+### Why it lost
+
+- **It touches off-limits code.** OneDrive token handling needs explicit user approval (CLAUDE.md
+  "Off-limits").
+- **It moves a long-lived secret into Neon**, and from there into every Neon backup and branch. Today
+  the token lives only in the Container Apps secret stores and the owner's password manager.
+- **It buys nothing for this trip.** The trip is under ~80 days, so a token minted close to departure
+  outlives it.
+- **A lapse is cheap.** It only pauses archiving. Photos stay in R2, which is the source of truth, and
+  `list_pending_archive` picks up everything unarchived on the next run after a re-mint. Nothing is lost.
+
+### What follows from it
+
+- `docs/deploy-cutover-runbook.md` §1 (Graph): mint as close to departure as practical, record the mint
+  date and the client-secret expiry date, and check that mint date + 90 days falls after the trip ends.
+  Re-minting means re-running the helper and updating the secret on **both** the app and the Job.
+  §5: the pre-departure preflight uses a freshly minted token. A new "If archiving stops mid-trip"
+  section covers recovery.
+- Filed, both ORDINARY and both needing explicit user approval because they touch off-limits token
+  handling:
+  - `t-graph-token-error-code-logging`: today a rejected token logs only `HTTP <status>`, so an expired
+    token looks the same as an outage. Log the response's `error` code (for example `invalid_grant` /
+    `AADSTS700082`).
+  - `t-onedrive-rotate-comment-misleading`: fix the "rotates" comment.
+
+### Reopen trigger
+
+Reopen option B only if a single trip (or continuous archiving) has to run **longer than ~80 days on
+one mint**, or if a real token is seen dying well before 90 days for reasons other than the early-death
+list above.
+
+**Rationale beside the code:** option B would be built in `backend/app/storage/onedrive_sync.py`,
+right beside the misleading comment. That file is off-limits, so `docs` could not add the rationale
+there. `t-onedrive-rotate-comment-misleading` must replace the comment with the corrected fact **and
+cite this entry**, so that "persist the rotated token" is not re-proposed from the wrong premise.

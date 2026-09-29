@@ -121,6 +121,8 @@
     { "id": "t-onedrive-heic-brand-list", "storyId": "s-photo-upload-onedrive-sync", "title": "_extension's HEIC brand list misses mif1/heix/hevc — those archive as .bin", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
     { "id": "t-photo-s3-multipart-upload", "storyId": "s-offline-queue", "title": "SUPERSEDED — resumable S3 multipart for photo upload; requirement amended by architect ruling (decision-log 20): a compressed photo is always one <5 MiB part, resumability lives in the offline queue; memory-holding half re-filed as t-photo-upload-stream-to-s3", "status": "done", "agent": "dev", "blockers": [], "gate": "broken" },
     { "id": "t-photo-upload-stream-to-s3", "storyId": "s-photo-upload-onedrive-sync", "title": "routes/photos.py — replace await file.read() + put_object with s3.upload_fileobj(file.file, BUCKET_NAME, object_key) so the body streams (boto3 auto-multipart for large bodies)", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-graph-token-error-code-logging", "storyId": "s-photo-upload-onedrive-sync", "title": "onedrive_sync _fetch_token logs only HTTP status on a rejected token — also log the response's error code (e.g. invalid_grant / AADSTS700082) so an expired token is distinguishable from an outage — NEEDS EXPLICIT USER APPROVAL (off-limits token handling)", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
+    { "id": "t-onedrive-rotate-comment-misleading", "storyId": "s-photo-upload-onedrive-sync", "title": "onedrive_sync.py ~L132-135 comment says Graph 'rotates' the refresh token — Microsoft issues a new one but does not revoke the old; correct it and cite decision-log 22 — NEEDS EXPLICIT USER APPROVAL (off-limits token handling)", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-qa-mutation-scratch-tree", "storyId": "s-agent-tool-boundaries", "title": ".claude/agents/qa.md — mutation experiments run in a scratch tree, never the working tree", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "observable" },
     { "id": "t-qa-mutation-hook", "storyId": "s-agent-tool-boundaries", "title": "PreToolUse hook matching write-shaped Bash commands against the project path — enforce qa.md's scratch-tree rule structurally", "status": "not_started", "agent": "orchestrator", "blockers": [], "gate": "triggered" },
@@ -129,10 +131,11 @@
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
 
     { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
+    { "id": "t-pwa-manifest-icons", "storyId": "s-frontend-first-open", "title": "Add 192/512/maskable manifest icons and an apple-touch-icon so the PWA meets Chrome installability (spec §4 Installable)", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-settings-error-hides-input", "storyId": "s-cloud-service-setup", "title": "config.py lacks hide_input_in_errors=True — any process loading Settings with a required env var missing prints tails of GRAPH_* secret values in pydantic's ValidationError", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-token-helper-import-leak-regression-test", "storyId": "s-cloud-service-setup", "title": "No subprocess test pins that importing get_refresh_token does not load settings — re-adding the onedrive_sync import passes all 25 tests", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
     { "id": "t-token-helper-error-body-stdout-test", "storyId": "s-cloud-service-setup", "title": "get_refresh_token error-path test does not check stdout for a printed token-endpoint response body", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
-    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": ["t-onedrive-sync-job"] },
+    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": [] },
 
     { "id": "t-frontend-kubb-client", "storyId": "s-frontend-first-open", "title": "Kubb-generated TS types + TanStack Query hooks for the eight contract operations from a committed OpenAPI snapshot", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
 
@@ -161,5 +164,5 @@
     { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-30T00:40:00Z"
+  "lastUpdated": "2026-09-30T00:50:00Z"
 }

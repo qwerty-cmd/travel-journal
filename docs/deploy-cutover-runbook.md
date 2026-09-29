@@ -70,6 +70,20 @@ Tick each box as you go.
     4. Copy the refresh token it prints into your password manager and into the Azure secret
        `GRAPH_REFRESH_TOKEN` (step 2). The helper writes no file.
     5. Never paste the token into chat, including an agent session, and never commit it.
+  - **When to mint, and how long it lasts** (decision-log Entry 22). The sync reuses this one token for
+    the whole trip. It works until about **90 days after you mint it** (Microsoft publishes no exact
+    number for personal accounts, so treat 90 as approximate).
+    - Mint it **as close to departure as practical**.
+    - Record two dates in your password manager, next to the secrets: the **mint date**, and the
+      **client secret's expiry date** (shown in the app registration when you created the secret).
+      An expired client secret also stops the token working.
+    - Check that **mint date + 90 days falls after the trip ends**, and that the client secret expires
+      after the trip ends too. If either doesn't, re-mint closer to departure or create a longer-lived
+      client secret.
+    - The token can also die early if you revoke your Microsoft sessions, remove the app's consent, or
+      reset your password.
+    - **Re-minting** means re-running the helper above, then updating `GRAPH_REFRESH_TOKEN` on **both**
+      the Container App and the OneDrive sync Job. They have separate secret stores.
   - The exact scope and request shape have not been checked against Graph. Step 5 checks them.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
@@ -141,10 +155,27 @@ Only you do this, because it needs real `GRAPH_*` values.
   `conflictBehavior` placement are all **unverified** until this passes.
 - [ ] If the uploaded filename looks wrong, check `t-onedrive-filename-url-encoding`. That one-line
   fix was meant to be folded into this task.
-- [ ] Run it again close to departure, so the refresh token is known to be healthy when the trip starts.
+- [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
+  token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
+  the app and the Job both carry that new token.
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
+
+### If archiving stops mid-trip
+
+Nothing is lost. Photos stay in R2, which is the real copy, and OneDrive is only an archive. The next
+successful run after the fix archives everything that was missed.
+
+- [ ] **Check the Job's logs.** A token problem looks like `Graph token request rejected: HTTP <status>`
+  followed by `No Graph access token -- run aborted, nothing archived`. The log does not yet say *why*
+  the token was rejected (`t-graph-token-error-code-logging`), so if Microsoft itself is having an
+  outage the lines look the same. If the rejection keeps happening across several runs, treat it as an
+  expired or revoked token.
+- [ ] **Re-mint** the refresh token with the helper (step 1), in your own terminal.
+- [ ] **Update `GRAPH_REFRESH_TOKEN`** on both the Container App and the sync Job.
+- [ ] If re-minting fails too, check whether the client secret has expired (step 1, the date you
+  recorded). If it has, create a new one and update `GRAPH_CLIENT_SECRET` in both places first.
 
 ## 6. Deploy (following `.claude/skills/deploy/SKILL.md`)
 
