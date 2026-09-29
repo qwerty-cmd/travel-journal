@@ -90,7 +90,10 @@ Tick each box as you go.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
   (`allowInsecure: false`). Use **multiple-revision mode**, because the rollback in step 8 depends on it.
-  The definition goes in `infra/azure/`, which needs your approval.
+  The definition goes in `infra/azure/`, which needs your approval (`t-owner-container-app-definition`).
+  It declares the step 2 secrets, including `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and
+  `GRAPH_REFRESH_TOKEN`, and the `/api/health` liveness probe (`t-infra-container-apps-probe`, see the
+  table at the end).
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
   secret store**, separate from the app's, so set its secrets too. Use the same names and the same values
@@ -109,6 +112,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
 | `S3_SECRET_ACCESS_KEY` | secret | R2 token |
 | `S3_BUCKET_NAME` | secret | R2 bucket name |
 | `S3_REGION` | plain env | `auto` |
+| `S3_PUBLIC_ENDPOINT_URL` | **leave unset** | Only for local runs, where the API and the browser reach storage at different addresses (step 3). R2's endpoint works for both |
 | `GRAPH_CLIENT_ID` | secret | app registration |
 | `GRAPH_CLIENT_SECRET` | secret | app registration |
 | `GRAPH_REFRESH_TOKEN` | secret | printed by the `get_refresh_token` helper (step 1) |
@@ -129,7 +133,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
 - [ ] **You. Frontend build and tests:** `cd frontend && npm run build && npm test`. Run the build first.
 - [ ] **You. Client drift check:** run the two regenerate commands from CLAUDE.md "Commands", then
   `git status`. There should be **no diff** in `frontend/openapi.json` or `frontend/src/api/gen/`.
-- [ ] **You. Local smoke test of the production image.** `docker compose up` is not this test: it
+- [ ] **You. Local smoke test of the production image** (`t-owner-compose-smoke-test`). `docker compose up` is not this test: it
   bind-mounts `./backend` over the image and runs `--reload`. Run the built image as-is instead,
   with no bind mount, against compose's Postgres and MinIO. All commands run from the repo root.
   1. Start only the backing services (this also creates the MinIO bucket), and stop the compose `api`
@@ -155,6 +159,10 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
        -e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000 \
        bike-trip-journal:smoke
      ```
+     **Keep the `S3_PUBLIC_ENDPOINT_URL` line whenever you run the image outside compose against a
+     local MinIO.** The API reaches MinIO as `minio:9000`, but your browser can't resolve that name.
+     Photo links are signed for `S3_PUBLIC_ENDPOINT_URL` when it is set, so without it every photo
+     fails to load. Compose sets it for its own `api` service. In production it stays unset (step 2).
   5. Then:
      - Run `curl -i http://localhost:8000/api/health` and expect `200`.
      - Load `http://localhost:8000/` and expect the paste-link screen.
@@ -162,7 +170,7 @@ match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKI
      - Use a trip in your local database only.
      - Check `docker ps`: after about 15 seconds the container shows `(healthy)`.
 
-## 4. Seed the trip in production (story `s-seed-trip-record`)
+## 4. Seed the trip in production (story `s-seed-trip-record`, `t-owner-production-seed`)
 
 Only you do this. Keep it out of any agent session, because it prints the permanent slugs.
 
@@ -174,7 +182,7 @@ Only you do this. Keep it out of any agent session, because it prints the perman
 - [ ] If the script refuses because a trip already exists, **don't** delete the trip and re-seed.
   Recover the existing slugs with the query above instead.
 
-## 5. OneDrive preflight (`t-onedrive-preflight-check`)
+## 5. OneDrive preflight (`t-onedrive-preflight-check`, owner task)
 
 Only you do this, because it needs real `GRAPH_*` values.
 
@@ -184,8 +192,18 @@ Only you do this, because it needs real `GRAPH_*` values.
   `<photo id>.<ext>`. A non-zero exit means one of these: the refresh token has lapsed (401 twice), Graph
   is throttling (429/503), or Graph has rejected the request shape. The URL form, token scope and
   `conflictBehavior` placement are all **unverified** until this passes.
-- [ ] If the uploaded filename looks wrong, check `t-onedrive-filename-url-encoding`. That one-line
-  fix was meant to be folded into this task.
+- [ ] **Archive isolation.** Upload a few good photos plus one you expect to fail. Expected: the good
+  photos archive and the bad one stays pending (it is retried on the next run), with one log line for it.
+  The run exits non-zero, because a photo failed; that is expected here.
+  One bad photo no longer aborts the run (`t-onedrive-per-photo-isolation`, done in `21d34ec`). A
+  practical way to make one fail: delete its object from R2 by hand, then remove that test photo's row
+  afterwards.
+- [ ] **Encoded filenames on real Graph (`t-onedrive-graph-name-charset`).** Filenames are already
+  percent-encoded (`t-onedrive-filename-url-encoding`, done in `21d34ec`), so a name with `#` or `?`
+  no longer breaks the upload URL. What is still unverified is what real Graph does with an encoded `/`
+  (`%2F`) and with characters OneDrive forbids in names (`? : / \ | " * < >`). Every real id is a UUID,
+  so this only matters if a non-UUID id ever appears. Check the archived name matches `<photo id>.<ext>`,
+  and record what Graph did in `t-onedrive-graph-name-charset`'s notes.
 - [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
   token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
   the app and the Job both carry that new token.
@@ -198,17 +216,18 @@ Only you do this, because it needs real `GRAPH_*` values.
 Nothing is lost. Photos stay in R2, which is the real copy, and OneDrive is only an archive. The next
 successful run after the fix archives everything that was missed.
 
-- [ ] **Check the Job's logs.** A token problem looks like `Graph token request rejected: HTTP <status>`
-  followed by `No Graph access token -- run aborted, nothing archived`. The log does not yet say *why*
-  the token was rejected (`t-graph-token-error-code-logging`), so if Microsoft itself is having an
-  outage the lines look the same. If the rejection keeps happening across several runs, treat it as an
-  expired or revoked token.
+- [ ] **Check the Job's logs.** A token problem looks like
+  `Graph token request rejected: HTTP <status> (error: <code>, codes: <AADSTS codes>)` followed by
+  `No Graph access token -- run aborted, nothing archived`. The error code says why
+  (`t-graph-token-error-code-logging`, done in `21d34ec`): `invalid_grant` (for example with
+  `AADSTS700082`) means the token has expired or been revoked, so re-mint. If both read `none given` and
+  the status is a 5xx, Microsoft is more likely having an outage; wait for the next runs.
 - [ ] **Re-mint** the refresh token with the helper (step 1), in your own terminal.
 - [ ] **Update `GRAPH_REFRESH_TOKEN`** on both the Container App and the sync Job.
 - [ ] If re-minting fails too, check whether the client secret has expired (step 1, the date you
   recorded). If it has, create a new one and update `GRAPH_CLIENT_SECRET` in both places first.
 
-## 6. Deploy (following `.claude/skills/deploy/SKILL.md`)
+## 6. Deploy (following `.claude/skills/deploy/SKILL.md`; `t-owner-cutover` covers §6–§7)
 
 devops runs these steps after you have confirmed the cutover.
 
@@ -295,16 +314,14 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 ## Triggered debt to decide at cutover
 
-This cutover fires the triggers on the items below. (`t-onedrive-main-untested` is ordinary debt, not
-triggered debt: provisioning the Job is the point where it gets re-classified.) A fired trigger is not
-approval: each still goes through `ba` and the pipeline, or you decide to accept it.
+One item is still open. A fired trigger is not approval: it still goes through `ba` and the pipeline,
+or you decide to accept it.
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-api-healthcheck-wiring` | Its trigger is `s-deploy-cutover` itself. Nothing probes `/api/health`. | Configure the Container Apps liveness probe on `/api/health` (the `infra/` part needs approval). **In the same patch**, dev must update the route's `description=` in `backend/app/main.py`, which currently says nothing is wired to it. |
-| `t-access-log-slug-exposure` | The uvicorn access log records trip slugs from request URLs. Container Apps sends stdout to Log Analytics by default, so the slugs become stored and searchable. | Accept it, turn off the Log Analytics destination, or add a uvicorn flag or logging config at startup (devops). **Don't** have the app reconfigure `uvicorn.access` at import time: that approach was rejected (decision-log Entries 7b and 13; `core/errors.py`). |
-| `t-dockerignore-route-tree` | A build from a dev working tree carries a stale `routeTree.gen.ts` into the image. | Build from a fresh clone (step 3). Add the file to `.dockerignore` if any CI or build step reads `frontend/src/` before `vite build`. |
-| `t-onedrive-preflight-check` | Nothing is known about whether Graph accepts the request until this runs. | Step 5. Scheduling is decided (step 0, `t-onedrive-sync-scheduler`), so once the job exists, follow step 5's caveat about overlapping runs. |
-| `t-settings-error-hides-input` | If an app revision or the sync Job starts with a required env var missing, pydantic's `ValidationError` includes `input_value` tails of the other settings, **including the `GRAPH_*` secrets**. That stderr goes to the platform logs. | **Recommended before you provision the app or the Job (step 1):** have dev add `hide_input_in_errors=True` to `Settings.model_config` in `backend/app/core/config.py`. Until then, check that every secret in step 2 is set before the first revision or Job run starts. |
-| `t-onedrive-per-photo-isolation` | Fires once the sync Job is actually scheduled (step 1). The S3 read and the read of Graph's returned `id` sit outside the per-photo `try`, so a missing S3 object or a 2xx body without an `id` aborts the whole run instead of skipping that one photo. No path today produces either case, and qa confirmed the traceback leaks no secret. | Accept it, or have dev move both statements inside the existing `try` and `continue`, the same way HTTP failures are handled. |
-| `t-onedrive-main-untested` | `main()`'s configured path (real session, real repositories, real refresh token) has no automated test. qa verified it is correct by running it, so what's missing is regression protection. Once the Job is provisioned, `main()` has a real consumer. | Re-classify it when the Job is provisioned (step 1), not before. |
+| `t-infra-container-apps-probe` | Container Apps ignores the Dockerfile `HEALTHCHECK`, so in production nothing probes `/api/health` until the Container App definition declares a probe. Blocked by `t-owner-container-app-definition` (step 1): it goes into that definition. | Add a **liveness** `httpGet` probe on `/api/health`, port 8000 (about 10s initial delay, 30s period, 5s timeout, 3 failures). Not a readiness probe: `/api/health` does not check Postgres or storage. `infra/` needs your approval. |
+
+Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
+`t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,
+`t-onedrive-per-photo-isolation` (`21d34ec`) and `t-onedrive-main-untested` (`709da23`).
+`t-onedrive-preflight-check` is not debt: it is your step 5.

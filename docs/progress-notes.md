@@ -22,7 +22,7 @@ No API contract change — this task touches no endpoint, request/response shape
 
 ## t-dockerignore-route-tree
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `93a30bf`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `93a30bf`.
 
 Filed by qa during `t-frontend-build-order`, TRIGGERED DEBT — no current consumer, do not implement on sight.
 
@@ -33,6 +33,8 @@ Concrete promotion trigger: **any step added to the `frontend-build` stage that 
 ## s-local-dev-env
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: the compose/Dockerfile/backend skeleton shipped and `t-frontend-build-order` landed, but the story now holds `t-dockerignore-route-tree`, filed against it by qa during `t-frontend-build-order` and still `not_started`. The orchestrator triaged that row and it stays — TRIGGERED is the correct classification (no current consumer; promotion trigger is any `frontend-build` step reading `frontend/src/` before `vite build`) — and while the row survives the story is not done. Same condition and same precedent as the four stories reverted by `2b79e27` (`s-stop-crud`, `s-photo-upload-onedrive-sync`, `s-bike-management`, and `s-agent-tool-boundaries`); applied here rather than left as an exception. `in_progress` rather than `not_started`: `done` tasks sit under it. Closes again when `t-dockerignore-route-tree` is implemented or the debt row is retired.
+
+CLOSED `in_progress` -> `done` 2026-09-29 (review docs pass). `t-dockerignore-route-tree` landed (`93a30bf`), and the review's compose fix `t-compose-minio-bucket-reload` (`a2a4579`) is filed here as done. No open row remains. The one compose-image follow-up, `t-image-digest-pinning`, was filed under `s-deploy-cutover` instead.
 
 ## s-cloud-service-setup
 
@@ -45,6 +47,8 @@ Constraint from decision-log.md Entry 3: the seed script must NOT use INSERT ...
 ## s-data-layer-foundation
 
 Shared prerequisite for all five m2-core-api endpoint stories; owned by none of them. Sequenced first.
+
+CLOSED `in_progress` -> `done` 2026-09-29 (review docs pass). Every task under it is `done`, the last ones in the owner's debt-clearing pass (`709da23`, `91c6e40`, `c9d6b64`). The review's `t-security-headers` (`d2913ad`) touches `main.py` wiring but was filed under `s-deploy-cutover` together with its debt row `t-security-headers-on-500`, so this story holds no open row.
 
 ## s-trip-metadata-endpoint
 
@@ -59,6 +63,8 @@ This story also fires the outstanding half of `t-stops-405-doc-revisit`: registe
 The contract gap this story surfaced — a client-generated id that already exists under a *different* trip — was ruled on by the user before implementation started: `CONFLICT` / `409`, decision-log Entry 14. The four `t-conflict-*` tasks under `s-data-layer-foundation` land that ruling; `t-stops-create-endpoint` consumes it and is no longer blocked on it.
 
 STATUS REVERTED `done` -> `in_progress` 2026-09-16: both endpoints shipped but the story still holds `t-route-dependency-audit` and `t-trip-context-slug-exposure`, the two `gate: triggered` tasks this story's own note above says "both must land with it" — `t-stops-create-endpoint` was the first wired write endpoint and fired their promotion trigger. `in_progress` rather than `not_started` for the same reason `s-agent-tool-boundaries` carries it: `done` tasks sit under it.
+
+CLOSED `in_progress` -> `done` 2026-09-29 (review docs pass). Both guards and every audit follow-up are `done`. The review's `t-stop-coordinate-bounds` (`d2913ad`) is filed here as done. The timezone follow-up `t-stop-rider-offset` concerns stops but was filed under `s-real-device-testing` (see that task), so this story holds no open row.
 
 ## s-photo-upload-onedrive-sync
 
@@ -95,6 +101,8 @@ Lands the user-authored Finding Triage Gate and makes it reach the agents that h
 ## s-agent-tool-boundaries
 
 Covers the gap between what an agent definition PROMISES and what its tool grant ENFORCES. Three tasks: `t-qa-mutation-scratch-tree` (done — the prose rule in `qa.md`), `t-qa-mutation-hook` (the structural version of that same rule, TRIGGERED), `t-docs-agent-unscoped-grant` (the same class of gap through a different channel, ORDINARY). STATUS REVERTED `done` -> `in_progress` 2026-09-16: the story was closed when it had one task and that task landed, and it has since gained two open ones. `in_progress` rather than `not_started` because a story here means "some of its tasks have landed and some have not" — the same reading `s-data-layer-foundation`, `s-stop-crud` and `s-seed-trip-record` carry; `not_started` would contradict a `done` task sitting under it. The general shape: `qa` is described everywhere as having no edit access, but its grant is Read/Bash/Grep — and Bash writes files. The prose guarantee was real, and was being honoured; nothing structural was holding it up. This story is for the cases where that distinction has been noticed and written down, rather than left as an assumption about how agents will behave.
+
+CLOSED `in_progress` -> `done` 2026-09-29 (review docs pass). Both open rows landed in `c9d6b64` as hooks (decision-log Entry 25, including the limits that keep the prose rules necessary).
 
 ## s-deploy-cutover
 
@@ -140,7 +148,7 @@ Dependency + repository only; no endpoint wired. GET /trips/{slug} follows under
 
 ## t-pytest-pythonpath
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (`pythonpath = ["."]` in `backend/pyproject.toml`; the commit is inferred from the batch, not confirmed from the diff).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23` (`pythonpath = ["."]` in `backend/pyproject.toml`; the commit is inferred from the batch, not confirmed from the diff).
 
 The project has no [build-system] so uv never installs it into .venv; `import app` fails under the pytest console script without the bootstrap. QA confirmed `uv run python -m pytest` works without it — that invocation-dependent fragility is why pyproject is the right fix. pyproject.toml was out of scope for the schema task.
 
@@ -153,7 +161,7 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: ordinary`.
 
 ## t-schema-type-drift-check
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23`.
 
 QA confirmed Text vs VARCHAR(20), Double vs REAL, and Integer vs BigInteger all compare equal under column.type.python_type. A migration creating varchar(20) where tables.py declares Text would pass the drift guard. Low urgency: current schema is text/double precision throughout.
 
@@ -166,7 +174,7 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 ## t-tests-readme-stale
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — docs pass, uncommitted at close-out. The `integration/` line was **kept** as the notes below require. The README now says the directory hasn't been created yet, and it maps each of the three priority failure modes to the root-level modules that already test it (the offline-queue scenario lives in the frontend Vitest suite). Nothing was moved.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — docs pass, uncommitted at close-out. The `integration/` line was **kept** as the notes below require. The README now says the directory hasn't been created yet, and it maps each of the three priority failure modes to the root-level modules that already test it (the offline-queue scenario lives in the frontend Vitest suite). Nothing was moved.
 
 First real test landed as tests/test_schema.py at the root. Cosmetic, pre-existing — was outside the schema task's scope.
 
@@ -211,7 +219,7 @@ CLOSEOUT 2026-09-28 — `done`. qa: all 7 acceptance criteria PASS.
 
 ## t-ruff-format-gate
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `8ea0786` (backend formatted, `ruff format --check` joins the gate).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `8ea0786` (backend formatted, `ruff format --check` joins the gate).
 
 ruff format --check would reformat app/core/errors.py and three other files; ruff check alone doesn't cover formatting. Decide whether format joins the validation gate.
 
@@ -278,7 +286,7 @@ TWO ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-route-audit-non-apiroute-gap`
 
 ## t-route-audit-non-apiroute-gap
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23`.
 
 ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
@@ -290,7 +298,7 @@ THE FRAGILITY POINT, IN ITS SHARPENED FORM — record this even if the gap above
 
 ## t-route-audit-new-verb-double-failure
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (the equality stays; its message now names both sides).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23` (the equality stays; its message now names both sides).
 
 ORDINARY DEBT, filed out of `t-route-dependency-audit` 2026-09-17. NO TRIGGER TODAY.
 
@@ -338,7 +346,7 @@ THREE ORDINARY-DEBT ITEMS FILED OUT OF THIS TASK: `t-s3-bucket-fixture-duplicati
 
 ## t-s3-bucket-fixture-duplication
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (one `s3_bucket` fixture, in `conftest.py`).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23` (one `s3_bucket` fixture, in `conftest.py`).
 
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
@@ -350,7 +358,7 @@ WHY IT IS NOT WORK TODAY: no current consumer, and nothing depends on the two co
 
 ## t-slug-audit-minio-overrequest
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23`.
 
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
@@ -360,7 +368,7 @@ WHY IT IS NOT WORK TODAY: no current consumer — CI and local dev both bring Mi
 
 ## t-slug-audit-replay-and-conflict-bodies
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23`.
 
 ORDINARY DEBT, filed out of `t-trip-context-slug-exposure` 2026-09-17. NO PROMOTION EVENT — do not implement on sight.
 
@@ -423,7 +431,7 @@ STATUS CORRECTED `not_started` -> `done` 2026-09-16. NO PATCH WAS WRITTEN FOR TH
 
 ## t-bike-order-collation
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23`.
 
 QA: the local Postgres is Alpine/musl, where en_US.utf8 is unimplemented so the default collation is byte order, identical to C and to Python's sorted(). Neon runs glibc and orders differently — default gives 'ALEX, Alex, Ana, Zoe, alex, Ana-with-accent'; en-US-x-icu gives 'alex, Alex, ALEX, Ana, Ana-with-accent, Zoe'. test_bikes_are_ordered_by_rider_name_then_id compares against Python's sorted(), which agrees with musl by construction. Today the seeded_bikes fixture masks it because rider names differ in their first letter. The moment anyone adds a case- or accent-differing rider name, the test passes locally and fails on Neon. Determinism itself is unconditional (bikes_pkey on id alone makes ORDER BY rider_name, id a total order under any collation) — only the concrete sequence differs. Not urgent; nothing may depend on order per the contract. Note for whoever next edits seeded_bikes.
 
@@ -452,7 +460,7 @@ QA raised two findings, both filed rather than fixed here: t-head-route-kwarg-di
 
 ## t-head-route-kwarg-divergence
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (shares `test_route_dependency_audit.py`'s traversal, as the notes below asked).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23` (shares `test_route_dependency_audit.py`'s traversal, as the notes below asked).
 
 From qa's Finding 1 on t-head-on-get-routes. The two registrations on a path SHARE A HANDLER, so dependencies declared in the HANDLER SIGNATURE stay in sync automatically — that is what makes the second-registration mechanism safe and it is not in question. Dependencies declared as a route-level dependencies=[...] KWARG do NOT: that kwarg belongs to the decorator, not the handler, so it reaches one route of the pair. QA demonstrated it, it did not reason about it — adding Depends(require_rider_access) to the @router.get decorator in app/api/routes/trips.py yields GET -> route_level_dependencies = ['require_rider_access'], HEAD -> [], and ALL 5 TESTS IN test_head_method.py STILL PASS. GET would enforce rider-only while HEAD kept serving viewers.
 
@@ -470,7 +478,7 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 
 ## t-access-log-slug-exposure
 
-PROMOTED AND DONE 2026-09-30 — the user prioritised pre-provisioning debt (Log Analytics would retain and index stdout). Implemented in the decided shape: `backend/log_config/uvicorn.json` (a copy of uvicorn 0.52.4's default config) passed via `--log-config` in the Dockerfile CMD, with `SlugRedactionFilter` (`backend/log_config/redaction.py`) on both the access and error handlers — the error handler because uvicorn logs WebSocket handshake paths there. Only the segment after a leading `/api/trips/` or `/t/` is replaced (case-insensitive, repeated slashes tolerated); status, method, the rest of the path and the query survive. Lives outside `app/` so no application module touches logging. Verified with 25+ unit/config tests and a live uvicorn run (slug absent, statuses present). Caveats: a server started without `--log-config` (e.g. the `--reload` dev command) still logs slugs, which is fine locally; a future uvicorn upgrade will not pick up changes to its default config.
+PROMOTED AND DONE 2026-09-29 — the user prioritised pre-provisioning debt (Log Analytics would retain and index stdout). Implemented in the decided shape: `backend/log_config/uvicorn.json` (a copy of uvicorn 0.52.4's default config) passed via `--log-config` in the Dockerfile CMD, with `SlugRedactionFilter` (`backend/log_config/redaction.py`) on both the access and error handlers — the error handler because uvicorn logs WebSocket handshake paths there. Only the segment after a leading `/api/trips/` or `/t/` is replaced (case-insensitive, repeated slashes tolerated); status, method, the rest of the path and the query survive. Lives outside `app/` so no application module touches logging. Verified with 25+ unit/config tests and a live uvicorn run (slug absent, statuses present). Caveats: a server started without `--log-config` (e.g. the `--reload` dev command) still logs slugs, which is fine locally; a future uvicorn upgrade will not pick up changes to its default config.
 
 Split out of `t-error-log-parameter-redaction`'s re-scope on 2026-09-15 as the third of its three slug sinks — the one that is **not application code**. The uvicorn access log records the trip slug for the ordinary reason that the slug is in the request URL: `GET /api/trips/<live-slug>/stops` is logged verbatim, and the slug is the credential.
 
@@ -486,7 +494,7 @@ DECIDED, NOT OVERLOOKED — the part worth keeping. Silencing access logs wholes
 
 ## t-api-healthcheck-wiring
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `f0a1d99`. Dockerfile `HEALTHCHECK` and compose `api` healthcheck only; the `/api/health` `description=` was updated in the same commit. The `infra/` half is split out as `t-infra-container-apps-probe` (needs the user).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `f0a1d99`. Dockerfile `HEALTHCHECK` and compose `api` healthcheck only; the `/api/health` `description=` was updated in the same commit. The `infra/` half is split out as `t-infra-container-apps-probe` (needs the user).
 
 From qa's Finding 2 remainder on t-head-on-get-routes. LOW PRIORITY. /api/health exists and NOTHING PROBES IT: docker-compose.yml has healthcheck blocks on postgres and minio but none on the api service, Dockerfile has no HEALTHCHECK instruction, and nothing in infra/ references the path. Filed under s-deploy-cutover rather than s-local-dev-env because the latter is closed and this needs devops plus approval; the compose half is local-dev work and could land earlier if that is preferred.
 
@@ -502,16 +510,18 @@ GATE TRIAGE 2026-09-15 (`t-backlog-retro-triage`) — `gate: triggered`.
 - Promotion trigger: `s-deploy-cutover`.
 - BOTH EXISTING CONDITIONS ABOVE SURVIVE THIS CLASSIFICATION UNCHANGED. (1) The `infra/` half needs explicit human approval per the CLAUDE.md off-limits list — **a gate classification is not clearance**, and a fired trigger is not approval either. (2) The `/api/health` `description=` in `backend/app/main.py` becomes false the moment this lands, and it feeds the OpenAPI document and the generated client, so it needs a `dev` follow-up in the same patch or `devops` stops and hands it back.
 
-GATE RULING 2026-09-30 (orchestrator) — still `gate: triggered`. The promotion trigger above means **the cutover actually happening, i.e. the app being provisioned**. It does *not* mean `s-deploy-cutover` being `in_progress`: that story moving to `in_progress` does not fire it. This task stays triggered debt until the app is provisioned. The reading matches `docs/deploy-cutover-runbook.md`, which lists it under "Triggered debt to decide at cutover".
+GATE RULING 2026-09-29 (orchestrator) — still `gate: triggered`. The promotion trigger above means **the cutover actually happening, i.e. the app being provisioned**. It does *not* mean `s-deploy-cutover` being `in_progress`: that story moving to `in_progress` does not fire it. This task stays triggered debt until the app is provisioned. The reading matches `docs/deploy-cutover-runbook.md`, which lists it under "Triggered debt to decide at cutover".
 
 ## t-infra-container-apps-probe
 
-FILED 2026-09-30, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
+FILED 2026-09-29, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
 
 - Why: Azure Container Apps **ignores the Dockerfile `HEALTHCHECK`**, so `f0a1d99` covers only local `docker`/compose. In production nothing probes `/api/health` until the Container App definition declares a probe.
 - Change: in the Container App definition under `infra/`, add a **Liveness** `httpGet` probe on path `/api/health`, port `8000`, with `initialDelaySeconds` about 10, `periodSeconds` 30, `timeoutSeconds` 5, `failureThreshold` 3. A **Startup** probe on the same path is optional, to cover a slow cold start.
 - Don't: make it a **Readiness** "dependencies are up" probe. `/api/health` is liveness only and doesn't check Postgres or S3; wiring it as readiness would claim something the endpoint doesn't test.
 - Related: `docs/deploy-cutover-runbook.md` (cutover steps).
+
+GATE CHANGED 2026-09-29 (review docs pass): `none` -> **`triggered`**, blocked by `t-owner-container-app-definition`. There is no Container App definition in `infra/` yet for the probe to go into. **Trigger: that definition being written.** The probe belongs in the same patch, not a later one. It is the only row left in the runbook's "Triggered debt to decide at cutover" table.
 
 ## t-add-endpoint-head-convention
 
@@ -771,7 +781,7 @@ Its sibling framing was also right and worth keeping: this task was about what t
 
 ## t-photo-insert-echoes-argument
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`insert()` returns the stored row; `201` and its replay are now identical, `takenAt` UTC `Z`). Left over: `PhotoOut.takenAt`'s `description=` still says the `201` echoes the device offset (see `api-contract.md`).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `d534ea7` (`insert()` returns the stored row; `201` and its replay are now identical, `takenAt` UTC `Z`). Left over: `PhotoOut.takenAt`'s `description=` still says the `201` echoes the device offset (see `api-contract.md`). **That description was fixed in `d7d7c4e`**; nothing is left over.
 
 Filed by qa during `t-takenat-tz-question`, 2026-09-17. **TRIGGERED DEBT (Gate 3) per qa, with a live counter-reading for Gate 1 — the orchestrator has not ruled. Do not implement on sight, and do not file the counter-reading away.** Full statement under `## t-takenat-tz-question`, "FINDINGS RECORDED, NOT FIXED", item 1.
 
@@ -781,7 +791,7 @@ Needs a concrete promotion event before it becomes work. The obvious candidate i
 
 ## t-photo-form-model-binding
 
-CLOSED WON'T-FIX 2026-09-30 (user: clear all debt not needing them) — decision-log Entry 24. No code change; rationale added beside the inline `Form(...)` params in `routes/photos.py`.
+CLOSED WON'T-FIX 2026-09-29 (user: clear all debt not needing them) — decision-log Entry 24. No code change; rationale added beside the inline `Form(...)` params in `routes/photos.py`.
 
 Filed by dev during `t-takenat-tz-question`, 2026-09-17. **ORDINARY DEBT (Gate 4).** Not a defect and not scheduled — recorded so a precise claim is not remembered as a broader one.
 
@@ -862,7 +872,7 @@ SUPERSEDED 2026-09-28 — closed `done` without implementation. The tracker has 
 
 ## t-photo-upload-stream-to-s3
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`upload_fileobj` via `asyncio.to_thread`; replay check still precedes the upload). Test-gap finding **F2** from this batch is closed by the same commit and was not filed separately. The sibling tests in `backend/tests/test_photo_upload_storage.py` (`test_cross_stop_conflict_writes_nothing_under_the_other_stop`, `test_viewer_slug_writes_nothing_to_storage`, `test_unknown_slug_writes_nothing_to_storage`) pin that a 409, 403 or 404 writes nothing to S3.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `d534ea7` (`upload_fileobj` via `asyncio.to_thread`; replay check still precedes the upload). Test-gap finding **F2** from this batch is closed by the same commit and was not filed separately. The sibling tests in `backend/tests/test_photo_upload_storage.py` (`test_cross_stop_conflict_writes_nothing_under_the_other_stop`, `test_viewer_slug_writes_nothing_to_storage`, `test_unknown_slug_writes_nothing_to_storage`) pin that a 409, 403 or 404 writes nothing to S3.
 
 FILED 2026-09-28 from the Entry 20 ruling. TRIGGERED DEBT (Gate 3).
 
@@ -917,7 +927,7 @@ NO OPEN BACKLOG ID IS ATTACHED TO THIS TASK, and that is why `s-map-geojson-endp
 
 ## t-bare-409-envelope-bypass
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40` (`backend/tests/test_bare_409_raise_audit.py`, a static raise-site guard; the mapping row stays).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `91c6e40` (`backend/tests/test_bare_409_raise_audit.py`, a static raise-site guard; the mapping row stays).
 
 `qa` finding from `t-conflict-code-tests`. Since `7ca82ab` the `409` row in `_STATUS_TO_CODE` is keyed on status, so a bare `HTTPException(409)` renders a well-formed `CONFLICT` envelope with `message: "Conflict"` — Starlette's default phrase — without ever passing through `ApiError.conflict`. THE LEAK BOUNDARY LIVES AT THE CLASSMETHOD: the contract's rule that a conflict message carries no value from the conflicting record is enforced where the message is built, and a bare raise skips it. The envelope looks correct, which is the whole difficulty.
 - Gate classification: TRIGGERED DEBT (Gate 3).
@@ -927,7 +937,7 @@ PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e4
 
 ## t-errors-docstring-dangling-line
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40` (inferred: the batch's `errors.py` commit; not confirmed from the diff).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `91c6e40` (inferred: the batch's `errors.py` commit; not confirmed from the diff).
 
 Cosmetic. The constructor-list reflow left a dangling line in `backend/app/core/errors.py`'s module docstring.
 - Gate classification: ORDINARY DEBT (Gate 4). A docstring has no runtime path — nothing imports, executes or serves it, so no behaviour depends on it.
@@ -947,7 +957,7 @@ THE HOOK — the third option, neither prose nor removing Bash — was deliberat
 
 ## t-qa-mutation-hook
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `c9d6b64`. Trigger never fired. The hook is a before/after tree fingerprint, not a command-line match, and it detects rather than prevents. Limits are in decision-log Entry 25.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `c9d6b64`. Trigger never fired. The hook is a before/after tree fingerprint, not a command-line match, and it detects rather than prevents. Limits are in decision-log Entry 25.
 
 The structural version of the rule `t-qa-mutation-scratch-tree` shipped as prose. `.claude/agents/qa.md` now forbids mutating the live working tree (committed `0b5bcde`), but that guarantee is words — a `PreToolUse` hook matching write-shaped Bash commands against the project path would make it ENFORCED rather than REQUESTED. It is not an edit to `qa.md`: hooks live in settings, which is why it was left out of that patch rather than overlooked.
 
@@ -962,7 +972,7 @@ WHY PROSE WAS TRIED FIRST, WHICH IS THE PART WORTH KEEPING. The rule permits an 
 
 ## t-docs-agent-unscoped-grant
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `c9d6b64`. A path guard (`docs/`, `backend/app/`, `backend/tests/`, `frontend/src/` minus `api/`). It can't tell a doc comment from a logic edit inside those trees; decision-log Entry 25.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `c9d6b64`. A path guard (`docs/`, `backend/app/`, `backend/tests/`, `frontend/src/` minus `api/`). It can't tell a doc comment from a logic edit inside those trees; decision-log Entry 25.
 
 The `docs` agent is described everywhere as `docs/`-only, but its grant is Edit/Write with no path scoping — the same class of prose-only boundary as `t-qa-mutation-scratch-tree`, through a different channel. `qa`'s gap is "no edit access, but Bash writes files"; this one is "edit access, but nothing bounds where."
 
@@ -979,7 +989,7 @@ RELATED, NOT DUPLICATE: decision-log Entry 12 records that widening `docs` to `.
 
 ## t-validation-empty-body-message
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `91c6e40`. It now renders `The request body is missing.`, from a type-keyed branch in `_format_validation_errors` as the notes below prescribe.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `91c6e40`. It now renders `The request body is missing.`, from a type-keyed branch in `_format_validation_errors` as the notes below prescribe.
 
 `qa` finding from `t-validation-message-offset`. An **empty** request body on a body-taking route renders `The request could not be validated. Field required` — a pydantic message with no subject. FastAPI reports that case as `{"type": "missing", "loc": ("body",)}`, a **different error type** from the `json_invalid` that task fixed, and `_format_validation_errors` strips the literal `"body"` out of the location, leaving the bare message.
 
@@ -993,7 +1003,7 @@ GATE TRIAGE 2026-09-17 — `gate: ordinary`.
 
 ## t-malformed-body-precedes-access-guard
 
-CLOSED WON'T-FIX 2026-09-30 (user: clear all debt not needing them) — decision-log Entry 23. No code change; rationale added to `require_rider_access`'s docstring in `core/security.py`.
+CLOSED WON'T-FIX 2026-09-29 (user: clear all debt not needing them) — decision-log Entry 23. No code change; rationale added to `require_rider_access`'s docstring in `core/security.py`.
 
 `qa` finding from `t-validation-message-offset`. FastAPI parses and validates the request body **before** it solves route dependencies, so a malformed body short-circuits the access guard: `'{"id": '` returns `422` on a rider slug, a viewer slug **and** an unknown slug alike, while a body that is valid JSON but fails field validation still gets the expected `403`/`404` first.
 
@@ -1032,7 +1042,7 @@ Two debt rows filed, neither implemented: `t-mark-archived-overwrite-guard` (TRI
 
 ## t-mark-archived-overwrite-guard
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (`AND one_drive_file_id IS NULL`, as prescribed below). Side effect: `rowcount == 0` now also means "an overlapping sweep already archived it", which makes `onedrive_sync.py`'s "orphaned" warning wrong in that case. Filed as `t-onedrive-archived-log-wording`.
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `d534ea7` (`AND one_drive_file_id IS NULL`, as prescribed below). Side effect: `rowcount == 0` now also means "an overlapping sweep already archived it", which makes `onedrive_sync.py`'s "orphaned" warning wrong in that case. Filed as `t-onedrive-archived-log-wording`.
 
 TRIGGERED DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. Do not implement on sight.
 
@@ -1054,7 +1064,7 @@ TRIGGER RE-EVALUATED AT `t-onedrive-sync-scheduler` 2026-09-29: **did not fire.*
 
 ## t-pending-archive-limit-validation
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `d534ea7` (a non-positive limit is refused up front).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `d534ea7` (a non-positive limit is refused up front).
 
 ORDINARY DEBT, filed out of `t-photos-pending-archive-repo` 2026-09-17. No trigger today.
 
@@ -1092,7 +1102,7 @@ FOUR DEBT ROWS FILED OUT OF qa'S PASS, **NONE IMPLEMENTED** — a finding from t
 
 ## t-onedrive-main-untested
 
-PROMOTED AND DONE 2026-09-30 (user: clear all debt not needing them) — `709da23` (configured-path tests in `test_onedrive_sync.py`).
+PROMOTED AND DONE 2026-09-29 (user: clear all debt not needing them) — `709da23` (configured-path tests in `test_onedrive_sync.py`).
 
 ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1105,7 +1115,7 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 
 ## t-onedrive-per-photo-isolation
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1119,7 +1129,7 @@ The S3 read (`_read_object` via `to_thread`) and the `response.json()["id"]` tha
 
 ## t-onedrive-filename-url-encoding
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 TRIGGERED DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1133,7 +1143,7 @@ A photo id containing `#` or `?` mangles the Graph upload URL. **Measured, not r
 
 ## t-onedrive-heic-brand-list
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
 ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement on sight.
 
@@ -1148,20 +1158,22 @@ ROW ADDED 2026-09-17 — it existed only as an id, cited by three places (`onedr
 
 NO ACCEPTANCE CRITERIA, DELIBERATELY. This is not an implementable task — it is a manual verification step: a human runs the real sync against the live Microsoft Graph tenant and confirms the refresh token is healthy and the request shape `t-onedrive-sync-job` built (URL form, token scope, `conflictBehavior` placement — all UNVERIFIED per that task's note) is actually accepted by Graph, before the trip departs. An agent cannot hold Graph credentials or consent to an OAuth grant, so there is nothing here for `dev` to implement or `qa` to verify against a spec.
 
-STATUS AS OF 2026-09-30 (supersedes the 2026-09-17 "zero scoped tasks" reading, which is now stale). Still `not_started`.
+STATUS AS OF 2026-09-29 (supersedes the 2026-09-17 "zero scoped tasks" reading, which is now stale). Still `not_started`.
 - **Blocker done.** `t-onedrive-sync-job` is `done`, so the one blocker named in `ba`'s original scoping is discharged.
 - **The refresh token can now be minted.** `t-graph-refresh-token-helper` (done, user-approved token work) added `backend/app/storage/get_refresh_token.py`. The owner-run steps are in `docs/deploy-cutover-runbook.md` §1, "Microsoft Graph app registration". `s-cloud-service-setup` therefore no longer has zero scoped tasks.
 - **What remains is a human step, not agent work.** (1) The owner registers the Graph app (personal accounts, delegated `Files.ReadWrite` + `offline_access`, Web redirect `http://localhost:8765`, client secret). (2) The owner runs the helper in their own terminal and stores the token. (3) The owner does a real sync run against live Graph (runbook §5). Only step 3 settles the unverified request shape (URL form, token scope, `conflictBehavior` placement). No agent can hold Graph credentials or consent to the grant, so nothing here is for `dev` or `qa`.
 
 `t-onedrive-filename-url-encoding` names this row as the place to fold its one-line percent-encoding fix in (`urllib.parse.quote(filename, safe="")`), rather than shipping it separately — see that section above. **That is still the intent at this step.** The folding has not happened yet; this row still carries no implementation content of its own.
 
-2026-09-30: the stale `t-onedrive-sync-job` entry was removed from this row's `blockers` in `progress.json` (now `[]`), matching the "Blocker done" note above. The preflight must now use a **freshly minted** refresh token (decision-log Entry 22; runbook §1 "When to mint" and §5).
+2026-09-29: the stale `t-onedrive-sync-job` entry was removed from this row's `blockers` in `progress.json` (now `[]`), matching the "Blocker done" note above. The preflight must now use a **freshly minted** refresh token (decision-log Entry 22; runbook §1 "When to mint" and §5).
+
+2026-09-29 (review docs pass): `agent` changed `devops` -> **`owner`** and `gate: none` added. It was never agent work (see above), and the owner rows filed in the same pass use the same convention. The URL-encoding fold-in above is moot: `t-onedrive-filename-url-encoding` shipped separately in `21d34ec`. Runbook §5 now also asks the preflight to check two things: **archive isolation** (good photos archive while one bad one stays pending; the run exits non-zero) and **encoded filenames on real Graph** (`t-onedrive-graph-name-charset`; record what Graph did in that task's notes).
 
 ## t-graph-token-error-code-logging
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
-ORDINARY DEBT, filed 2026-09-30 out of the architect's refresh-token ruling (decision-log Entry 22). Do not implement on sight. **Needs explicit user approval**, because it touches OneDrive token handling (`backend/app/storage/onedrive_sync.py`, off-limits per CLAUDE.md).
+ORDINARY DEBT, filed 2026-09-29 out of the architect's refresh-token ruling (decision-log Entry 22). Do not implement on sight. **Needs explicit user approval**, because it touches OneDrive token handling (`backend/app/storage/onedrive_sync.py`, off-limits per CLAUDE.md).
 
 - `_fetch_token` logs only `Graph token request rejected: HTTP <status>`. An expired or revoked token and a Microsoft outage therefore look the same in the Job's logs, and the owner can't tell whether to re-mint (runbook "If archiving stops mid-trip").
 - Fix: also log the token response's `error` code (for example `invalid_grant`, `AADSTS700082`). Log the code only, never `error_description` if it could echo anything sensitive, and never the token or a credential. The function's "logs a status code, never a token or a credential" rule still holds.
@@ -1169,9 +1181,9 @@ ORDINARY DEBT, filed 2026-09-30 out of the architect's refresh-token ruling (dec
 
 ## t-onedrive-rotate-comment-misleading
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
-ORDINARY DEBT, filed 2026-09-30 out of decision-log Entry 22. Do not implement on sight. **Needs explicit user approval** (same off-limits file).
+ORDINARY DEBT, filed 2026-09-29 out of decision-log Entry 22. Do not implement on sight. **Needs explicit user approval** (same off-limits file).
 
 - The comment at `onedrive_sync.py` ~L132-135 says Graph "rotates the refresh token on every redemption". Microsoft issues a new refresh token but **does not revoke the old one**. The configured token lasts ~90 days from mint (MEDIUM confidence for personal accounts).
 - The code's behaviour is right (the new token is deliberately unused). Only the stated reason is wrong. It matters because that premise is what makes "persist the rotated token" (Entry 22's rejected option B) look required.
@@ -1180,9 +1192,9 @@ ORDINARY DEBT, filed 2026-09-30 out of decision-log Entry 22. Do not implement o
 
 ## t-onedrive-archived-log-wording
 
-DONE 2026-09-30 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
+DONE 2026-09-29 — user approved editing the off-limits `onedrive_sync.py` ("Fix the ondrive_sync.py"); commit `21d34ec`. QA passed all six (secrets-in-logs checked line by line; each new test shown to fail with its fix reverted). Follow-ups folded in: a 2xx with a null/empty/non-string `id` is now a failure (was silent success with the photo left pending), and a test pins that failure logs carry the exception class only, never its text or the object key.
 
-FILED 2026-09-30 from the `d534ea7` close-out. ORDINARY DEBT, `gate: ordinary`. **NEEDS EXPLICIT USER APPROVAL: `backend/app/storage/onedrive_sync.py` is off-limits** (OneDrive token handling file, CLAUDE.md).
+FILED 2026-09-29 from the `d534ea7` close-out. ORDINARY DEBT, `gate: ordinary`. **NEEDS EXPLICIT USER APPROVAL: `backend/app/storage/onedrive_sync.py` is off-limits** (OneDrive token handling file, CLAUDE.md).
 
 - Finding: at ~L217-221, when `record(...)` (`mark_archived`) returns `0`, the job logs "Photo %s was gone by the time it archived -- its OneDrive copy is orphaned".
 - Since `d534ea7` (`t-mark-archived-overwrite-guard`), the update carries `AND one_drive_file_id IS NULL`, so a `0` has **two** causes. Either the row is gone (orphaned, as the log says), or an overlapping sweep already archived the photo. In the second case the upload went to the same path with `conflictBehavior=replace`, so nothing is orphaned and the warning is false.
@@ -1785,7 +1797,7 @@ NO DECISION-LOG ENTRY: QA's round-1 leak was a review finding that `dev` fixed w
 
 ## t-settings-error-hides-input
 
-PROMOTED AND DONE 2026-09-30 — the user prioritised pre-provisioning debt. `hide_input_in_errors=True` added to `Settings.model_config`; `backend/tests/test_config.py` proves a missing `DATABASE_URL` error names the field and carries no fragment of the GRAPH_* sentinels (fails with the line removed — the refresh-token tail leaked). The token helper test dropped its now-false "raw error echoes a sentinel" precondition; its `main()` assertions are unchanged. Full suite 620 passed.
+PROMOTED AND DONE 2026-09-29 — the user prioritised pre-provisioning debt. `hide_input_in_errors=True` added to `Settings.model_config`; `backend/tests/test_config.py` proves a missing `DATABASE_URL` error names the field and carries no fragment of the GRAPH_* sentinels (fails with the line removed — the refresh-token tail leaked). The token helper test dropped its now-false "raw error echoes a sentinel" precondition; its `main()` assertions are unchanged. Full suite 620 passed.
 
 TRIGGERED DEBT, filed out of `t-graph-refresh-token-helper` 2026-09-29. Do not implement on sight.
 
@@ -1818,6 +1830,125 @@ Gate: CURRENTLY BROKEN — spec §4 "Installable", but the manifest had no icons
 
 ## t-onedrive-graph-name-charset
 
-TRIGGERED DEBT, filed from QA on `21d34ec` (2026-09-30). The filename is now `quote(..., safe='')`, so an id containing `/` becomes `%2F` in one path segment instead of creating a subfolder. Whether real Graph accepts `%2F`, and what it does with OneDrive-forbidden name characters (`? : / \ | " * < >`), is unverified: such a photo could get a 400 on every run and stay pending, logged each time. Today every id is a `crypto.randomUUID()`, so no such name reaches Graph.
+TRIGGERED DEBT, filed from QA on `21d34ec` (2026-09-29). The filename is now `quote(..., safe='')`, so an id containing `/` becomes `%2F` in one path segment instead of creating a subfolder. Whether real Graph accepts `%2F`, and what it does with OneDrive-forbidden name characters (`? : / \ | " * < >`), is unverified: such a photo could get a 400 on every run and stay pending, logged each time. Today every id is a `crypto.randomUUID()`, so no such name reaches Graph.
 - Promotion trigger: a non-UUID4 id reaching `photos`, or `t-onedrive-preflight-check` being run (check the real request once there).
 - Agent: `devops` for the check; `dev` for any fix, which needs the owner's approval because it touches `onedrive_sync.py`.
+- 2026-09-29: the check is now a step in runbook §5 (the owner's preflight), so the trigger fires when `t-onedrive-preflight-check` runs.
+
+---
+
+Rows below were filed in the full-codebase review's docs pass (2026-09-29). The owner said to triage and fix everything found. **Gate values on the seven `done` fix rows were set by `docs` from the commit evidence, not by `ba`; the orchestrator should confirm them.** `broken` = evidence of a contract or runtime failure in the code before the fix; `ordinary` = hardening or coverage with nothing failing.
+
+## t-compose-minio-bucket-reload
+
+DONE, `a2a4579` (devops). Story `s-local-dev-env`.
+- Compose gained a one-shot `minio-init` service (`minio/mc`) that creates the bucket, so a fresh `docker compose up` can store photos.
+- The `api` service runs the Dockerfile command plus `--reload`, with file polling so edits from a Windows host are seen, over a `./backend` bind mount.
+- `.env.example` now documents copying to `backend/.env`. uv is pinned in the Dockerfile (`uv==0.8.17`, the version that wrote `uv.lock`).
+- Docs in the same commit: runbook §3's smoke test runs the built image with `docker run` (compose's `api` bind-mounts and reloads, so it doesn't test the image), and §6 has the real deploy commands.
+- Gate `broken` (docs' classification): without the bucket, local photo uploads fail.
+
+## t-presign-public-endpoint
+
+DONE, `263fcea` (dev). Story `s-photo-upload-onedrive-sync`.
+- New optional setting `S3_PUBLIC_ENDPOINT_URL` (`core/config.py`). `storage/s3_client.py` signs presigned GETs for it when set, else for `S3_ENDPOINT_URL`. Uploads and reads always use `S3_ENDPOINT_URL`.
+- Compose sets `http://localhost:9000`. Before this, compose signed photo URLs for `http://minio:9000`, which no browser resolves, so every photo failed to load locally.
+- Production (R2) leaves it unset: the deploy skill and runbook §2 say so.
+- Tests: `backend/tests/test_presign_public_endpoint.py`.
+- Docs: `api-contract.md` "Photo serving"; runbook §2 and §3.
+
+## t-bike-patch-null-422
+
+DONE, `d2913ad` (dev). Story `s-bike-management`.
+- `BikePatch` fields are typed non-optional with a never-validated `None` default. An omitted field stays unset (no change). An explicit `null` is validated against `str`/`int` and fails as `422` / `VALIDATION_ERROR`. Before, a null reached a `NOT NULL` column and came back as a `500`.
+- `default: null` is kept out of the schema, so Kubb types the fields optional, never nullable.
+- Docs: `api-contract.md`, the `PATCH /trips/{slug}/bikes/{id}` note.
+
+## t-stop-coordinate-bounds
+
+DONE, `d2913ad` (dev). Story `s-stop-crud`.
+- `StopCreate.lat` in [-90, 90], `lng` in [-180, 180], inclusive, `allow_inf_nan=False`. Out of range, `NaN` or `Infinity` is a `422`. Python's JSON parser accepts `NaN`/`Infinity` literals, which is why finiteness is checked explicitly.
+- `VALIDATION_ERROR` is never-retry, so a queued stop with impossible coordinates fails visibly.
+- Docs: `api-contract.md`, the `POST /trips/{slug}/stops` note.
+
+## t-security-headers
+
+DONE, `d2913ad` (dev). Filed under `s-deploy-cutover` because it is production hardening.
+- `SecurityHeadersMiddleware` in `main.py` (pure ASGI, so streamed responses aren't buffered) sets `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'` on every response.
+- The referrer policy keeps `/t/<slug>` out of third-party `Referer`s (the OSM tile servers get the origin only). Not `no-referrer`, because OSM's tile policy wants a `Referer`. Not a full CSP: script/style/tile sources would need their own review.
+- Known gap filed as `t-security-headers-on-500`.
+- Docs: `api-contract.md`, "Security headers on every response".
+
+## t-photo-upload-failure-tests
+
+DONE, `7b3ab3f` (test-writer). Story `s-photo-upload-onedrive-sync`. Tests only: photo upload when storage fails, cross-trip photo access, and presigned URL generation. No behaviour change.
+
+## t-frontend-review-fixes
+
+DONE (dev), four commits. Filed under `s-real-device-testing` because every item is a device-facing behaviour that test day exercises (cases 1a, 2, 6a, 15 in the plan), and the frontend stories it touches are closed in a closed milestone.
+- `3d07c86`: cross-tab queue. Where `navigator.locks` exists, only the tab holding `btj-queue-drain` drains. Where `BroadcastChannel` exists, changes are announced on `btj-queue`. Request timeouts: stop creates 30 s, photos 120 s; an abort has no envelope, so it retries like a network failure.
+- `ec61985`: GPS falls back to the map tap after 15 s on the app's own timer (a dismissed permission prompt may never call back). A viewer is never asked for GPS: the request runs only after the rider check.
+- `914a0cd`: stale-chunk reload guard (`staleChunk.ts`): one reload on `vite:preloadError`, at most once per 30 s via `sessionStorage`, and no reload if storage is unusable. Plus a `vite.config` comment.
+- `9c93020`: `formatInstant` labels the time zone (decision-log Entry 26). An image `onError` on the stop page refetches the photo list once for fresh presigned URLs. Test-noise fix.
+- Docs: `architecture-handover.md` "Offline design"; `api-contract.md` retry rules (client timeouts); `real-device-test-plan.md`.
+- Debt filed from it: `t-queue-lock-path-coverage`.
+
+## t-security-headers-on-500
+
+ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `d2913ad` review. Do not implement on sight.
+- An unhandled exception is answered by Starlette's `ServerErrorMiddleware`, the outermost layer, which sits outside `SecurityHeadersMiddleware`. That `500` goes out without the four headers. Its body is still the fixed `INTERNAL_ERROR` envelope from the registered handler.
+- Why ordinary: a `500` body is a fixed JSON string, so `nosniff` and the framing headers protect nothing on it in practice. Nothing is broken.
+- Fix shape if picked up: add the headers inside `unhandled_exception_handler` too, or wrap the app outside Starlette's error middleware. Agent: `dev`.
+
+## t-stop-rider-offset
+
+TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the architect's timezone ruling, decision-log Entry 26 (option B). Do not implement on sight.
+- Times are stored as instants in `timestamptz`, so the rider's UTC offset is lost. The app shows each time in the reader's zone with the zone labelled, which removes the ambiguity. It cannot show "what the rider's clock said".
+- **Trigger: the spec adds a requirement to show the rider's local time.**
+- Shape when it fires: migration adding `stops.arrived_offset_minutes` and `photos.taken_offset_minutes`, fields on `StopCreate`/`StopOut` and the photo form/`PhotoOut`, contract entry first, Kubb regeneration, queue payloads, `formatInstant` taking an offset. Rows captured before the change have no offset, so decide their fallback.
+- Don't: send a local-offset ISO string instead (Entry 26 option C). Storage is UTC, so that changes nothing.
+- Filed under `s-real-device-testing` only because its concern (how times read on a device) is tested there (case 15) and `s-stop-crud` is closed. If the trigger fires, `ba` scopes it as a new story.
+
+## t-queue-lock-path-coverage
+
+ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `3d07c86` review. Do not implement on sight.
+- jsdom has no `navigator.locks`, so the core queue suites run only the no-lock fallback (each tab's in-memory guard). The Web Locks path, which is what real browsers run, has no automated test: acquiring `btj-queue-drain`, a second tab not draining, the lock being released after a timeout.
+- Why ordinary: the fallback is tested and the lock path is small. Real-device test day exercises it in a real browser.
+- Shape: a test that stubs `navigator.locks.request` (serialising callbacks) and asserts one drain at a time across two queue instances. Agent: `test-writer`.
+
+## t-image-digest-pinning
+
+ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `a2a4579` review. Do not implement on sight.
+- `docker-compose.yml` uses `quay.io/minio/minio:latest` and `minio/mc:latest`. A known-good release tag or digest could not be verified from the agent environment, so they were left unpinned, with a comment saying why.
+- Local dev only; the production image uses neither. The risk is a MinIO release changing `mc` syntax and breaking `minio-init`.
+- Fix: pin both to a release tag (or digest) someone has actually pulled and run. Agent: `devops`.
+
+## t-owner-compose-smoke-test
+
+OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production image locally with `docker run` against compose's Postgres and MinIO, as in runbook §3 (smoke test). Keep `-e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`, or photos won't load. Pass: `/api/health` `200`, `/` shows the paste-link screen, a local rider link renders the trip, and `docker ps` shows `(healthy)`.
+
+## t-owner-container-app-definition
+
+OWNER TASK, `gate: none`, story `s-deploy-cutover`. `infra/` is off-limits without explicit approval, so this is the owner's; **devops can draft it with approval.** Add the Container App definition to `infra/azure/README.md` beside the Job:
+- external ingress, target port 8000, HTTPS only (`allowInsecure: false`);
+- multiple-revision mode (runbook §8's rollback depends on it);
+- min replicas 0 (free tier, scale to zero);
+- secrets and `secretref` env vars as in runbook §2, including `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and `GRAPH_REFRESH_TOKEN`, under the same lower-kebab names the Job uses; `S3_PUBLIC_ENDPOINT_URL` unset;
+- the GHCR registry credential if the package is private;
+- the `/api/health` liveness probe from `t-infra-container-apps-probe`, in the same patch.
+
+## t-owner-production-seed
+
+OWNER TASK, `gate: none`, story `s-seed-trip-record`. Runbook §4: migrate Neon, run `seed_trip` once, save both printed links in the password manager straight away. Keep it out of any agent session. Never delete and re-seed; recover slugs by SQL. The story closes when this is done.
+
+## t-owner-cutover
+
+OWNER TASK, `gate: none`, story `s-deploy-cutover`. Runbook §6–§7: devops runs the commands after the owner confirms. Build and push the commit-tagged image, record the rollback target, migrate Neon before traffic moves, update the app (new revision `<app>--rel-<tag>`), move traffic when healthy, update the Job to the same tag, then the post-deploy checks. Record the revision names for `t-owner-handover-finish`.
+
+## t-owner-real-device-test-day
+
+OWNER TASK, `gate: none`, story `s-real-device-testing`. Run `docs/real-device-test-plan.md` against the production URL, on an iPhone and an Android phone. Needs `t-owner-cutover` (the plan requires HTTPS). New in this pass: case 1a (Android install), case 2's "viewer never asked for GPS", case 6a (prompt dismissed → map fallback within ~15 s), case 15 (time zone labels).
+
+## t-owner-handover-finish
+
+OWNER TASK, `gate: none`, story `s-handover-docs`. After the cutover, fill the three TODOs in `docs/architecture-handover.md` "Deploy and operations": the live URL, the current and previous revision names, and the Graph refresh-token mint date plus the client-secret expiry date (dates only, never values). Everything else in that section was written in the 2026-09-29 docs pass. `docs` can write it if the owner supplies the values.

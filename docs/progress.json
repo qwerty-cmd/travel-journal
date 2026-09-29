@@ -7,16 +7,16 @@
   ],
   "stories": [
     { "id": "s-session0-scaffolding", "milestoneId": "m1-foundations", "title": "Session 0 — architecture scaffolding", "status": "done" },
-    { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO)", "status": "in_progress" },
+    { "id": "s-local-dev-env", "milestoneId": "m1-foundations", "title": "Local dev environment (docker-compose: FastAPI + Postgres + MinIO)", "status": "done" },
     { "id": "s-cloud-service-setup", "milestoneId": "m1-foundations", "title": "Cloud service setup — Neon, R2, Graph, Container Apps, budget alert", "status": "in_progress" },
     { "id": "s-seed-trip-record", "milestoneId": "m1-foundations", "title": "Seed the one trip record (script built, human must run it)", "status": "in_progress" },
     { "id": "s-api-contract", "milestoneId": "m1-foundations", "title": "API contract definition (Session 1)", "status": "done" },
     { "id": "s-finding-triage-gate", "milestoneId": "m1-foundations", "title": "Finding triage gate — classify discovered issues before implementing them", "status": "done" },
-    { "id": "s-agent-tool-boundaries", "milestoneId": "m1-foundations", "title": "Agent tool boundaries — prose guarantees the tool grant doesn't enforce", "status": "in_progress" },
+    { "id": "s-agent-tool-boundaries", "milestoneId": "m1-foundations", "title": "Agent tool boundaries — prose guarantees the tool grant doesn't enforce", "status": "done" },
 
-    { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "in_progress" },
+    { "id": "s-data-layer-foundation", "milestoneId": "m2-core-api", "title": "Data layer foundation — schema, migrations, repos, access control, error handlers", "status": "done" },
     { "id": "s-trip-metadata-endpoint", "milestoneId": "m2-core-api", "title": "GET /trips/{slug} — trip metadata + bikes", "status": "done" },
-    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "in_progress" },
+    { "id": "s-stop-crud", "milestoneId": "m2-core-api", "title": "Stop CRUD — GET/POST /trips/{slug}/stops", "status": "done" },
     { "id": "s-photo-upload-onedrive-sync", "milestoneId": "m2-core-api", "title": "Photo upload + OneDrive sync", "status": "in_progress" },
     { "id": "s-bike-management", "milestoneId": "m2-core-api", "title": "Bike management — POST/PATCH /trips/{slug}/bikes", "status": "done" },
     { "id": "s-map-geojson-endpoint", "milestoneId": "m2-core-api", "title": "Map GeoJSON endpoint — GET /trips/{slug}/map", "status": "done" },
@@ -131,14 +131,14 @@
     { "id": "t-docs-agent-unscoped-grant", "storyId": "s-agent-tool-boundaries", "title": "docs agent's Edit/Write grant is not scoped to docs/ — the docs/-only boundary is prose", "status": "done", "agent": "orchestrator", "blockers": [], "gate": "ordinary" },
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service — Dockerfile + compose done; the infra/ Container Apps probe is split out as t-infra-container-apps-probe", "status": "done", "agent": "devops", "blockers": [], "gate": "triggered" },
-    { "id": "t-infra-container-apps-probe", "storyId": "s-deploy-cutover", "title": "infra/ — Liveness httpGet probe on /api/health:8000 for the Container App (Container Apps ignores Dockerfile HEALTHCHECK) — NEEDS THE USER (infra/ is off-limits)", "status": "not_started", "agent": "devops", "blockers": [], "gate": "none" },
+    { "id": "t-infra-container-apps-probe", "storyId": "s-deploy-cutover", "title": "infra/ — Liveness httpGet probe on /api/health:8000 for the Container App (Container Apps ignores Dockerfile HEALTHCHECK) — NEEDS THE USER (infra/ is off-limits)", "status": "not_started", "agent": "devops", "blockers": ["t-owner-container-app-definition"], "gate": "triggered" },
 
     { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-pwa-manifest-icons", "storyId": "s-frontend-first-open", "title": "Add 192/512/maskable manifest icons and an apple-touch-icon so the PWA meets Chrome installability (spec §4 Installable)", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-settings-error-hides-input", "storyId": "s-cloud-service-setup", "title": "config.py lacks hide_input_in_errors=True — any process loading Settings with a required env var missing prints tails of GRAPH_* secret values in pydantic's ValidationError", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-token-helper-import-leak-regression-test", "storyId": "s-cloud-service-setup", "title": "No subprocess test pins that importing get_refresh_token does not load settings — re-adding the onedrive_sync import passes all 25 tests", "status": "done", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
     { "id": "t-token-helper-error-body-stdout-test", "storyId": "s-cloud-service-setup", "title": "get_refresh_token error-path test does not check stdout for a printed token-endpoint response body", "status": "done", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
-    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": [] },
+    { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
 
     { "id": "t-frontend-kubb-client", "storyId": "s-frontend-first-open", "title": "Kubb-generated TS types + TanStack Query hooks for the eight contract operations from a committed OpenAPI snapshot", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
 
@@ -164,8 +164,28 @@
     { "id": "t-real-device-test-plan", "storyId": "s-real-device-testing", "title": "Draft the real-device test plan from spec §12", "status": "done", "agent": "docs", "blockers": [], "gate": "none" },
     { "id": "t-handover-docs-draft", "storyId": "s-handover-docs", "title": "Draft user guide + architecture handover from the built code; prod URL/deploy sections TODO", "status": "done", "agent": "docs", "blockers": ["t-bikes-page-edit"], "gate": "none" },
     { "id": "t-neon-sslmode-url", "storyId": "s-cloud-service-setup", "title": "normalize_database_url translates libpq sslmode/channel_binding for asyncpg", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
-    { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
+    { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" },
+
+    { "id": "t-compose-minio-bucket-reload", "storyId": "s-local-dev-env", "title": "Compose creates the MinIO bucket (minio-init), api runs --reload with polling, .env.example → backend/.env, uv pinned; runbook §3 smoke test via docker run, §6 real deploy commands", "status": "done", "agent": "devops", "blockers": [], "gate": "broken", "commits": ["a2a4579"] },
+    { "id": "t-presign-public-endpoint", "storyId": "s-photo-upload-onedrive-sync", "title": "Optional S3_PUBLIC_ENDPOINT_URL — presigned photo GETs signed for the browser-reachable host (compose: http://localhost:9000); unset falls back to S3_ENDPOINT_URL (right for R2)", "status": "done", "agent": "dev", "blockers": [], "gate": "broken", "commits": ["263fcea"] },
+    { "id": "t-bike-patch-null-422", "storyId": "s-bike-management", "title": "BikePatch explicit null → 422 VALIDATION_ERROR instead of a NOT NULL 500; omitting a field is still 'no change'", "status": "done", "agent": "dev", "blockers": [], "gate": "broken", "commits": ["d2913ad"] },
+    { "id": "t-stop-coordinate-bounds", "storyId": "s-stop-crud", "title": "StopCreate lat in [-90,90], lng in [-180,180], finite only — out of range, NaN or Infinity → 422 VALIDATION_ERROR", "status": "done", "agent": "dev", "blockers": [], "gate": "ordinary", "commits": ["d2913ad"] },
+    { "id": "t-security-headers", "storyId": "s-deploy-cutover", "title": "Security headers on every response — nosniff, Referrer-Policy strict-origin-when-cross-origin, X-Frame-Options DENY, CSP frame-ancestors 'none'", "status": "done", "agent": "dev", "blockers": [], "gate": "ordinary", "commits": ["d2913ad"] },
+    { "id": "t-photo-upload-failure-tests", "storyId": "s-photo-upload-onedrive-sync", "title": "Tests for photo upload storage failure, cross-trip photo access and presigned URL generation", "status": "done", "agent": "test-writer", "blockers": [], "gate": "ordinary", "commits": ["7b3ab3f"] },
+    { "id": "t-frontend-review-fixes", "storyId": "s-real-device-testing", "title": "Frontend review batch — cross-tab queue lock + BroadcastChannel + request timeouts; GPS 15s own-timer fallback, viewer never asked for GPS; stale-chunk reload guard; timezone-labelled times, expired photo URL refetch", "status": "done", "agent": "dev", "blockers": [], "gate": "ordinary", "commits": ["3d07c86", "ec61985", "914a0cd", "9c93020"] },
+
+    { "id": "t-security-headers-on-500", "storyId": "s-deploy-cutover", "title": "An unhandled-exception 500 from Starlette's outermost error layer goes out without the four security headers", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" },
+    { "id": "t-stop-rider-offset", "storyId": "s-real-device-testing", "title": "Store the rider's UTC offset (arrived_offset_minutes / taken_offset_minutes) so rider-local time can be shown — decision-log Entry 26 option B", "status": "not_started", "agent": "dev", "blockers": [], "gate": "triggered" },
+    { "id": "t-queue-lock-path-coverage", "storyId": "s-real-device-testing", "title": "The core offline-queue suites only exercise the no-lock fallback — the navigator.locks drain-lock path has no automated coverage", "status": "not_started", "agent": "test-writer", "blockers": [], "gate": "ordinary" },
+    { "id": "t-image-digest-pinning", "storyId": "s-deploy-cutover", "title": "compose's minio and minio/mc images are :latest — pin to a verified release tag or digest", "status": "not_started", "agent": "devops", "blockers": [], "gate": "ordinary" },
+
+    { "id": "t-owner-compose-smoke-test", "storyId": "s-deploy-cutover", "title": "Owner runs the production image locally against compose's Postgres and MinIO (runbook §3 smoke test)", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
+    { "id": "t-owner-container-app-definition", "storyId": "s-deploy-cutover", "title": "Container App definition in infra/ — ingress 8000, HTTPS only, multiple-revision mode, min replicas 0, secrets incl. GRAPH_CLIENT_ID/SECRET/REFRESH_TOKEN; devops may draft it with the owner's approval", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
+    { "id": "t-owner-production-seed", "storyId": "s-seed-trip-record", "title": "Owner migrates Neon and runs seed_trip once; saves both links (runbook §4)", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
+    { "id": "t-owner-cutover", "storyId": "s-deploy-cutover", "title": "Owner-approved production cutover — build, push, migrate, update app + Job, post-deploy checks (runbook §6–§7)", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
+    { "id": "t-owner-real-device-test-day", "storyId": "s-real-device-testing", "title": "Run docs/real-device-test-plan.md on real iPhone and Android against the production URL", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
+    { "id": "t-owner-handover-finish", "storyId": "s-handover-docs", "title": "Fill the handover's cutover TODOs — live URL, revision names, Graph token and client-secret mint/expiry dates", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-30T03:00:00Z"
+  "lastUpdated": "2026-09-29T08:00:00Z"
 }
