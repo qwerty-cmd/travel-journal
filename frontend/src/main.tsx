@@ -7,7 +7,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // at dev/build time — not committed, see .gitignore.
 import { routeTree } from "./routeTree.gen";
 import { startQueue } from "./offline/queue";
+import { reloadOnStaleChunk } from "./staleChunk";
 
+reloadOnStaleChunk();
 const queryClient = new QueryClient();
 startQueue(queryClient);
 const router = createRouter({ routeTree });

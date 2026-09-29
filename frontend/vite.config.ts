@@ -22,8 +22,9 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,ico}"],
         // Cold open of any deep link (/t/$slug...) offline renders the
         // precached shell. /api is denylisted so API calls always hit the
-        // network — no runtimeCaching for the API, TanStack Query's persisted
-        // cache is the offline read path.
+        // network — no runtimeCaching for the API. There is no persisted Query
+        // cache (decision-log Entry 19): the only offline read is the trip
+        // record, kept in localStorage by src/localStore.ts / src/trip.ts.
         navigateFallback: "index.html",
         navigateFallbackDenylist: [/^\/api\//],
       },
