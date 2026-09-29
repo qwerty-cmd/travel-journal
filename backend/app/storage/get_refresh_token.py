@@ -31,27 +31,36 @@ import webbrowser
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
+import pydantic
 
 from app.core.config import Settings, get_settings
-from app.storage.onedrive_sync import TOKEN_URL
 
+# Must equal ``onedrive_sync.TOKEN_URL`` (asserted by a test). Duplicated rather
+# than imported: importing onedrive_sync pulls in s3_client, which loads settings
+# at import time, and a settings ValidationError echoes env values (secrets).
+TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 AUTHORIZE_URL = TOKEN_URL.replace("/token", "/authorize")
-REDIRECT_URI = "http://localhost:8765"
+REDIRECT_PORT = 8765
+REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
 SCOPE = "offline_access Files.ReadWrite"
 
 
 def build_authorize_url(client_id: str, state: str, code_challenge: str) -> str:
-    return AUTHORIZE_URL + "?" + urlencode(
-        {
-            "client_id": client_id,
-            "response_type": "code",
-            "redirect_uri": REDIRECT_URI,
-            "response_mode": "query",
-            "scope": SCOPE,
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-        }
+    return (
+        AUTHORIZE_URL
+        + "?"
+        + urlencode(
+            {
+                "client_id": client_id,
+                "response_type": "code",
+                "redirect_uri": REDIRECT_URI,
+                "response_mode": "query",
+                "scope": SCOPE,
+                "state": state,
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
+            }
+        )
     )
 
 
@@ -87,6 +96,8 @@ def exchange_code(client: httpx.Client, code: str, verifier: str, settings: Sett
         body = response.json()
     except ValueError:
         body = {}
+    if not isinstance(body, dict):
+        body = {}
     if not response.is_success:
         raise SystemExit(
             f"Token exchange rejected (HTTP {response.status_code}): "
@@ -112,14 +123,22 @@ def _wait_for_redirect() -> str:
         def log_message(self, format: str, *args: object) -> None:
             pass  # the default access log would print the authorization code
 
-    port = urlsplit(REDIRECT_URI).port
-    with http.server.HTTPServer(("localhost", port), Handler) as server:
+    with http.server.HTTPServer(("localhost", REDIRECT_PORT), Handler) as server:
         server.handle_request()
     return captured[0] if captured else ""
 
 
 def main() -> int:
-    settings = get_settings()
+    try:
+        settings = get_settings()
+    except pydantic.ValidationError as err:
+        # Name fields only: str(err) would include input_value, i.e. env secrets.
+        fields = sorted({".".join(str(p) for p in e["loc"]).upper() for e in err.errors()})
+        raise SystemExit(
+            "Settings are missing or invalid: "
+            + ", ".join(fields)
+            + " -- set them in your shell or backend/.env first"
+        ) from None
     if not settings.graph_client_id or not settings.graph_client_secret:
         raise SystemExit("GRAPH_CLIENT_ID and GRAPH_CLIENT_SECRET must both be set first")
 
