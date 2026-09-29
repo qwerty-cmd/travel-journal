@@ -1895,6 +1895,8 @@ DONE (dev), four commits. Filed under `s-real-device-testing` because every item
 
 ## t-security-headers-on-500
 
+DONE 2026-09-29 (owner: fix everything agent-fixable). The existing catch-all `unhandled_exception_handler` in `app/core/errors.py` now attaches `SECURITY_HEADERS` (moved to `app/core/headers.py` so main.py and errors.py share it without a cycle); body and 5xx logging unchanged. `test_unhandled_exception_500_has_security_headers` fails without it.
+
 ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `d2913ad` review. Do not implement on sight.
 - An unhandled exception is answered by Starlette's `ServerErrorMiddleware`, the outermost layer, which sits outside `SecurityHeadersMiddleware`. That `500` goes out without the four headers. Its body is still the fixed `INTERNAL_ERROR` envelope from the registered handler.
 - Why ordinary: a `500` body is a fixed JSON string, so `nosniff` and the framing headers protect nothing on it in practice. Nothing is broken.

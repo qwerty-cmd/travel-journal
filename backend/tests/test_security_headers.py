@@ -83,3 +83,29 @@ def test_static_file_has_security_headers(spa: ModuleType, path: str) -> None:
     assert response.status_code == 200
     assert "html" not in response.headers["content-type"]
     assert_security_headers(response)
+
+
+def test_unhandled_exception_500_has_security_headers() -> None:
+    """
+    An unhandled exception's 500 is built by ``ServerErrorMiddleware``, outside
+    user middleware -- so ``SecurityHeadersMiddleware`` never sees it. The
+    catch-all handler has to set the headers itself, on an unchanged envelope.
+    """
+    from fastapi import FastAPI
+
+    from app.core.errors import INTERNAL_ERROR_MESSAGE, register_exception_handlers
+
+    throwaway = FastAPI()
+    throwaway.add_middleware(app.main.SecurityHeadersMiddleware)
+    register_exception_handlers(throwaway)
+
+    @throwaway.get("/api/boom")
+    def boom() -> None:
+        raise RuntimeError("postgresql://user:secret@db-host/bike_trip")
+
+    response = TestClient(throwaway, raise_server_exceptions=False).get("/api/boom")
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"code": "INTERNAL_ERROR", "message": INTERNAL_ERROR_MESSAGE}
+    }
+    assert_security_headers(response)
