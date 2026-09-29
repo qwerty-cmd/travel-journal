@@ -2099,6 +2099,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 ```
 
 ## t-am-migration-0003
+
+DONE 2026-09-29. SQL byte-identical to the contract. QA PASS (all AC; races on both partial unique indexes leave exactly one row; ON DELETE RESTRICT/SET NULL/CASCADE as specified; 10 tables.py + 6 SQL mutations caught). Full suite 894; pre-0003 image 222/222 legacy endpoint tests on the 0003 schema. Debt filed: t-am-check-body-drift (triggered), t-am-m3-slug-seed-edges (ordinary).
 **Goal.** Deliverable 2's schema.
 **Scope.** `backend/migrations/0003_accounts_membership.sql`, `migrations/README.md` (files table), `app/data/tables.py`, `tests/test_schema.py`, new `tests/test_migration_0003.py`.
 **AC.**
@@ -2828,3 +2830,11 @@ ORDINARY DEBT, a gap found while scoping. No endpoint changes `displayName` afte
 ## t-am-json-body-limit
 
 ORDINARY DEBT (from t-am-contract-models QA, 2026-09-29). No request-body size limit exists for JSON routes; a 1 MB string field is parsed and held in memory on any JSON route. Promotion trigger: an abuse incident or a public-write surface beyond the auth routes. Fix: a small ASGI middleware refusing Content-Length > 64 KiB on non-multipart /api bodies with 422.
+
+## t-am-check-body-drift
+
+TRIGGERED DEBT (QA on t-am-migration-0003). `test_check_constraint_names_match_metadata` compares CHECK constraints by name only, so a CHECK body in `tables.py` can drift from the SQL (e.g. delay `BETWEEN 0 AND 100`) with every test green. Today all 16 bodies match (hand-checked vs `pg_get_constraintdef`). No consumer: `tables.py` CHECK text is never emitted as DDL. Promotion trigger: anything renders DDL from `tables.metadata` (create_all, Alembic autogenerate), or a migration changes an existing CHECK body.
+
+## t-am-m3-slug-seed-edges
+
+ORDINARY DEBT (QA on t-am-migration-0003). The obligation-13 test seeds only token_urlsafe slugs, so a whitespace-only slug normalisation (`rtrim`) would pass. The real 0003 keeps odd slugs byte-identical (QA-verified). No trigger.
