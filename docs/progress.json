@@ -128,6 +128,7 @@
 
     { "id": "t-api-healthcheck-wiring", "storyId": "s-deploy-cutover", "title": "Wire /api/health into a container HEALTHCHECK and the compose api service", "status": "not_started", "agent": "devops", "blockers": [], "gate": "triggered" },
 
+    { "id": "t-graph-refresh-token-helper", "storyId": "s-cloud-service-setup", "title": "One-time owner-run helper (python -m app.storage.get_refresh_token) to obtain the initial Graph refresh token via auth-code + PKCE — user-approved OneDrive token handling", "status": "in_progress", "agent": "dev", "blockers": [], "gate": "none" },
     { "id": "t-onedrive-preflight-check", "storyId": "s-cloud-service-setup", "title": "Real end-to-end OneDrive sync against the live tenant — human step, confirms the refresh token is healthy before departure", "status": "not_started", "agent": "devops", "blockers": ["t-onedrive-sync-job"] },
 
     { "id": "t-frontend-kubb-client", "storyId": "s-frontend-first-open", "title": "Kubb-generated TS types + TanStack Query hooks for the eight contract operations from a committed OpenAPI snapshot", "status": "done", "agent": "dev", "blockers": [], "gate": "none" },
@@ -156,6 +157,6 @@
     { "id": "t-neon-sslmode-url", "storyId": "s-cloud-service-setup", "title": "normalize_database_url translates libpq sslmode/channel_binding for asyncpg", "status": "done", "agent": "dev", "blockers": [], "gate": "triggered" },
     { "id": "t-onedrive-sync-scheduler", "storyId": "s-deploy-cutover", "title": "Define the OneDrive sync as a scheduled Azure Container Apps Job (every 30 min, same image, command overridden) — definition only, not provisioned", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
   ],
-  "currentTask": null,
+  "currentTask": "t-graph-refresh-token-helper",
   "lastUpdated": "2026-09-30T00:30:00Z"
 }
