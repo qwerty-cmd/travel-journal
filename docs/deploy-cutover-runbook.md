@@ -54,7 +54,9 @@ Tick each box as you go.
     (`POST /api/trips/{slug}/stops/{stopId}/photos`, one idempotent request each, decision-log Entry 20).
     Presigned GET URLs are loaded by `<img>` tags, which don't make CORS requests.
 - [ ] **You. Microsoft Graph app registration (for the OneDrive archive).**
-  - Register an app that allows personal Microsoft accounts.
+  - Register an app with supported account type **"Accounts in any organizational directory and personal
+    Microsoft accounts"**. The sync and the helper below use the `/common` endpoint, which only accepts a
+    personal account under this setting.
   - Grant the delegated `Files.ReadWrite` and `offline_access` permissions.
   - Add a platform of type **Web** and register the redirect URI `http://localhost:8765` on it.
   - Create a client secret.

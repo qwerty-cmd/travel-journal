@@ -1744,6 +1744,11 @@ NO DECISION-LOG ENTRY: the user made the choice, and no two agents' positions co
 
 **Closeout (done).** Story `s-cloud-service-setup`, agent `dev`, gate `none`. Commits `9573e52`, `e48bd85`, `7207880`. **User-approved OneDrive token work.** CLAUDE.md puts OneDrive token handling on the off-limits list, and the user explicitly approved this task.
 
+**User approval (verbatim from the scope record).** APPROVAL (verified by orchestrator in the user's own chat message): on 2026-09-29 the orchestrator offered "(b) The pipeline adds a small get_refresh_token script under backend/app/storage/ that you run once. This is OneDrive token handling, which CLAUDE.md puts off-limits without your approval, so it only happens if you say (b)." The user replied "b". Scope limited to this helper + tests + docs.
+
+**Carried over from the parallel desktop version** (merged from `main`, commit `dab1605`, which this branch supersedes):
+- There is no `--port` flag. Add one only if port 8765 turns out to be taken. The registered redirect URI would then have to change too.
+
 **What was built.** `backend/app/storage/get_refresh_token.py` is a one-time helper that only the owner runs. It gets the initial `GRAPH_REFRESH_TOKEN` that `onedrive_sync` needs.
 - Run it with `cd backend && uv run python -m app.storage.get_refresh_token`. The full `backend/.env` must be present. `DATABASE_URL` and the `S3_*` vars are required too, because `Settings` validates as a whole even though the helper only reads `GRAPH_CLIENT_ID` and `GRAPH_CLIENT_SECRET`.
 - It runs the OAuth authorization-code flow with PKCE (S256) and scope `offline_access Files.ReadWrite`. It uses the same `/common` tenant endpoint that `onedrive_sync` redeems against, so `onedrive_sync` can use the printed token as-is.
