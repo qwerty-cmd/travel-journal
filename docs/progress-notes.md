@@ -2165,6 +2165,8 @@ cd backend && uv run pytest tests/test_csrf.py && uv run pytest && uv run ruff c
 ```
 **Added AC (from t-am-test-client-harness QA).** Two tests build raw ASGI requests outside the factory: `test_spa_static_files.py` `_raw_get` (plain-http GETs, no Origin, on purpose — path-escape probes) and `test_error_envelope.py` ~1450 (a scope passed straight to `_methods_allowed_elsewhere`, never through middleware). If the CSRF check touches safe methods or the scheme, give the first an Origin or a comment saying why not.
 
+DONE 2026-09-29. `core/csrf.py` (pure-ASGI, fail-closed: unknown/duplicated `Sec-Fetch-Site` or `Origin` → 403; any non-GET/HEAD/OPTIONS method checked), wired inside `SecurityHeadersMiddleware`. `tests/test_csrf.py` 272 tests written from the contract, incl. a blocked-write-writes-nothing check with a same-origin control. QA PASS: full suite 1166; 8 of 9 non-equivalent mutants killed; path/header tricks either blocked or only reach GET-only routes (405). Host spoof with matching Origin passes by design (browsers can't set Host). Debt: t-am-csrf-root-path (triggered), t-am-csrf-test-gaps (ordinary). Owner check added to t-am-verify-aca-xff: ingress must pass the original Host through.
+
 ## t-am-identity-core
 
 ADDED AC (from t-am-contract-models QA): (1) presented passwords — signin `password`, `currentPassword`, rotation `password` — are NFKC-normalised before verify, same as new passwords (else decomposed/fullwidth input can never sign in); add the sentence to api-contract.md Sessions. (2) presented credentials get a generous `max_length=1024` (not 128 — NFKC can shorten, and a far cap leaks no plausibility signal). (3) `ApiError.__init__` requires `WWW-Authenticate` for 401 and `Retry-After` for 429 (or extend test_bare_409_raise_audit.py to 401/429) so neither can go out without its header.
@@ -2603,6 +2605,8 @@ Unblocks `t-am-verify-aca-xff` and `t-am-verify-ios-cookie`.
 **Blocker.** `t-am-owner-deploy`. `t-am-rate-limits` being done isn't enough, because nothing is deployed until the PR merges (scrum change 15).
 **Validation.** A scripted 121-request burst from two networks, recorded in the handover. (The "diagnostic log line" option was dropped: no task adds one.)
 
+**Also verify (from t-am-csrf QA):** the ingress passes the browser's original `Host` through unchanged — the CSRF check compares `Origin` with `Host`, so a rewritten Host would 403 every same-origin write (fails closed, never a bypass).
+
 ## t-am-design-spec
 
 Reconciliation pass committed in `bf2938e` (no `TBC:` API references remain; §13 C1–C15 resolved; tokens.css appendix per Entry 30).
@@ -2841,3 +2845,11 @@ TRIGGERED DEBT (QA on t-am-migration-0003). `test_check_constraint_names_match_m
 ## t-am-m3-slug-seed-edges
 
 ORDINARY DEBT (QA on t-am-migration-0003). The obligation-13 test seeds only token_urlsafe slugs, so a whitespace-only slug normalisation (`rtrim`) would pass. The real 0003 keeps odd slugs byte-identical (QA-verified). No trigger.
+
+## t-am-csrf-root-path
+
+TRIGGERED DEBT (QA on t-am-csrf). The middleware tests the `/api` prefix against `scope["path"]`, which includes `root_path`, while Starlette routes on the path with `root_path` stripped. Reproduced with `uvicorn --root-path /btj`: a cross-site POST reached the bikes-create handler. No consumer: nothing sets `root_path` (Dockerfile, compose, infra, app). Fix: strip `scope.get("root_path", "")` from the front before the prefix test, plus a test. Promotion trigger: `--root-path`, `FastAPI(root_path=...)`, serving under a path prefix, or mounting the app as a sub-app.
+
+## t-am-csrf-test-gaps
+
+ORDINARY DEBT (dev + QA on t-am-csrf). (1) No test for repeated `Sec-Fetch-Site` headers — mutating `all` → `any` in `is_cross_site` survives all 272 tests (behaviour correct today, verified live). (2) `ApiError.forbidden` docstring in `core/errors.py` still describes only the slug 403. (3) `tests/conftest.py` comment says an `http://` client is cross-site; only the missing `Origin` matters.
