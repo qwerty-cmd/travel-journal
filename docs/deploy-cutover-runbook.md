@@ -43,7 +43,8 @@ Tick each box as you go.
 ## 1. Cloud service setup (story `s-cloud-service-setup`)
 
 - [ ] **You. Azure budget alert FIRST** (spec §13). Set a low-threshold alert, which acts as a tripwire
-  rather than a hard limit, before any other Azure resource exists.
+  rather than a hard limit, before any other Azure resource exists. Steps: `infra/azure/README.md`
+  §1 ("Budget alert + resource group").
 - [ ] **You. Neon.** Create the project and database, then copy the connection string into your password
   manager, not into a file in the repo.
 - [ ] **You. Cloudflare R2.**
@@ -70,7 +71,7 @@ Tick each box as you go.
     3. Sign in with the Microsoft account whose OneDrive gets the archive, and accept the consent
        prompt. If the browser doesn't open, visit the URL the helper prints.
     4. Copy the refresh token it prints into your password manager and into the Azure secret
-       `GRAPH_REFRESH_TOKEN` (step 2). The helper writes no file.
+       `GRAPH_REFRESH_TOKEN` on the OneDrive sync Job (step 2). The helper writes no file.
     5. Never paste the token into chat, including an agent session, and never commit it.
   - **When to mint, and how long it lasts** (decision-log Entry 22). The sync reuses this one token for
     the whole trip. It works until about **90 days after you mint it** (Microsoft publishes no exact
@@ -84,40 +85,44 @@ Tick each box as you go.
       client secret.
     - The token can also die early if you revoke your Microsoft sessions, remove the app's consent, or
       reset your password.
-    - **Re-minting** means re-running the helper above, then updating `GRAPH_REFRESH_TOKEN` on **both**
-      the Container App and the OneDrive sync Job. They have separate secret stores.
+    - **Re-minting** means re-running the helper above, then updating `GRAPH_REFRESH_TOKEN` on the
+      **OneDrive sync Job only**. The Container App doesn't carry `GRAPH_*` (least privilege: the web app
+      never reads them; see step 2).
   - The exact scope and request shape have not been checked against Graph. Step 5 checks them.
 - [ ] **You (devops drafts it). Container Apps environment.** Use the free tier, with scale-to-zero
   (min replicas 0). Point external ingress at target port **8000** and allow HTTPS only
   (`allowInsecure: false`). Use **multiple-revision mode**, because the rollback in step 8 depends on it.
-  The definition goes in `infra/azure/`, which needs your approval (`t-owner-container-app-definition`).
-  It declares the step 2 secrets, including `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and
-  `GRAPH_REFRESH_TOKEN`, and the `/api/health` liveness probe (`t-infra-container-apps-probe`, see the
-  table at the end).
+  The definition is drafted in `infra/azure/README.md` (`t-owner-container-app-definition`); running it
+  needs your approval. In order: §2 the environment, §3 the Container App (the step 2 secrets marked
+  "App + Job"; no `GRAPH_*`), §4 the `/api/health` liveness and startup probes
+  (`t-infra-container-apps-probe`, see the table at the end), and §6 verification.
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
-  secret store**, separate from the app's, so set its secrets too. Use the same names and the same values
-  as the app (step 2).
+  secret store**, separate from the app's. Set the shared secrets with the same names and values as the
+  app, plus the `GRAPH_*` values, which live on the Job only (step 2).
 
 ## 2. Secrets and env vars (names only)
 
-Set these with `az containerapp secret set`. Reference them as env vars from the app. The names must
-match `.env.example` (see `infra/azure/README.md` and `.claude/skills/deploy/SKILL.md`).
+Secrets are passed at create time (`--secrets`, see `infra/azure/README.md` §3 and "OneDrive sync
+job") and changed later with `az containerapp secret set` / `az containerapp job secret set`. Each is
+referenced as an env var. The names must match `.env.example` (see `infra/azure/README.md` and
+`.claude/skills/deploy/SKILL.md`). **Set on** says which resource carries each one. `GRAPH_*` are on
+the **Job only**, for least privilege: the web app never reads them, only the sync does.
 
-| Name | Kind | Source |
-|---|---|---|
-| `DATABASE_URL` | secret | Neon console string, pasted as-is (sslmode is handled, see step 0) |
-| `S3_ENDPOINT_URL` | secret | R2 account endpoint |
-| `S3_ACCESS_KEY_ID` | secret | R2 token |
-| `S3_SECRET_ACCESS_KEY` | secret | R2 token |
-| `S3_BUCKET_NAME` | secret | R2 bucket name |
-| `S3_REGION` | plain env | `auto` |
-| `S3_PUBLIC_ENDPOINT_URL` | **leave unset** | Only for local runs, where the API and the browser reach storage at different addresses (step 3). R2's endpoint works for both |
-| `GRAPH_CLIENT_ID` | secret | app registration |
-| `GRAPH_CLIENT_SECRET` | secret | app registration |
-| `GRAPH_REFRESH_TOKEN` | secret | printed by the `get_refresh_token` helper (step 1) |
-| `GRAPH_ONEDRIVE_FOLDER` | plain env | target folder path |
-| `ENVIRONMENT` | plain env | a non-`local` value |
+| Name | Kind | Set on | Source |
+|---|---|---|---|
+| `DATABASE_URL` | secret | App + Job | Neon console string, pasted as-is (sslmode is handled, see step 0) |
+| `S3_ENDPOINT_URL` | secret | App + Job | R2 account endpoint |
+| `S3_ACCESS_KEY_ID` | secret | App + Job | R2 token |
+| `S3_SECRET_ACCESS_KEY` | secret | App + Job | R2 token |
+| `S3_BUCKET_NAME` | secret | App + Job | R2 bucket name |
+| `S3_REGION` | plain env | App + Job | `auto` |
+| `S3_PUBLIC_ENDPOINT_URL` | **leave unset** | neither | Only for local runs, where the API and the browser reach storage at different addresses (step 3). R2's endpoint works for both |
+| `GRAPH_CLIENT_ID` | secret | **Job only** | app registration |
+| `GRAPH_CLIENT_SECRET` | secret | **Job only** | app registration |
+| `GRAPH_REFRESH_TOKEN` | secret | **Job only** | printed by the `get_refresh_token` helper (step 1) |
+| `GRAPH_ONEDRIVE_FOLDER` | plain env | **Job only** | target folder path |
+| `ENVIRONMENT` | plain env | App + Job | a non-`local` value |
 
 - [ ] **You.** Set every value yourself. `STATIC_FILES_DIR` is already set inside the image, so leave it
   alone.
@@ -206,7 +211,7 @@ Only you do this, because it needs real `GRAPH_*` values.
   and record what Graph did in `t-onedrive-graph-name-charset`'s notes.
 - [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
   token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
-  the app and the Job both carry that new token.
+  the Job carries that new token (the Container App has no `GRAPH_*`, step 2).
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
@@ -223,9 +228,10 @@ successful run after the fix archives everything that was missed.
   `AADSTS700082`) means the token has expired or been revoked, so re-mint. If both read `none given` and
   the status is a 5xx, Microsoft is more likely having an outage; wait for the next runs.
 - [ ] **Re-mint** the refresh token with the helper (step 1), in your own terminal.
-- [ ] **Update `GRAPH_REFRESH_TOKEN`** on both the Container App and the sync Job.
+- [ ] **Update `GRAPH_REFRESH_TOKEN`** on the sync Job only (`az containerapp job secret set`, see
+  `infra/azure/README.md` "OneDrive sync job"). The Container App doesn't carry it.
 - [ ] If re-minting fails too, check whether the client secret has expired (step 1, the date you
-  recorded). If it has, create a new one and update `GRAPH_CLIENT_SECRET` in both places first.
+  recorded). If it has, create a new one and update `GRAPH_CLIENT_SECRET` on the sync Job first.
 
 ## 6. Deploy (following `.claude/skills/deploy/SKILL.md`; `t-owner-cutover` covers §6–§7)
 
@@ -314,12 +320,11 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 ## Triggered debt to decide at cutover
 
-One item is still open. A fired trigger is not approval: it still goes through `ba` and the pipeline,
-or you decide to accept it.
+One item is waiting on you: it is drafted, and applying it is part of creating the Container App.
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-infra-container-apps-probe` | Container Apps ignores the Dockerfile `HEALTHCHECK`, so in production nothing probes `/api/health` until the Container App definition declares a probe. Blocked by `t-owner-container-app-definition` (step 1): it goes into that definition. | Add a **liveness** `httpGet` probe on `/api/health`, port 8000 (about 10s initial delay, 30s period, 5s timeout, 3 failures). Not a readiness probe: `/api/health` does not check Postgres or storage. `infra/` needs your approval. |
+| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The liveness and startup probes are drafted in `infra/azure/README.md` §4 (applied with `az containerapp update --yaml`). | Apply §4 when you create the app (step 1), then check the probes are on the template with the §6 verification commands. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,

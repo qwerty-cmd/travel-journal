@@ -47,6 +47,7 @@ empirically disproves another.
 | 24 | Bound form model for photo upload — won't-fix | `routes/photos.py`, `api-contract.md`, `progress.json` | **Orchestrator, 2026-09-29.** Corrects Entry 16's "impossible": a model carrying `UploadFile` **does** bind, but it flips the OpenAPI request type to `x-www-form-urlencoded`, which breaks the `multipart/form-data` contract and the Kubb client, for a cosmetic gain. Inline `Form(...)` params stay. Rationale is beside the params |
 | 25 | `qa`/`docs` write-boundary hooks, promoted ahead of their triggers | `.claude/hooks/*.sh`, `.claude/agents/{qa,docs}.md` | **User call, 2026-09-29, `c9d6b64`.** Triage had these as triggered/ordinary debt with no trigger fired. **Limits:** the `qa` tree guard **detects, doesn't prevent**, misses change-and-revert within one command, and **false-positives when another agent edits the same checkout in parallel**. The `docs` path guard **can't tell a doc comment from a logic edit** inside app/test source. Both narrow prose rules; neither replaces them |
 | 26 | Stop and photo times: stored as instants, shown in the reader's zone with the zone labelled | `frontend/src/format.ts`, `models/stop.py`, `api-contract.md`, `progress.json` | **Architect ruling, 2026-09-29, option A.** The review found times rendered with no zone, and the rider's own offset is not stored (`timestamptz` keeps the instant, not the offset). **Option B lost on need, not correctness:** `arrived_offset_minutes` / `taken_offset_minutes` columns would work, but no spec line asks for rider-local time; filed as triggered debt `t-stop-rider-offset`. **Option C is a no-op** (sending a local-offset spelling changes nothing, storage is UTC). **Option D lost on cost** (a timezone lookup from lat/lng adds a dependency) |
+| 27 | Graph credentials on the OneDrive sync Job only, not the web app | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1/§2/§5, `.claude/skills/deploy/SKILL.md` | **Job only** (least privilege) |
 
 ---
 
@@ -2137,3 +2138,17 @@ needs the offset *stored* (B), and B waits for its trigger.
 migration), and the display lives in `frontend/src/format.ts`. `format.ts`'s doc comment already
 explains the reader-zone choice. Citing this entry there, and beside `arrivedAt` in `models/stop.py`,
 was left for the later non-`docs/` pass, because this pass edits `docs/` only.
+
+## 27. Graph credentials on the OneDrive sync Job only, not the web app
+
+**Ruling:** orchestrator, 2026-09-29, while devops drafted the Container App definition. No escalation: it narrows where a secret lives and breaks no invariant.
+
+**Who disagreed:** the earlier plan vs what the code actually reads. The runbook, the deploy skill and the owner checklist all said to set `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` and `GRAPH_REFRESH_TOKEN` on **both** the Container App and the sync Job. Drafting the app, devops checked and found that nothing in the web app reads them. Only `app/storage/onedrive_sync.py` (the Job) and `app/storage/get_refresh_token.py` (the owner's laptop) do, and no route imports either. The `graph_*` settings default to empty, so the app starts without them.
+
+**The losing position, stated fairly:** "set everything everywhere" keeps the app and the Job on identical secret sets, which is simpler to reason about and to update.
+
+**Why it lost:** the refresh token is a long-lived credential for the owner's own OneDrive. The app is the internet-facing process, so it is the one most worth keeping it off. A process that never reads a secret should never hold it. The simplicity argument is weaker than it looks, too: a token re-mint now touches one store instead of two.
+
+**What follows:** `GRAPH_*` goes on the Job only, in the definition, the runbook (§1 re-minting, the §2 "Set on" column, §5, "If archiving stops mid-trip") and the deploy skill. The database and R2 secrets stay on both. `S3_PUBLIC_ENDPOINT_URL` is on neither in production.
+
+**Reopen if:** the web app ever needs to call Graph itself, which the architecture invariants currently forbid, since OneDrive is never a read dependency.

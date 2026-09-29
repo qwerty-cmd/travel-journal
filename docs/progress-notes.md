@@ -514,6 +514,8 @@ GATE RULING 2026-09-29 (orchestrator) — still `gate: triggered`. The promotion
 
 ## t-infra-container-apps-probe
 
+DONE (drafted) 2026-09-29. The trigger fired when the owner approved drafting the Container App definition. Liveness (`/api/health`:8000, 10s initial delay, 30s period, 5s timeout, 3 failures) and startup (10s period, 10 failures, about 105s for a cold start) probes are drafted in `infra/azure/README.md` §4 as a YAML fragment applied with `az containerapp update --yaml`. The CLI has no probe flags, so this is the one place YAML is unavoidable. There is deliberately no readiness probe, because `/api/health` checks no dependencies. Applying it is part of `t-owner-container-app-definition`. Unverified: the `az` CLI is not installed in the agent environment, and the startup-probe `failureThreshold` ceiling of 10 is from memory.
+
 FILED 2026-09-29, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
 
 - Why: Azure Container Apps **ignores the Dockerfile `HEALTHCHECK`**, so `f0a1d99` covers only local `docker`/compose. In production nothing probes `/api/health` until the Container App definition declares a probe.
@@ -1938,6 +1940,8 @@ PARTIAL 2026-09-29 (owner). `docker compose up --build` now works end to end on 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production image locally with `docker run` against compose's Postgres and MinIO, as in runbook §3 (smoke test). Keep `-e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`, or photos won't load. Pass: `/api/health` `200`, `/` shows the paste-link screen, a local rider link renders the trip, and `docker ps` shows `(healthy)`.
 
 ## t-owner-container-app-definition
+
+DRAFTED 2026-09-29 (devops, owner-approved draft; nothing provisioned). `infra/azure/README.md` now has the run-order `az` scripts: §1 resource group plus budget alert (portal-first), §2 environment (Consumption, Log Analytics), §3 Container App (GHCR image, external ingress on 8000, HTTPS only, multiple-revision mode, min 0 / max 1 replicas, 0.5 vCPU / 1 GiB, secrets passed at creation via `read -rsp`, no `S3_PUBLIC_ENDPOINT_URL`), §4 probes, §5 custom domain (optional, not needed), §6 verification. The existing sync Job section now passes `--secrets` at creation; before, its `secretref` env vars pointed at secrets that did not exist yet. Least privilege (decision-log Entry 27): no `GRAPH_*` on the app, the Job only. Still the owner's: running the commands and entering the values. Nothing was checked against `az --help` here.
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. `infra/` is off-limits without explicit approval, so this is the owner's; **devops can draft it with approval.** Add the Container App definition to `infra/azure/README.md` beside the Job:
 - external ingress, target port 8000, HTTPS only (`allowInsecure: false`);
