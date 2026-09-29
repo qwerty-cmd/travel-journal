@@ -49,6 +49,7 @@ empirically disproves another.
 | 26 | Stop and photo times: stored as instants, shown in the reader's zone with the zone labelled | `frontend/src/format.ts`, `models/stop.py`, `api-contract.md`, `progress.json` | **Architect ruling, 2026-09-29, option A.** The review found times rendered with no zone, and the rider's own offset is not stored (`timestamptz` keeps the instant, not the offset). **Option B lost on need, not correctness:** `arrived_offset_minutes` / `taken_offset_minutes` columns would work, but no spec line asks for rider-local time; filed as triggered debt `t-stop-rider-offset`. **Option C is a no-op** (sending a local-offset spelling changes nothing, storage is UTC). **Option D lost on cost** (a timezone lookup from lat/lng adds a dependency) |
 | 27 | Graph credentials on the OneDrive sync Job only, not the web app | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1/§2/§5, `.claude/skills/deploy/SKILL.md` | **Job only** (least privilege) |
 | 28 | Applying the probes: keep the hand-rolled `az rest` PATCH, reject `az containerapp update --yaml` | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1 | `--yaml` **does not wipe secrets** (it re-reads and repopulates via `list_secrets`) — that objection was wrong and is recorded so it is not re-raised. It lost on three other grounds: a temp YAML file breaks this repo's "az CLI blocks in the README, no YAML/Bicep/Terraform" convention, the `containerapp` module pins `CURRENT_API_VERSION = "2025-07-01"`, and its merge depth into the `containers` array could not be verified. Its one real advantage — the SDK polls `Azure-AsyncOperation`/`Location` to completion, which `az rest` cannot — was priced at ~6 lines of retry loop, not a convention change |
+| 29 | Public trips, local accounts, leader-gated membership (supersedes the two-link access model) | spec §2, `core/security.py`, `core/{passwords,sessions,csrf,ratelimit}.py`, `offline/queue.ts`, `0003_accounts_membership.sql`, `architecture-diagram.md` | **Architect ADR, accepted by the orchestrator under the owner's delegation, 2026-09-29.** Entry 21's per-person trigger fired. Username + argon2id password + one-time recovery code, with a `__Host-` cookie session (hash stored). Passkeys, magic links, OAuth, device tokens and bearer tokens lost. Authorization is session + an active `trip_members` row, read every request; **no slug is a write credential**. Trips are public by default with a 24 h delay; legacy trips migrate to private; private → 404. Join requests are per person; peer leaders can't remove each other. Revoked riders' queued items get 403 with no grace window. **The `ErrorCode` ruling Entries 6/14 require:** `UNAUTHENTICATED` 401 (queue pauses) and `RATE_LIMITED` 429 (retries). New dependency `argon2-cffi`. Invariants unchanged. Reopen on passkeys, or on max-replicas > 1 (rate limits to Postgres) |
 
 ---
 
@@ -324,6 +325,9 @@ merely underspecified.
 **What `ba` did — the part worth recording.** It declined to decide. Its stated reasoning: inventing
 a new `ErrorCode` member is a *contract change*, not an implementation detail, and a scoping agent
 does not get to make contract changes by writing them into a task description. It escalated instead.
+
+> **Pointer (2026-09-29):** the next `ErrorCode` ruling this rule requires is **Entry 29**, which adds
+> `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429).
 
 It also refused the silent fix that was available to it. Rather than mapping `405` or `500` onto
 `NOT_FOUND` or `VALIDATION_ERROR` to make the gap disappear, it **deliberately left them on FastAPI's
@@ -1185,6 +1189,9 @@ member is a *contract change*, and a scoping agent does not make contract change
 into a task description. It did not quietly pick `422`, and it did not scope the create endpoint
 with the ambiguity left in.
 
+> **Pointer (2026-09-29):** Entry 29 is the recorded ruling for the seventh and eighth codes,
+> `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429). They were not invented in a task.
+
 **Resolution — the user ruled.** Add a sixth member, **`CONFLICT`, status `409`**. The idempotency
 rule becomes a three-way branch, stated once for all three create endpoints:
 
@@ -1870,6 +1877,9 @@ rotated" note is about the script, not the schema. After rotation:
 Reopen this only if **a leaked rider link is actually seen in use outside the group**, or the user
 wants writes gated **per person**.
 
+> **Pointer (2026-09-29):** this trigger has fired (the owner wants writes gated per person). **Entry 29
+> resolves it** with accounts and membership, not a PIN.
+
 ### Design if reopened
 
 Do not re-derive this. The agreed shape is:
@@ -2175,3 +2185,193 @@ was left for the later non-`docs/` pass, because this pass edits `docs/` only.
 **Related, and not the same call:** the *response body* was rejected as a success signal in the same round — `ContainerApps_Update` is long-running, so `202` with no body is the normal success case. That is a correctness fix recorded in `progress-notes.md` under `t-probe-patch-script-defects`, not a contested option.
 
 **Reopen if:** the `containerapp` module's pinned API version catches up to the probe schema **and** its `containers` merge behaviour is verified against a throwaway app — at which point the built-in poller is worth the temp file. Reopening also needs a reason the "no YAML files" convention should bend, since that constraint is a project choice, not a technical finding.
+
+---
+
+## 29. Public trips, local accounts, leader-gated membership (supersedes the two-link access model)
+
+**Ruling:** the `architect` wrote the ADR. The orchestrator accepted it as written on 2026-09-29, under the autonomy the owner delegated for architecture, access-model and API decisions, which includes documented stack changes. The owner did not rule on it personally. It is flagged for the owner's review because it **supersedes a locked spec decision** (spec §2 "Friend access: two links") and adds a dependency.
+
+**Who disagreed:** the owner's new goal (public trips anyone can browse, riders as identified people, a leader who approves who can write) vs the settled two-link model: spec §2, Entry 21's "the rider link stays the only write gate", and Entry 18's slug-addressed routes. This is not an agent-vs-agent dispute. A locked decision is overruled by a changed requirement, and Entry 21's own reopen trigger ("the user wants writes gated **per person**") has fired. The design reuses Entry 21's reopen design for the queue: a `401` pauses the queue and never fails it.
+
+**Starting state the ADR was written against.** Each trip has two slugs: `rider_slug`, a write credential, and `viewer_slug`, for reads. There are no accounts. In `security.py`, `_resolve_trip` returns 404 and then `require_rider_access` returns 403. The queue (`frontend/src/offline/queue.ts`) stores `payload.slug` in IndexedDB `btj-queue`. Its never-retry set is `VALIDATION_ERROR`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `FORBIDDEN` and `NOT_FOUND`. Everything else is retried with backoff capped at 5 min. The client sends `credentials: 'same-origin'` (`api/client.ts` ~L119), so a cookie session rides along on replay. `trips.id` is a UUID4, documented as non-secret, and is the S3 key prefix. Presigned URLs last 3600 s. The `photo.ts` canvas re-encode strips EXIF on the client only. No production trip has been seeded yet, so legacy data exists only locally and in dev. The deployment is one replica that scales to zero, and uvicorn runs without `--forwarded-allow-ips`, so `request.client.host` is the ingress proxy. The password rule comes from NIST SP 800-63B-4: a single-factor password needs at least 15 characters, and the maximum allowed must be at least 64.
+
+### 1. Public exposure
+- `trips.visibility` is `public|private`. Trips created in the app default to `public` (the owner's goal). **Existing trips migrate to `private`**, because they were shared under link-only consent. Publishing one needs a leader's explicit Publish. Reversible.
+- `trips.public_delay_hours` defaults to **24**, range 0–168. Non-members only see stops (with their photos and map points) whose `arrivedAt` is at least that old. This keeps riders' live position and tonight's campsite from going public. Members see everything. A leader may set 0. Reversible.
+- What non-members of a public trip see:
+  - the list entry: `id, name, startDate, riderCount, lastPublicStopAt` (delay applied);
+  - the trip: the same, plus bikes (make/model/year/specs and the rider name on each bike);
+  - stops: name, notes, exact lat/lng, `locationSource`, and `arrivedAt` (exact, because the delay is the privacy control);
+  - the map and trail, built from delay-filtered stops only;
+  - photos: presigned URLs plus the `uploadedBy` display name.
+- Never public: usernames (the login handle), user ids, member lists, request lists, anything session-related, and both slugs.
+- Photo EXIF: the server strips metadata too. It rejects non-JPEG uploads with `422` and drops the APP1–APP15 and COM segments with a plain-Python JPEG segment walker (no new dependency). This is **required before any trip is published**.
+- Presigned URLs stay at 3600 s on a private bucket.
+- **Accepted residual risk:** a trip's first stop is often a rider's home. The Publish dialog warns about it. A per-stop "hide from public" option is filed as ordinary debt.
+
+### 2. Anonymous browsing
+- The public id is the existing `trips.id` (non-secret, immutable). No new column.
+- A new API lives under `/api/v2`, which avoids colliding with the legacy `/api/trips/{slug}`: `GET /api/v2/trips` (public trips sorted by `lastPublicStopAt`, with a cursor and `limit` ≤ 50), `GET /api/v2/trips/{tripId}`, and `/stops`, `/stops/{stopId}/photos` and `/map` under it.
+- SPA routes: `/` Discover, `/trips/$tripId`, `/signin`, `/signup` and `/account`. `/t/$slug` is kept as a legacy route (§12). This supersedes Entry 18's `/` behaviour.
+- A private trip returns **404** to non-members, not 403, so nobody can probe whether it exists.
+- `TripOut` gains `visibility` and `viewer: { role: "anonymous"|"none"|"pending"|"rider"|"leader" }`. The role is a UI hint only; the server enforces access.
+
+### 3. Identity: username + password (argon2id) + one-time recovery code
+The alternatives compared, and why each lost:
+- **Passkeys** were rejected as the sole method. The RP-ID locks accounts to one host, which breaks on a host move, and a passkey still needs a fallback secret. Adding them later is filed as triggered debt.
+- **Password + argon2id** was **chosen**. It needs no third party and works in every browser context.
+- **Email magic links** were rejected because they need an email-provider account.
+- **OAuth with Google or Microsoft** was rejected because it needs an app registration and a third-party sign-in dependency.
+- **A device token + recovery code** was rejected because it is a password in disguise, and the storage isolation between iOS Safari and the installed app (Entry 18) makes it worse.
+
+The design:
+- `username` is unique, case-folded and private. `displayName` is public. A password is 15–128 characters of any printable text.
+- argon2id at the OWASP minimum (m=19 MiB, t=2, p=1), hashed in a thread behind `asyncio.Semaphore(2)`.
+- One new dependency: `argon2-cffi>=25.1,<26` (MIT, standard, wheels for Python 3.12).
+- Session: an opaque 256-bit random token in the cookie `__Host-btj_session` with `HttpOnly; Secure; SameSite=Lax; Path=/`. Only its SHA-256 is stored, in `sessions`. There is no signing secret and no env var. It is a cookie rather than a bearer token because JS and XSS can't read it, it never lands in IndexedDB queue entries, and the existing client already sends it.
+- Lifetime: 90 days, sliding (last-used is written at most once a day), with an absolute cap of 365 days.
+- Revocation: logout deletes the session row. "Sign out everywhere", a password change and an account disable delete all of the user's rows.
+- CSRF: a pure-ASGI middleware runs on every unsafe method under `/api`. If `Sec-Fetch-Site` is present and is not `same-origin` or `none`, the request is rejected. If the header is absent, `Origin` must match `Host`. A rejection is `403 FORBIDDEN`. SameSite=Lax is the second layer (OWASP Fetch Metadata). There is no custom header, so old app versions keep working.
+- Recovery (no email): signup shows a 128-bit recovery code once and stores its hash. `POST /api/v2/auth/recover` (username, code, new password) resets the password, revokes all sessions and issues a new code. The operator CLI `python -m app.data.reset_account` prints a one-time reset code for handing over out of band. **Leaders can never reset another account.**
+- Offline: signing in needs a connection. Queued writes carry no credential; a replay uses whatever session exists at send time. A `401` pauses the queue and shows "Sign in to send N items". Each entry records the `userId` it was captured under (an identifier, not a secret), and the drain holds any entry whose `userId` differs from the signed-in user.
+
+### 4. Trip creation
+`POST /api/v2/trips` (needs a session) takes `{id (client-generated uuid), name, startDate, visibility?=public}`. In one transaction it creates the trip (slugs NULL, `created_by` = the caller) and a `trip_members` row with role `leader`. It returns `201`, and a replay with the same id is idempotent.
+
+### 5. Join requests: one per person
+A request binds to one authenticated account. A group request would grant write access to accounts the leader never saw and that never consented. Groups are served by an optional `message` of up to 280 characters and by bulk approve/reject. Reversible: a `join_parties` table could be added later.
+- States: `pending → approved | rejected | cancelled | blocked`. A partial unique index allows one pending request per (trip, user).
+- A duplicate POST while pending returns `200` with the existing request. An already-active member gets `409 CONFLICT`. The requester may cancel, and may re-request immediately after cancelling. A re-request within **7 days** of a rejection or revocation gets `409`. After "Reject and block", requests are refused until a leader unblocks.
+- Caps: 20 pending requests per user across all trips, and 100 pending per trip.
+- Requests that come through a legacy rider link carry `via = 'legacy_rider_link'`.
+
+### 6. Leadership
+A trip can have several peer leaders. A leader can promote a rider to leader, step down, or leave. A leader **cannot remove or demote another leader**, which prevents takeovers; a rogue leader is removed with the operator CLI. **The last leader cannot leave or step down** (`409`) and must promote someone first. Reversible.
+
+### 7. Write authorization: one gate
+`core/security.py` gains `require_session`, `require_trip_writer` and `require_trip_leader`. They run in this order:
+1. Resolve the trip. A missing trip is 404, and so is a private trip for a non-member.
+2. Resolve the session. No session is `401 UNAUTHENTICATED`.
+3. Require an active `trip_members` row with the right role. Anything else is `403 FORBIDDEN`.
+
+Membership is read from Postgres on every request with no cache, so a revocation takes effect on the next request.
+
+The legacy slug write routes (`POST /api/trips/{slug}/stops`, `/photos`, `/bikes`, and `PATCH /bikes/{id}`) keep their paths. The slug now only **locates** the trip, and access goes through the same membership gate. **No slug is a write credential any more.**
+
+`test_route_dependency_audit.py` is extended so that every non-GET route must declare a writer or leader dependency.
+
+`stops`, `photos` and `bikes` gain `created_by`. The server sets `uploadedBy` from the account's `displayName`. The form field is still accepted, for old queued items, but ignored.
+
+### 8. Revocation and the offline queue
+`DELETE /api/v2/trips/{id}/members/{userId}` sets `revoked_at` and `revoked_by` and keeps the row. The revoked rider's queued items, including replays of ids already stored, get `403 FORBIDDEN` "You're no longer a rider on this trip". `FORBIDDEN` is never-retry, so each item is marked failed, its blob is kept, and the rider sees it. Nothing is silently dropped and nothing is accepted. The new client adds "Save photo to this device" on failed photo items. A **grace window for items captured before the revocation was rejected**: `arrivedAt` and `takenAt` are asserted by the client and could be backdated.
+
+The new codes:
+- `401 UNAUTHENTICATED`. The new queue pauses and prompts sign-in; the item is not failed.
+- `429 RATE_LIMITED`, with `Retry-After`. The item is retried.
+
+An old client's `isNeverRetry` treats both as retryable, so nothing is lost.
+
+### 9. Public photos
+Reading goes through the read gate (the trip is public, or the caller is a member), and then `storage/` presigns a GET on the private bucket. Uploading needs `require_trip_writer`. There is no public bucket and no FastAPI proxy.
+
+### 10. Abuse controls
+`app/core/ratelimit.py` is an in-process token bucket with no dependency. It is keyed by the right-most `X-Forwarded-For` hop, using a `TRUSTED_PROXY_HOPS=1` setting, and falls back to the socket address. A limited request gets `429` with `Retry-After` and the error envelope.
+
+| Surface | Limit |
+|---|---|
+| Public GETs | 120/min per IP |
+| Signup | 5/hour per IP; 50/day global |
+| Login / recovery | 10 per 15 min per IP |
+| Trip creation | 3/day per user; max 20 trips created per user |
+| Join requests | 10/hour per user (+ §5 caps) |
+| Stop/photo/bike writes | 600/hour per user (the burst after a dead zone must drain) |
+| Photo size | 15 MiB cap |
+
+The per-account lockout is stored in Postgres (`users.failed_logins`, `locked_until`): 10 failures lock the account for 15 minutes, and the lock survives restarts. Scaling to zero resets only the in-memory buckets. **Triggered debt:** move the buckets to Postgres if max-replicas goes above 1.
+
+### 11. Migrating existing data
+`0003_accounts_membership.sql` is forward-only. It adds the tables `users`, `sessions`, `trip_members` and `join_requests`. `trips` gains `visibility` (default `'private'`), `public_delay_hours` (24), `created_by` and `created_at`. `stops`, `photos` and `bikes` gain `created_by`. `trips.rider_slug` and `viewer_slug` become NULLable (the CHECK and UNIQUE constraints still hold with NULLs; see Entries 3 and 8). No data is deleted.
+- A rider slug grants nothing by itself. A signed-in user who redeems one through `POST /api/v2/trips/claim` (slug in the body, never the URL) gets a **pending join request** with `via='legacy_rider_link'`, never automatic access.
+- The leader of a legacy trip can only be set with the operator CLI, `grant_leader --trip-id --username`. No secret a user holds converts to leadership. `seed_trip` gains `--leader-username`.
+- A viewer slug keeps read access to its (private) legacy trip through the legacy GETs until the removal window closes.
+
+### 12. Rollout and rollback
+The service worker's `autoUpdate` means the next load runs the new code, which drains the same `btj-queue`. Old slug-addressed items replay against the membership-gated legacy write paths with the current session cookie. A still-open tab from the old version is same-origin, so it passes Fetch Metadata. It gets 401 or 429 (both retried) until the user signs in, or 403 if the user is not a member.
+
+The legacy `/t/$slug` and `/api/trips/{slug}/*` stay for at least 120 days **and** until no legacy trip is still private. Removing them is its own task, gated on 14 days of zero hits to `/api/trips/<redacted>` in the (redacted) access logs.
+
+Rollback: rolling back the image restores slug-bearer writes on a schema that no longer requires slugs. That is safe for legacy trips, whose slugs are intact, while new trips (NULL slugs) become unreachable. No schema rollback is needed, because 0003 only adds and relaxes and the old image still works against it. Rollback is reversible but **security-degrading**, since the old model returns. It must be written into the runbook.
+
+### 13. Architecture impact
+**The invariants are unchanged:** one artifact; Postgres and S3 are the only synchronous dependencies; no provider SDK outside `data/` and `storage/`.
+- New modules: `core/passwords.py`, `core/sessions.py`, `core/csrf.py` and `core/ratelimit.py`.
+- New repositories: `users`, `sessions`, `memberships` and `join_requests`.
+- One new dependency: `argon2-cffi`.
+- Supersedes spec §2 "Friend access" (a locked decision) and reopens Entry 21.
+- `architecture-diagram.md` updated on the patch that recorded this entry: the client box now reads "Anonymous viewer / signed-in rider", the arrow reads "HTTPS /api/* (session cookie)", there is an identity note, and there is an access-model bullet.
+
+### 14. Trade-offs, i.e. the losing positions and why they lost
+
+| Choice | Rejected | Why | Reversible |
+|---|---|---|---|
+| Password + recovery code | Passkeys | RP-ID lock-in, still needs a fallback, device-test risk before departure | Yes (add passkeys) |
+| Cookie session | Bearer token | XSS exfiltration; token would be persisted in queue | Costly |
+| 24 h public delay | Live public | Live location of riders | Yes |
+| Legacy trips private | Auto-publish | Consent under old model | Yes |
+| No grace for queued writes after revocation | Capture-time grace | Client time forgeable | Yes |
+| Per-person requests | Group requests | Grants must bind to an account | Yes |
+| Peer leaders, no mutual removal | Creator-owner | Prevents takeover; small groups | Yes |
+| `/api/v2` prefix | id-or-slug on one path | Mixing credential lookup and locator lookup | No (shared URLs) |
+
+Magic links, OAuth and device tokens also lost (§3). A group join request lost to per-person requests (§5).
+
+**Defaults chosen where the requirements were silent:** the 7-day cooldown, 90/365-day sessions, the rate limits in §10, the 15-character minimum password and 3600 s presigning. Any of them can be changed without reopening this entry.
+
+**Accepted risks:** passwords can be phished; there is no breached-password check, because that needs a third party; a first stop can be a home (§1).
+
+### 15. Test obligations (contract-first)
+1. Route × identity matrix {anonymous, signed-in non-member, pending, rider, revoked, leader} × {public, private} → exactly 401/403/404/2xx as specified.
+2. Private trip gives non-members the byte-identical 404 of a nonexistent trip.
+3. Legacy slug write routes reject a valid rider slug with no session (401) and slug + non-member session (403).
+4. Route audit fails if any unsafe route lacks a writer/leader dependency.
+5. Revocation effective next request, including id-replay (403, nothing written to DB or S3).
+6. Last leader cannot leave/step down (409); leader cannot remove another leader (403).
+7. Join lifecycle: duplicate → 200; cooldown → 409; block enforced; rider-slug claim never grants access.
+8. CSRF: cross-site `Sec-Fetch-Site` or mismatched `Origin` rejected on every unsafe method.
+9. Sessions: expired/deleted token → 401; only hash stored; logout and password change revoke; cookie attributes asserted.
+10. Recovery single-use; reset revokes sessions; lockout survives restart.
+11. Public delay filters stops, map, trail and photos consistently; no username/user id/slug/email in any public response.
+12. Stored JPEG has no APP1/EXIF segment; non-JPEG → 422.
+13. Migration: existing trips become private with slugs intact; no rows lost; no memberships created.
+14. Queue: 401 pauses (not failed); 403 fails and keeps blob; 429 retries after Retry-After; different-userId entries held; old-client classification still retries both new codes.
+15. Rate limits → 429 with envelope; keyed on right-most XFF hop; spoofed left-most ignored.
+16. No password, recovery code or session token in logs, error messages or pytest output (caplog).
+
+### Orchestrator ruling (2026-09-29)
+The owner delegated architecture, access-model and API decisions to the Architect and permitted documented stack changes. The ADR is accepted as written, including:
+- the new dependency `argon2-cffi>=25.1,<26`;
+- superseding spec §2 "Friend access: two links";
+- reopening Entry 21;
+- the new ErrorCodes `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429).
+
+**This is the `ErrorCode` ruling that Entries 6 and 14 require.** A new member is a contract change, and it needs a recorded decision rather than a scoping agent's choice. The enum goes from six members to eight, and the change lands in `docs/api-contract.md` before any route uses it.
+
+To verify during implementation: that Azure Container Apps ingress appends exactly one right-most XFF hop (the `TRUSTED_PROXY_HOPS=1` premise), and iOS standalone-PWA cookie isolation on a real device (the Entry 18 premise, now carrying the session).
+
+### What follows
+- Contract first: `docs/api-contract.md` gains the `/api/v2` surface, the two codes, `TripOut.visibility`/`viewer`, and the new queue classification (401 pauses, 429 retries). Only then does `ba` scope tasks.
+- The spec §2 "Friend access" line carries a supersession pointer to this entry.
+- Entry 21 is resolved by this entry. Its PIN design is **not** built; the part reused is the "401 pauses the queue" state.
+- Entry 18's `/` redirect/paste-link behaviour gives way to the Discover page. `/t/$slug` survives only as a legacy route.
+- Rationale that must live beside code when it is built: the no-grace revocation rule in `frontend/src/offline/queue.ts` (retry classification) and the revocation route; the 404-not-403 rule for private trips and the gate order in `core/security.py`; right-most-hop keying in `core/ratelimit.py`; cookie-not-bearer in `core/sessions.py`. `docs` cannot place these (they are app source), so `dev` should add them in the implementing patches.
+- The rollback runbook gains the "security-degrading" warning from §12.
+
+### Reopen triggers
+- **"Add passkeys"**: triggered debt from §3. Add them *alongside* passwords, never as the sole method, unless the RP-ID/host-move objection has gone away.
+- **"max-replicas > 1"**: move the rate-limit buckets to Postgres **before** scaling out, because in-process buckets would split per replica.
+- **The ingress premise fails**: if Container Apps turns out not to append exactly one right-most XFF hop, re-derive the rate-limit key.
+- **The iOS cookie premise fails**: if the standalone PWA does not keep the session cookie on a real device, revisit the sign-in UX for the installed app. The cookie-vs-bearer row in §14 is marked *costly*, so start by rereading the XSS/queue-persistence reasons.
+- **A group sign-up need** (e.g. the leader asks for one link for a whole group): §5's `join_parties` table, which still binds grants to accounts.
+- **Live public position requested**: the 24 h default was chosen for rider safety, and changing it for all trips needs that reason answered.
+- **Per-stop hiding**: promote the ordinary-debt "hide from public" item if a published first stop is seen to be a home.
