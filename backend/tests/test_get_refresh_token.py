@@ -22,7 +22,11 @@ import base64
 import hashlib
 import http.server
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Self
 from urllib.parse import parse_qs, urlsplit
 
@@ -72,6 +76,65 @@ def test_token_url_matches_onedrive_sync() -> None:
     from app.storage import onedrive_sync
 
     assert helper.TOKEN_URL == onedrive_sync.TOKEN_URL
+
+
+# --------------------------------------------------------------------------- #
+# Running the module: import must not load settings
+# --------------------------------------------------------------------------- #
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# Sentinels for the subprocess run. Deliberately free of ordinary words so that a
+# fragment search over the output cannot collide with the helper's own messages.
+SUBPROCESS_SENTINELS = {
+    "GRAPH_CLIENT_ID": "SENTINEL-gcid-Qx7vP2mK9wLz",
+    "GRAPH_CLIENT_SECRET": "SENTINEL-gsec-Hb4TnR8jYc3e",
+    "GRAPH_REFRESH_TOKEN": "SENTINEL-grt-Vd6uZq1XoF5s",
+}
+_KEPT_ENV = ("PATH", "HOME", "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "UV_PROJECT_ENVIRONMENT")
+
+
+def _fragments(value: str, width: int = 8) -> list[str]:
+    return [value[i : i + width] for i in range(len(value) - width + 1)]
+
+
+def test_running_the_helper_without_settings_exits_cleanly_and_leaks_nothing() -> None:
+    """Regression guard for the round-1 leak.
+
+    If the module imports anything that loads settings at import time (e.g.
+    ``from app.storage.onedrive_sync import TOKEN_URL``, which pulls in
+    ``s3_client``), the ValidationError escapes ``main()``'s handler: the run
+    dies with a traceback, and without ``hide_input_in_errors`` that traceback
+    echoes env values. ``main()`` itself must turn the same failure into a
+    field-names-only exit before it gets anywhere near the browser.
+    """
+    if (BACKEND_DIR / ".env").exists():
+        pytest.skip("backend/.env exists; Settings would read it and mask the missing vars")
+
+    env = {name: os.environ[name] for name in _KEPT_ENV if name in os.environ}
+    env.update(SUBPROCESS_SENTINELS)
+    assert not any(k == "DATABASE_URL" or k.startswith("S3_") for k in env)
+
+    result = subprocess.run(
+        [sys.executable, "-m", "app.storage.get_refresh_token"],
+        cwd=BACKEND_DIR,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "Traceback" not in output, output
+    assert "Opening your browser" not in output, output
+    # Fragments, not whole values: pydantic truncates long reprs ('SENT...TINEL-...').
+    for value in SUBPROCESS_SENTINELS.values():
+        for fragment in _fragments(value):
+            assert fragment not in output, f"sentinel fragment {fragment!r} leaked: {output!r}"
+    assert "DATABASE_URL" in result.stderr, output  # main()'s field-names-only exit
 
 
 # --------------------------------------------------------------------------- #
@@ -158,6 +221,18 @@ def _client(*, respond: Callable[[httpx.Request], httpx.Response]) -> httpx.Clie
     return httpx.Client(transport=httpx.MockTransport(respond))
 
 
+def _assert_nothing_secret_printed(capsys: pytest.CaptureFixture[str]) -> None:
+    """The error path must not print the request or the response body on its way out.
+
+    The SystemExit message is checked separately; this catches a stray
+    ``print(body)`` / ``print(response.text)`` before the raise.
+    """
+    out = capsys.readouterr()
+    printed = out.out + out.err
+    for secret in (*SECRETS, ACCESS_TOKEN):
+        assert secret not in printed, f"exchange_code printed a secret: {printed!r}"
+
+
 def test_exchange_code_returns_the_refresh_token() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -193,7 +268,9 @@ def test_exchange_code_posts_the_authorization_code_grant() -> None:
     assert form["client_secret"] == CLIENT_SECRET
 
 
-def test_exchange_code_non_2xx_exits_with_only_graphs_error() -> None:
+def test_exchange_code_non_2xx_exits_with_only_graphs_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             400,
@@ -213,9 +290,10 @@ def test_exchange_code_non_2xx_exits_with_only_graphs_error() -> None:
     assert "AADSTS70008" in message
     assert "400" in message
     _assert_no_secrets(message)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_2xx_without_refresh_token_exits() -> None:
+def test_exchange_code_2xx_without_refresh_token_exits(capsys: pytest.CaptureFixture[str]) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"access_token": "at", "token_type": "Bearer"})
 
@@ -224,17 +302,21 @@ def test_exchange_code_2xx_without_refresh_token_exits() -> None:
 
     assert exc.value.code not in (0, None)
     _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_2xx_with_empty_refresh_token_exits() -> None:
+def test_exchange_code_2xx_with_empty_refresh_token_exits(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"refresh_token": ""})
 
     with _client(respond=respond) as client, pytest.raises(SystemExit):
         helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_non_json_error_body_is_handled() -> None:
+def test_exchange_code_non_json_error_body_is_handled(capsys: pytest.CaptureFixture[str]) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             502, text="<html>Bad Gateway</html>", headers={"content-type": "text/html"}
@@ -247,18 +329,20 @@ def test_exchange_code_non_json_error_body_is_handled() -> None:
     assert exc.value.code not in (0, None)
     assert "502" in message
     _assert_no_secrets(message)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_non_json_2xx_body_exits() -> None:
+def test_exchange_code_non_json_2xx_body_exits(capsys: pytest.CaptureFixture[str]) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not json")
 
     with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
         helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
     _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_non_dict_json_body_exits_cleanly() -> None:
+def test_exchange_code_non_dict_json_body_exits_cleanly(capsys: pytest.CaptureFixture[str]) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[1])
 
@@ -268,9 +352,12 @@ def test_exchange_code_non_dict_json_body_exits_cleanly() -> None:
     assert exc.value.code not in (0, None)
     assert isinstance(exc.value.code, str)
     _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_non_dict_json_error_body_exits_cleanly() -> None:
+def test_exchange_code_non_dict_json_error_body_exits_cleanly(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json=[1])
 
@@ -280,18 +367,30 @@ def test_exchange_code_non_dict_json_error_body_exits_cleanly() -> None:
     assert exc.value.code not in (0, None)
     assert "400" in str(exc.value.code)
     _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
-def test_exchange_code_error_does_not_echo_secrets_graph_reflected_back() -> None:
+ECHOED = {
+    "client_secret": CLIENT_SECRET,
+    "code": AUTH_CODE,
+    "v": VERIFIER,
+    "access_token": ACCESS_TOKEN,
+}
+
+
+def test_exchange_code_error_does_not_echo_secrets_graph_reflected_back(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # The message carries only error/error_description -- any other field in
-    # the body (even one that happens to echo request values) is dropped.
+    # the body (even one that happens to echo request values) is dropped, and
+    # nothing of the body is printed on the way out.
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             401,
             json={
                 "error": "invalid_client",
                 "error_description": "AADSTS7000215: Invalid client secret provided.",
-                "echo": {"client_secret": CLIENT_SECRET, "code": AUTH_CODE, "v": VERIFIER},
+                "echo": ECHOED,
             },
         )
 
@@ -299,6 +398,22 @@ def test_exchange_code_error_does_not_echo_secrets_graph_reflected_back() -> Non
         helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
     assert "invalid_client" in str(exc.value.code)
     _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
+
+
+def test_exchange_code_2xx_without_refresh_token_prints_nothing_of_an_echoing_body(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Same guard on the success-status branch: a 200 with no refresh_token whose
+    # body carries secrets must not be dumped before the SystemExit.
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"token_type": "Bearer", **ECHOED})
+
+    with _client(respond=respond) as client, pytest.raises(SystemExit) as exc:
+        helper.exchange_code(client, AUTH_CODE, VERIFIER, _settings())
+    assert exc.value.code not in (0, None)
+    _assert_no_secrets(exc.value.code)
+    _assert_nothing_secret_printed(capsys)
 
 
 # --------------------------------------------------------------------------- #

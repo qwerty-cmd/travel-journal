@@ -35,15 +35,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from botocore.exceptions import ClientError
 from conftest import SeededTrip
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.data import tables
 from app.data.db import get_session
 from app.models.common import ErrorCode, ErrorEnvelope
-from app.models.photo import PhotoOut
 
 PHOTOS_PATH = "/api/trips/{slug}/stops/{stop_id}/photos"
 
@@ -177,7 +176,7 @@ async def s3_bucket() -> None:
     s3 = get_s3_client()
     try:
         s3.head_bucket(Bucket=BUCKET_NAME)
-    except Exception:
+    except ClientError:  # head_bucket's 404/403 when the bucket does not exist yet
         s3.create_bucket(Bucket=BUCKET_NAME)
 
 
