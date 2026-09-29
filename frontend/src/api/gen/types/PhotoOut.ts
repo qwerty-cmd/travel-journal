@@ -29,7 +29,7 @@ export type PhotoOut = {
     */
     uploadedBy: string;
     /**
-     * @description When the photo was taken, as a timezone-aware ISO 8601 instant — the device\'s capture time, not the time the upload reached the server, which can be much later if the rider was offline. Always carries an offset, because upload rejects a naive value (422 / VALIDATION_ERROR). Read back from `photos.taken_at`, a `timestamptz`, it is a **UTC** instant; the `201` upload response instead echoes the offset the device sent. Same instant, two spellings — compare these as datetimes, never as strings.
+     * @description When the photo was taken, as a timezone-aware ISO 8601 instant — the device\'s capture time, not the time the upload reached the server, which can be much later if the rider was offline. Always carries an offset, because upload rejects a naive value (422 / VALIDATION_ERROR). Every response, the `201` upload included, reads it back from `photos.taken_at`, a `timestamptz`, so it is always a **UTC** instant (`Z`), whatever offset the device sent. Compare it as a datetime, not a string.
      * @type string, date-time
     */
     takenAt: string;
