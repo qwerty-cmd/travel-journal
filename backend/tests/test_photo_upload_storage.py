@@ -13,6 +13,13 @@ Against the real app, the local Postgres and the local MinIO; nothing mocked.
    object untouched (decision-log Entry 20).
 3. **A ``201`` and its own ``200`` replay spell ``takenAt`` identically**,
    because ``insert`` returns the row as stored rather than its arguments.
+4. **A storage or database failure mid-upload is a retryable ``500``**, never
+   a silent drop: ``INTERNAL_ERROR`` (the code the offline queue retries on),
+   no row left behind, and a retry under the same id lands the retry's bytes.
+5. **A stop on another trip writes nothing anywhere** -- not under either
+   trip's prefix, not in the table.
+6. **``PhotoOut.url`` is a SigV4 presigned GET** for the deterministic key,
+   valid for an hour, and it actually serves the uploaded bytes.
 """
 
 from __future__ import annotations
@@ -23,16 +30,23 @@ import secrets
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from http import HTTPStatus
+from typing import Any
+from urllib.parse import parse_qs, unquote, urlsplit
 from uuid import uuid4
 
+import httpx
 import pytest
 from botocore.exceptions import ClientError
 from conftest import SeededTrip
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+import app.api.routes.photos as photos_route
+from app.core.errors import INTERNAL_ERROR_MESSAGE
 from app.data import tables
 from app.data.db import get_session
+from app.models.common import ErrorCode, ErrorEnvelope
 from app.storage.s3_client import BUCKET_NAME, get_s3_client
 
 PHOTOS_PATH = "/api/trips/{slug}/stops/{stop_id}/photos"
@@ -42,12 +56,12 @@ PHOTOS_PATH = "/api/trips/{slug}/stops/{stop_id}/photos"
 ABOVE_MULTIPART_THRESHOLD = 8 * 1024 * 1024 + 1
 
 
-@pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
-    """The real application, on the test database."""
+async def _app_client(
+    engine: AsyncEngine, *, raise_app_exceptions: bool
+) -> AsyncIterator[AsyncClient]:
     import app.main
 
-    sessionmaker = async_sessionmaker(migrated_engine, expire_on_commit=False)
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
 
     async def session_override() -> AsyncIterator[AsyncSession]:
         async with sessionmaker() as session:
@@ -56,11 +70,31 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application)
+        transport = ASGITransport(app=application, raise_app_exceptions=raise_app_exceptions)
         async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
+
+
+@pytest.fixture
+async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+    """The real application, on the test database."""
+    async for http_client in _app_client(migrated_engine, raise_app_exceptions=True):
+        yield http_client
+
+
+@pytest.fixture
+async def quiet_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+    """
+    The same app, but an unhandled exception comes back as the ``500`` a phone sees.
+
+    Starlette's ``ServerErrorMiddleware`` sends the envelope *and* re-raises, and
+    ``ASGITransport`` would surface the re-raise instead of the response -- which
+    is the thing under test.
+    """
+    async for http_client in _app_client(migrated_engine, raise_app_exceptions=False):
+        yield http_client
 
 
 @pytest.fixture
@@ -320,3 +354,220 @@ async def test_unknown_slug_writes_nothing_to_storage(
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
     assert keys_under(prefix) == []
     assert [key for key in keys_under("") if key.endswith(f"/{photo_id}")] == []
+
+
+# --------------------------------------------------------------------------
+# A failure mid-upload is a retryable 500, never a silent drop
+# --------------------------------------------------------------------------
+#
+# Contract "Idempotency" and "Error envelope", decision-log Entry 20: the offline
+# queue retries INTERNAL_ERROR and never-retries everything else, so a storage or
+# database fault has to come back as exactly that code -- and must leave nothing
+# half-written that would turn the retry into a 200 replay of a photo whose bytes
+# never landed, or into a 409.
+
+
+async def photo_rows(engine: AsyncEngine, photo_id: str) -> list[Any]:
+    """Every photos row with this id, straight from the table."""
+    async with engine.connect() as conn:
+        result = await conn.execute(tables.photos.select().where(tables.photos.c.id == photo_id))
+        return list(result.mappings())
+
+
+def assert_internal_error_leaks_nothing(response: httpx.Response, *secrets_: str) -> None:
+    """500 / INTERNAL_ERROR with the fixed message, and none of ``secrets_`` in the body."""
+    assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR, response.text
+    envelope = ErrorEnvelope.model_validate(response.json())
+    assert envelope.error.code == ErrorCode.INTERNAL_ERROR
+    assert envelope.error.message == INTERNAL_ERROR_MESSAGE
+    for value in secrets_:
+        assert value not in response.text, f"{value!r} leaked into the 500 body"
+
+
+async def test_a_storage_failure_is_a_500_that_writes_no_row_and_leaks_no_slug(
+    quiet_client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    stop: tuple[SeededTrip, str],
+    swept_prefixes: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    ``PutObject`` fails: the queue must see ``INTERNAL_ERROR`` and the table must
+    hold nothing. A row without its object would answer every retry with a ``200``
+    replay pointing at bytes that never landed -- the photo lost, silently.
+
+    The simulated S3 error text carries the slug, the object key and a host, the
+    kind of thing a real botocore message can carry; none may reach the body.
+    """
+    trip, stop_id = stop
+    photo_id = str(uuid4())
+    key = f"{trip.id}/{stop_id}/{photo_id}"
+    swept_prefixes.append(f"{trip.id}/{stop_id}/")
+    leaky = f"minio.internal:9000 {BUCKET_NAME}/{key} via {trip.rider_slug}"
+
+    real_get_s3_client = photos_route.get_s3_client
+
+    def failing_upload_client():
+        s3 = real_get_s3_client()
+
+        def upload_fileobj(*args: Any, **kwargs: Any) -> None:
+            raise ClientError({"Error": {"Code": "InternalError", "Message": leaky}}, "PutObject")
+
+        s3.upload_fileobj = upload_fileobj
+        return s3
+
+    monkeypatch.setattr(photos_route, "get_s3_client", failing_upload_client)
+
+    response = await quiet_client.post(
+        PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
+        data=form(photo_id),
+        files=upload(b"never-stored"),
+    )
+
+    assert_internal_error_leaks_nothing(
+        response, trip.rider_slug, trip.viewer_slug, key, "minio.internal", BUCKET_NAME
+    )
+    assert await photo_rows(migrated_engine, photo_id) == []
+    assert keys_under(f"{trip.id}/{stop_id}/") == []
+
+
+async def test_an_insert_failure_after_upload_is_a_500_and_a_retry_lands_the_retry_bytes(
+    quiet_client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    stop: tuple[SeededTrip, str],
+    created_keys: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    The object lands, then the ``INSERT`` fails once. Entry 20's safety argument:
+    the key is deterministic, so the queue's retry under the same id overwrites
+    rather than duplicates, and it is a fresh ``201`` -- not a ``409`` from the
+    orphaned object, not a ``200`` replay of a row that never committed.
+    """
+    trip, stop_id = stop
+    photo_id = str(uuid4())
+    key = f"{trip.id}/{stop_id}/{photo_id}"
+    created_keys.append(key)
+    url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
+
+    real_insert = photos_route.insert
+    calls = 0
+
+    async def insert_failing_once(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OperationalError(
+                "INSERT INTO photos", {}, Exception(f"connection to db lost ({trip.rider_slug})")
+            )
+        return await real_insert(*args, **kwargs)
+
+    monkeypatch.setattr(photos_route, "insert", insert_failing_once)
+
+    failed = await quiet_client.post(url, data=form(photo_id), files=upload(b"first-attempt"))
+
+    assert_internal_error_leaks_nothing(failed, trip.rider_slug, trip.viewer_slug, key)
+    assert await photo_rows(migrated_engine, photo_id) == []
+
+    retry = await quiet_client.post(url, data=form(photo_id), files=upload(b"retry-attempt"))
+
+    assert retry.status_code == HTTPStatus.CREATED, retry.text
+    assert retry.json()["id"] == photo_id
+    assert calls == 2
+    rows = await photo_rows(migrated_engine, photo_id)
+    assert len(rows) == 1
+    assert rows[0]["stop_id"] == stop_id
+    assert rows[0]["object_key"] == key
+    assert stored_bytes(key) == b"retry-attempt"
+
+
+# --------------------------------------------------------------------------
+# A stop on another trip writes nothing anywhere
+# --------------------------------------------------------------------------
+
+
+async def test_a_stop_on_another_trip_is_404_and_writes_nothing_under_either_trip(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    other_trip_stop: tuple[SeededTrip, str],
+    swept_prefixes: list[str],
+) -> None:
+    """
+    Trip 1's rider slug, trip 2's stop id. The trips are fresh per test, so both
+    whole trip prefixes must be empty -- an upload keyed on the slug's trip and
+    one keyed on the stop's real trip are both caught.
+    """
+    trip = seeded_trips[0]
+    other_trip, other_stop_id = other_trip_stop
+    photo_id = str(uuid4())
+    swept_prefixes.extend([f"{trip.id}/", f"{other_trip.id}/"])
+
+    response = await client.post(
+        PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=other_stop_id),
+        data=form(photo_id),
+        files=upload(b"cross-trip-bytes"),
+    )
+
+    assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+    assert ErrorEnvelope.model_validate(response.json()).error.code == ErrorCode.NOT_FOUND
+    assert keys_under(f"{trip.id}/") == []
+    assert keys_under(f"{other_trip.id}/") == []
+    assert await photo_rows(migrated_engine, photo_id) == []
+
+
+# --------------------------------------------------------------------------
+# PhotoOut.url is a SigV4 presigned GET that serves the uploaded bytes
+# --------------------------------------------------------------------------
+
+SIGV4_PARAMS = {
+    "X-Amz-Algorithm",
+    "X-Amz-Credential",
+    "X-Amz-Date",
+    "X-Amz-Expires",
+    "X-Amz-SignedHeaders",
+    "X-Amz-Signature",
+}
+
+
+async def assert_presigned_get(url: str, key: str, content: bytes) -> None:
+    """
+    Shape and behaviour of one presigned URL. The host is deliberately not
+    asserted: the public endpoint may be configured separately from the one the
+    API talks to, and path-style and virtual-host style both end in the key.
+    """
+    parts = urlsplit(url)
+    assert parts.scheme in {"http", "https"}, url
+    assert unquote(parts.path).endswith(f"/{key}"), url
+
+    query = parse_qs(parts.query)
+    assert SIGV4_PARAMS <= query.keys(), f"missing SigV4 params: {SIGV4_PARAMS - query.keys()}"
+    assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
+    assert query["X-Amz-Expires"] == ["3600"]
+
+    # Straight to the object store, not through the agent proxy.
+    async with httpx.AsyncClient(trust_env=False) as s3_http:
+        fetched = await s3_http.get(url)
+    assert fetched.status_code == HTTPStatus.OK, fetched.text
+    assert fetched.content == content
+
+
+async def test_photo_url_is_a_sigv4_presigned_get_that_serves_the_uploaded_bytes(
+    client: AsyncClient, stop: tuple[SeededTrip, str], created_keys: list[str]
+) -> None:
+    """Both the ``201`` body and the list carry a working signed GET for the key."""
+    trip, stop_id = stop
+    photo_id = str(uuid4())
+    key = f"{trip.id}/{stop_id}/{photo_id}"
+    created_keys.append(key)
+    content = os.urandom(4096)
+    url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
+
+    created = await client.post(url, data=form(photo_id), files=upload(content))
+    assert created.status_code == HTTPStatus.CREATED, created.text
+    await assert_presigned_get(created.json()["url"], key, content)
+
+    listed = await client.get(PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop_id))
+    assert listed.status_code == HTTPStatus.OK, listed.text
+    photo = next(p for p in listed.json() if p["id"] == photo_id)
+    await assert_presigned_get(photo["url"], key, content)

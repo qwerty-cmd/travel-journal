@@ -810,3 +810,64 @@ class TestTakenAtIsOffsetAware:
 
         assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, response.text
         assert parse_envelope(response).code == ErrorCode.VALIDATION_ERROR
+
+
+# --------------------------------------------------------------------------
+# The access guard answers before multipart validation
+# --------------------------------------------------------------------------
+
+# Each is a multipart request the rider slug rejects 422; `files=None` sends no
+# file part. "no body" sends no form at all.
+INVALID_UPLOADS: dict[str, tuple[dict[str, str], dict[str, Any] | None]] = {
+    "no body": ({}, None),
+    "no file part": (upload_form(photo_id="guard-probe"), None),
+    "file only, no fields": ({}, fake_file()),
+    "naive takenAt": (upload_form(photo_id="guard-probe", taken_at="2026-06-14T10:00:00"), None),
+    "unparseable takenAt": (upload_form(photo_id="guard-probe", taken_at="noonish"), None),
+}
+
+
+@pytest.mark.parametrize("case", sorted(INVALID_UPLOADS))
+async def test_the_access_guard_runs_before_body_validation(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    seeded_stops: list[SeededStop],
+    case: str,
+) -> None:
+    """
+    Viewer slug -> 403 and unknown slug -> 404, whatever the form looks like.
+
+    Mirrors the stops and bikes tests of the same name. The ordering is itself
+    an access-control property: a 422 instead of the 403/404 split would answer
+    a probe with "the request is malformed" before saying whether the slug
+    resolved, or whether it may write at all.
+
+    The rider-slug 422 is the control: without it a case that happened to be
+    valid would pass here for the wrong reason.
+    """
+    trip = seeded_trips[0]
+    stop = seeded_stops[0]
+    data, files = INVALID_UPLOADS[case]
+    probe_id = str(uuid4())
+    if "id" in data:
+        data = {**data, "id": probe_id}
+    # Files are single-use streams; build a fresh one per request.
+    fresh = (lambda: fake_file()) if files is not None else (lambda: None)
+
+    rider = await client.post(
+        PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id), data=data, files=fresh()
+    )
+    viewer = await client.post(
+        PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id), data=data, files=fresh()
+    )
+    unknown = await client.post(
+        PHOTOS_PATH.format(slug=UNKNOWN_SLUG, stop_id=stop.id), data=data, files=fresh()
+    )
+
+    assert rider.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, rider.text
+    assert viewer.status_code == HTTPStatus.FORBIDDEN, viewer.text
+    assert parse_envelope(viewer).code == ErrorCode.FORBIDDEN
+    assert unknown.status_code == HTTPStatus.NOT_FOUND, unknown.text
+    assert parse_envelope(unknown).code == ErrorCode.NOT_FOUND
+    assert await photo_rows_for_id(migrated_engine, probe_id) == []
