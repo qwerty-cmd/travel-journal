@@ -177,13 +177,14 @@ class ApiError(Exception):
 #      exception type, no database error required. CLOSED here: every 5xx site
 #      goes through `_endpoint()` and logs the matched route template instead.
 #   C. The uvicorn access log, which writes the request line on every request.
-#      ACCEPTED, deliberately, not overlooked: there is no shipper, tracker or
-#      aggregator in this project today; silencing access logs wholesale would
-#      cost status/method/latency for every request to remove a URL that was
-#      already on the wire; and an app module reconfiguring a third-party
-#      logger at import time is the silently-inert shape Entry 7(b) records.
-#      Filed as `t-access-log-slug-exposure`, trigger: **the first error
-#      tracker or log shipper configured**. Fire it then.
+#      CLOSED ahead of cutover (Container Apps ships stdout to Log Analytics) by
+#      `t-access-log-slug-exposure`: `backend/log_config/uvicorn.json`, passed
+#      as `--log-config` at startup, filters the slug segment out of access and
+#      error lines. Not by silencing access logs (that would cost
+#      status/method/latency on every request), and not by an app module
+#      reconfiguring uvicorn's logger at import time (the silently-inert shape
+#      Entry 7(b) records). A server started without `--log-config` still logs
+#      slugs.
 #
 # REJECTED REASONING — do not delete this guard because "the slug is in the
 # access log anyway, so this is pointless." That argument was made, recorded in

@@ -26,4 +26,9 @@ ENV STATIC_FILES_DIR=/app/frontend/dist
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
-CMD ["backend/.venv/bin/uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+# --log-config: uvicorn's default logging plus a filter that redacts the trip
+# slug (the link credential) from request-path log lines, since Container Apps
+# ships stdout/stderr to Log Analytics. Path is relative to WORKDIR /app; the
+# filter module it names is importable because --app-dir puts backend/ on
+# sys.path before uvicorn applies the config. See t-access-log-slug-exposure.
+CMD ["backend/.venv/bin/uvicorn", "app.main:app", "--app-dir", "backend", "--log-config", "backend/log_config/uvicorn.json", "--host", "0.0.0.0", "--port", "8000"]
