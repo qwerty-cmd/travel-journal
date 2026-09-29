@@ -107,5 +107,6 @@ Mutations:
 | `usePatchBikeApiTripsSlugBikesIdPatch` | `PATCH /api/trips/{slug}/bikes/{id}`: JSON body |
 
 The photo upload hook was checked only by reading the generated code. It has
-not been run in a browser. Note also that the backend upload is a single
-`put_object`, not resumable S3 multipart (`t-photo-s3-multipart-upload`).
+not been run in a browser. Note also that the backend streams each upload to
+storage with `upload_fileobj` as one idempotent request, not resumable S3
+multipart; resumability lives in the offline queue (decision-log Entry 20).
