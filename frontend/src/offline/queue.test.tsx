@@ -110,6 +110,9 @@ let persist: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("indexedDB", new IDBFactory());
+  // Single-tab tests: Node's real BroadcastChannel would link every module
+  // instance started in this file. Cross-tab behaviour is queueTabs.test.tsx.
+  vi.stubGlobal("BroadcastChannel", undefined);
   posts = [];
   handler = created;
   vi.stubGlobal(

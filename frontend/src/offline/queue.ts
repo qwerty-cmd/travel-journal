@@ -8,6 +8,13 @@
  * failure marks the entry `failed` and keeps it (never auto-deleted) until the
  * rider dismisses it; anything else counts an attempt and stops the drain, which
  * resumes on the next trigger or after a 5s → 300s doubling backoff.
+ *
+ * Several tabs share the one store. Where the Web Locks API exists only the tab
+ * holding the `btj-queue-drain` lock drains, so two tabs never send the same
+ * entry; elsewhere each tab falls back to its own in-memory guard. Where
+ * BroadcastChannel exists every change is announced on `btj-queue`, so other
+ * tabs' subscribers (the QueueNotice) re-read, and a new entry wakes a drain
+ * in the tab that holds the lock.
  */
 import type { QueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
@@ -41,6 +48,26 @@ const STORE = 'entries'
 const NEVER_RETRY = new Set(['VALIDATION_ERROR', 'METHOD_NOT_ALLOWED', 'CONFLICT', 'FORBIDDEN', 'NOT_FOUND'])
 const BACKOFF_START_MS = 5_000
 const BACKOFF_CAP_MS = 300_000
+/**
+ * Every send is aborted after a timeout, so a request that never settles can't
+ * hold the cross-tab drain lock forever. A stop is a small JSON body; a ~1 MiB
+ * photo on a weak cellular link can take over a minute, so it gets longer.
+ * An abort has no envelope, so it retries with backoff like a network failure.
+ */
+const STOP_TIMEOUT_MS = 30_000
+const PHOTO_TIMEOUT_MS = 120_000
+
+/** Runs `send` with a signal that aborts after `ms` (AbortSignal.timeout, else an AbortController + setTimeout). */
+async function withTimeout<T>(ms: number, send: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  if (typeof AbortSignal.timeout === 'function') return send(AbortSignal.timeout(ms))
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms)
+  try {
+    return await send(controller.signal)
+  } finally {
+    clearTimeout(t)
+  }
+}
 
 /** True only for the five contract never-retry codes; no envelope, or an unknown code, retries. */
 export function isNeverRetry(err: unknown): boolean {
@@ -121,6 +148,29 @@ export function subscribe(listener: Listener): () => void {
   return () => void listeners.delete(listener)
 }
 
+// --- cross-tab ------------------------------------------------------------
+
+const LOCK = 'btj-queue-drain'
+const CHANNEL = 'btj-queue'
+/** `enqueued` also wakes the receiver's drain; `changed` only refreshes its subscribers. */
+type Broadcast = 'enqueued' | 'changed'
+let channel: BroadcastChannel | undefined
+
+/** Tells every other tab, and this tab's subscribers, that the store changed. */
+async function changed(msg: Broadcast = 'changed'): Promise<void> {
+  channel?.postMessage(msg)
+  await emit()
+}
+
+/** Runs `fn` only if this tab gets the cross-tab drain lock; without Web Locks, always. */
+async function withDrainLock(fn: () => Promise<void>): Promise<void> {
+  const locks = navigator.locks
+  if (!locks?.request) return fn()
+  await locks.request(LOCK, { ifAvailable: true }, async (lock) => {
+    if (lock) await fn()
+  })
+}
+
 // --- enqueue / dismiss ---------------------------------------------------
 
 /**
@@ -139,13 +189,13 @@ export async function enqueue(items: QueueItem | PhotoItem | (QueueItem | PhotoI
   )
   await inTx('readwrite', (s) => entries.forEach((e) => s.add(e)))
   trigger()
-  await emit()
+  await changed('enqueued')
 }
 
 /** Deletes an entry — the only way a failed entry ever leaves the store. */
 export async function dismiss(key: number): Promise<void> {
   await deleteEntry(key)
-  await emit()
+  await changed()
 }
 
 // --- drain ---------------------------------------------------------------
@@ -158,7 +208,9 @@ let timer: ReturnType<typeof setTimeout> | undefined
 
 /**
  * Sends pending entries in key order, one at a time. One drain per tab: a call
- * while one is running returns that drain, which then runs once more.
+ * while one is running returns that drain, which then runs once more. Each pass
+ * takes the cross-tab lock; a pass that can't get it is skipped, since the tab
+ * holding it is draining the same store.
  */
 export function drain(): Promise<void> {
   if (running) {
@@ -169,7 +221,7 @@ export function drain(): Promise<void> {
     try {
       do {
         again = false
-        await drainOnce()
+        await withDrainLock(drainOnce)
       } while (again)
     } finally {
       running = undefined
@@ -188,11 +240,14 @@ async function drainOnce(): Promise<void> {
     const { slug } = entry.payload
     try {
       if (entry.kind === 'stop') {
-        await createStopApiTripsSlugStopsPost({ slug, data: entry.payload.data })
+        const { data } = entry.payload
+        await withTimeout(STOP_TIMEOUT_MS, (signal) => createStopApiTripsSlugStopsPost({ slug, data }, { signal }))
       } else {
         const { stopId, data } = entry.payload
         const file = new Blob([entry.blob], { type: 'image/jpeg' })
-        await uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ slug, stop_id: stopId, data: { ...data, file } })
+        await withTimeout(PHOTO_TIMEOUT_MS, (signal) =>
+          uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ slug, stop_id: stopId, data: { ...data, file } }, { signal }),
+        )
       }
     } catch (err) {
       const attempts = entry.attempts + 1
@@ -200,17 +255,17 @@ async function drainOnce(): Promise<void> {
         const failedEntry = { ...entry, attempts, failed: true, lastError: (err as ApiError).envelope!.error.message }
         if (failedEntry.kind === 'photo') {
           await putEntry(failedEntry)
-          await emit()
+          await changed()
           continue
         }
         await failStop(failedEntry)
-        await emit()
+        await changed()
         // This pass's snapshot still shows the cascaded photos as pending: re-read.
         again = true
         return
       }
       await putEntry({ ...entry, attempts, lastError: err instanceof Error ? err.message : String(err) })
-      await emit()
+      await changed()
       failures++
       clearTimeout(timer)
       timer = setTimeout(trigger, Math.min(BACKOFF_START_MS * 2 ** (failures - 1), BACKOFF_CAP_MS))
@@ -218,7 +273,7 @@ async function drainOnce(): Promise<void> {
     }
     failures = 0
     await deleteEntry(entry.key)
-    await emit()
+    await changed()
     if (entry.kind === 'photo') {
       queryClient?.invalidateQueries({
         queryKey: listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ slug, stop_id: entry.payload.stopId }),
@@ -234,6 +289,13 @@ async function drainOnce(): Promise<void> {
 export function startQueue(client: QueryClient): void {
   queryClient = client
   navigator.storage?.persist?.().catch(() => {})
+  if (typeof BroadcastChannel === 'function') {
+    channel = new BroadcastChannel(CHANNEL)
+    channel.onmessage = (e: MessageEvent<Broadcast>) => {
+      emit().catch(console.error)
+      if (e.data === 'enqueued') trigger()
+    }
+  }
   window.addEventListener('online', () => {
     clearTimeout(timer)
     failures = 0

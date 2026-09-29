@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import { IDBFactory } from "fake-indexeddb";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey } from "../api/gen/hooks/useListPhotosApiTripsSlugStopsStopIdPhotosGet";
@@ -39,13 +39,16 @@ async function until(cond: () => boolean | Promise<boolean>, what = "condition")
 }
 
 // ---- fetch stub: stop POSTs carry JSON, photo POSTs carry FormData ----
-type Post = { url: string; id: string; json?: StopCreate; form?: FormData };
+type Post = { url: string; id: string; json?: StopCreate; form?: FormData; signal?: AbortSignal };
 let posts: Post[];
 let handler: (p: Post) => Response | Promise<Response>;
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const envelope = (status: number, code: string, message: string) => json(status, { error: { code, message } });
 const netDown = () => Promise.reject(new TypeError("Failed to fetch"));
+// A request that never settles on its own; like real fetch, it rejects with the signal's reason on abort.
+const hang = (p: Post) =>
+  new Promise<Response>((_, reject) => p.signal?.addEventListener("abort", () => reject(p.signal!.reason)));
 const isPhoto = (p: Post) => p.form !== undefined;
 const created = (p: Post, status = 201) =>
   isPhoto(p)
@@ -139,6 +142,9 @@ const photoUrl = (stopId: string, slug = "abc") => `/api/trips/${slug}/stops/${s
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("indexedDB", new IDBFactory());
+  // Single-tab tests: Node's real BroadcastChannel would link every module
+  // instance started in this file. Cross-tab behaviour is queueTabs.test.tsx.
+  vi.stubGlobal("BroadcastChannel", undefined);
   posts = [];
   handler = created;
   vi.stubGlobal(
@@ -148,10 +154,10 @@ beforeEach(() => {
       const url = String(input);
       let p: Post;
       if (init.body instanceof FormData) {
-        p = { url, id: String(init.body.get("id")), form: init.body };
+        p = { url, id: String(init.body.get("id")), form: init.body, signal: init.signal ?? undefined };
       } else {
         const body = JSON.parse(String(init.body)) as StopCreate;
-        p = { url, id: body.id, json: body };
+        p = { url, id: body.id, json: body, signal: init.signal ?? undefined };
       }
       posts.push(p);
       return handler(p);
@@ -345,6 +351,48 @@ describe("AC3/AC4: a photo is never deleted on a non-2xx", () => {
     expect((row?.value.lastError as string).length).toBeGreaterThan(0);
     expect(bytesOf(row?.value.blob)).toEqual(Array.from(ph.bytes));
     expect(await rawById(later.id)).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("photo upload timeout", () => {
+  test.each([
+    ["AbortSignal.timeout", false],
+    ["AbortController fallback", true],
+  ])("a hung upload is aborted at 120s, not 30s (%s), and retries with the blob kept", async (_, noTimeoutApi) => {
+    if (noTimeoutApi) {
+      const original = Object.getOwnPropertyDescriptor(AbortSignal, "timeout")!;
+      Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: undefined });
+      onTestFinished(() => void Object.defineProperty(AbortSignal, "timeout", original));
+    }
+    expect(typeof AbortSignal.timeout).toBe(noTimeoutApi ? "undefined" : "function");
+    await start();
+    const s = stop("S");
+    const ph = photo(s, 3);
+    handler = (p) => (p.id === ph.id ? hang(p) : created(p));
+    await Q.enqueue(photoItem(ph));
+    await flush();
+    expect(postedIds()).toEqual([ph.id]);
+    const signal = posts[0].signal!;
+    expect(signal).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(30_000); // a stop's timeout: a photo is still in flight
+    await flush();
+    expect(signal.aborted).toBe(false);
+    expect((await rawById(ph.id))?.value.attempts).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(89_999);
+    await flush();
+    expect(signal.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await until(async () => (await rawById(ph.id))?.value.attempts === 1, "attempt counted after timeout");
+    expect(signal.aborted).toBe(true);
+    const row = await rawById(ph.id);
+    expect(row?.value.failed).toBe(false);
+    expect(typeof row?.value.lastError).toBe("string");
+    expect(bytesOf(row?.value.blob)).toEqual(Array.from(ph.bytes));
+    expect(postedIds()).toEqual([ph.id]); // no dead-letter, no immediate re-send: backoff next
   });
 });
 
