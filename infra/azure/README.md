@@ -11,7 +11,7 @@ Bicep/Terraform/YAML):
   external HTTPS ingress on port 8000, multiple-revision mode, and scale-to-zero
 - `az containerapp job` CLI script — the scheduled OneDrive sync job (below)
 - Secrets wiring for `DATABASE_URL` (Neon), `S3_*` (Cloudflare R2),
-  `GRAPH_*` — names/structure only, real values are entered privately and
+  `GRAPH_*` (on the sync Job only) — names/structure only, real values are entered privately and
   passed to Azure CLI without putting literal values in saved commands
 - Budget alert setup notes (spec Section 13 — a low-threshold tripwire, not a
   hard limit; the free-tier ceilings are far beyond this trip's usage)
@@ -46,9 +46,6 @@ read -rsp 'S3_ENDPOINT_URL: ' S3_ENDPOINT_URL; printf '\n'
 read -rsp 'S3_ACCESS_KEY_ID: ' S3_ACCESS_KEY_ID; printf '\n'
 read -rsp 'S3_SECRET_ACCESS_KEY: ' S3_SECRET_ACCESS_KEY; printf '\n'
 read -rsp 'S3_BUCKET_NAME: ' S3_BUCKET_NAME; printf '\n'
-read -rsp 'GRAPH_CLIENT_ID: ' GRAPH_CLIENT_ID; printf '\n'
-read -rsp 'GRAPH_CLIENT_SECRET: ' GRAPH_CLIENT_SECRET; printf '\n'
-read -rsp 'GRAPH_REFRESH_TOKEN: ' GRAPH_REFRESH_TOKEN; printf '\n'
 
 # For a public GHCR package, omit the GHCR prompt above and all three --registry-* options below.
 az containerapp create \
@@ -65,15 +62,13 @@ az containerapp create \
   --allow-insecure false \
   --revisions-mode multiple \
   --min-replicas 0 \
+  --max-replicas 1 \
   --secrets \
     database-url="$DATABASE_URL" \
     s3-endpoint-url="$S3_ENDPOINT_URL" \
     s3-access-key-id="$S3_ACCESS_KEY_ID" \
     s3-secret-access-key="$S3_SECRET_ACCESS_KEY" \
     s3-bucket-name="$S3_BUCKET_NAME" \
-    graph-client-id="$GRAPH_CLIENT_ID" \
-    graph-client-secret="$GRAPH_CLIENT_SECRET" \
-    graph-refresh-token="$GRAPH_REFRESH_TOKEN" \
   --env-vars \
     DATABASE_URL=secretref:database-url \
     S3_ENDPOINT_URL=secretref:s3-endpoint-url \
@@ -81,16 +76,18 @@ az containerapp create \
     S3_SECRET_ACCESS_KEY=secretref:s3-secret-access-key \
     S3_BUCKET_NAME=secretref:s3-bucket-name \
     S3_REGION=auto \
-    GRAPH_CLIENT_ID=secretref:graph-client-id \
-    GRAPH_CLIENT_SECRET=secretref:graph-client-secret \
-    GRAPH_REFRESH_TOKEN=secretref:graph-refresh-token \
-    GRAPH_ONEDRIVE_FOLDER=<onedrive-folder-path> \
     ENVIRONMENT=<non-local-environment-name>
 
 unset GHCR_USERNAME GHCR_READ_PACKAGES_TOKEN DATABASE_URL S3_ENDPOINT_URL \
-  S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET_NAME GRAPH_CLIENT_ID \
-  GRAPH_CLIENT_SECRET GRAPH_REFRESH_TOKEN
+  S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET_NAME
 ```
+
+**No `GRAPH_*` on the app** (least privilege, decision-log Entry 27): the web
+app never reads them; only the OneDrive sync Job (and the owner's laptop
+helper) does, so the long-lived OneDrive token stays off the internet-facing
+app. **`--max-replicas 1`**: a handful of users fits one replica, and each
+extra replica opens its own Neon connection pool; the offline queue covers a
+short gap if the replica restarts.
 
 `S3_PUBLIC_ENDPOINT_URL` is intentionally unset; the runbook says the R2
 endpoint is used for both API and browser access. `STATIC_FILES_DIR` is already
@@ -98,12 +95,12 @@ baked into the image. The secret names and plain environment variables match
 `.env.example` and `docs/deploy-cutover-runbook.md` §2.
 
 The CLI does not expose custom Container Apps probes directly. After creating
-the app, apply the liveness probe with the Container Apps Update REST API
+the app, apply the startup and liveness probes with the Container Apps Update REST API
 (`2026-07-01`) using JSON Merge Patch. It reads the existing app once and uses
 Python's standard library to preserve the complete containers array (including
 any sidecars and their settings), changing only `probes` on the named app
 container. It fails instead of silently patching if that name is absent or
-ambiguous. The probe is deliberately liveness, not readiness: `/api/health`
+ambiguous. The probes are deliberately startup + liveness, not readiness: `/api/health`
 does not check Postgres or object storage.
 
 ```sh
@@ -126,7 +123,18 @@ if len(matches) != 1:
 
 for container in matches:
     probes = container.get("probes") or []
-    container["probes"] = [probe for probe in probes if probe.get("type") != "Liveness"]
+    container["probes"] = [
+        probe for probe in probes if probe.get("type") not in ("Liveness", "Startup")
+    ]
+    # Startup: gives a scale-from-zero cold start ~105 s before liveness applies.
+    container["probes"].append({
+        "type": "Startup",
+        "httpGet": {"path": "/api/health", "port": 8000, "scheme": "HTTP"},
+        "initialDelaySeconds": 5,
+        "periodSeconds": 10,
+        "timeoutSeconds": 5,
+        "failureThreshold": 10,
+    })
     container["probes"].append({
         "type": "Liveness",
         "httpGet": {"path": "/api/health", "port": 8000, "scheme": "HTTP"},
@@ -229,7 +237,8 @@ unset GHCR_USERNAME GHCR_READ_PACKAGES_TOKEN DATABASE_URL S3_ENDPOINT_URL \
 ```
 
 For a later secret rotation, prompt for the new value first and pass the
-variable, not a literal, to the CLI. Repeat separately for the app and Job:
+variable, not a literal, to the CLI. The Graph secrets live on the Job only, so
+a token re-mint is this one command:
 
 ```sh
 read -rsp 'New GRAPH_REFRESH_TOKEN: ' GRAPH_REFRESH_TOKEN; printf '\n'
@@ -240,7 +249,8 @@ az containerapp job secret set \
 unset GRAPH_REFRESH_TOKEN
 ```
 
-Use `az containerapp secret set` with the app name for its separate store. The
+For a database or R2 secret, which both hold, repeat with
+`az containerapp secret set` for the app's separate store. The
 prompt avoids echo and saved literal command history; it does not hide an
 argument from local process inspection while the CLI is running.
 
@@ -264,9 +274,9 @@ How it works:
 
 The job is a separate resource from the app:
 - **Own secret store.** The job does not see the app's secrets. Set the same
-  secret names with the same values on the job, and rotate both together.
-  Prompted variable example above shows the Job rotation command; update the app
-  store separately as well.
+  database and R2 secret names with the same values on the job, and rotate
+  those in both stores together. The `graph-*` secrets exist on the job only
+  (Entry 27), so a Graph token re-mint touches only the job.
 - **Registry credential.** If the GHCR package is private, the job needs the
   same GHCR credential as the app (`--registry-*` above, a GitHub token with
   `read:packages`). A public package needs none — drop the three

@@ -514,6 +514,8 @@ GATE RULING 2026-09-29 (orchestrator) — still `gate: triggered`. The promotion
 
 ## t-infra-container-apps-probe
 
+DONE (drafted) 2026-09-29. The trigger fired when the owner approved drafting the Container App definition. Liveness (`/api/health`:8000, 10s initial delay, 30s period, 5s timeout, 3 failures) and startup (10s period, 10 failures, about 105s for a cold start) probes were first drafted as a YAML fragment for `az containerapp update --yaml`; on merge with the owner's own README version (`e0587bd`, option A) they moved into the owner's `az rest` JSON merge-patch script, which preserves the full containers array and fails loudly on a wrong container name. The startup probe was added to that script. There is deliberately no readiness probe, because `/api/health` checks no dependencies. Applying it is part of `t-owner-container-app-definition`. Unverified: the `az` CLI is not installed in the agent environment, and the startup-probe `failureThreshold` ceiling of 10 is from memory.
+
 FILED 2026-09-29, split from `t-api-healthcheck-wiring`. `gate: none`. **NEEDS THE USER: `infra/` is off-limits without explicit approval** (CLAUDE.md), so no agent can pick this up on its own.
 
 - Why: Azure Container Apps **ignores the Dockerfile `HEALTHCHECK`**, so `f0a1d99` covers only local `docker`/compose. In production nothing probes `/api/health` until the Container App definition declares a probe.
@@ -1153,6 +1155,8 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 - Current consumer: none. Promotion trigger: none — add the brands if and when a real iPhone upload is seen landing as `.bin`.
 
 ## t-onedrive-preflight-check
+
+LOCAL RUN PASSED 2026-09-29 (owner). Full local stack (`docker compose up --build` with the boto3 `minio-init`, migrate, seed, a stop with a photo uploaded through the app) plus the owner's real Graph app registration and a refresh token minted with `get_refresh_token`: `python -m app.storage.onedrive_sync` archived the photo to OneDrive. This is the first confirmation against real Graph of the `/common` token flow, the `Files.ReadWrite offline_access` scope, the upload URL form and the `conflictBehavior=replace` placement, which were all previously unverified. Still open: the same run with **production** values (Neon/R2), and the re-run with a freshly minted token close to departure.
 
 ROW ADDED 2026-09-17 — it existed only as an id, cited by three places (`onedrive_sync.py`'s module docstring, the `s-photo-upload-onedrive-sync` story closeout above, and `t-onedrive-filename-url-encoding`) but was never written into `progress.json`. `qa`'s independent verification pass on `t-onedrive-sync-job` found the row missing and flagged it; `ba`'s original scoping text is transcribed verbatim as the task title and blocker.
 
@@ -1929,9 +1933,15 @@ ORDINARY DEBT (Gate 4), filed 2026-09-29 from the `a2a4579` review. Do not imple
 
 ## t-owner-compose-smoke-test
 
+DONE 2026-09-29 (owner). Section 1 of the owner checklist complete: `backend/.env` filled in, `docker compose up --build` working with the boto3 `minio-init`, a stop with a photo uploaded and shown locally, and the runbook §3 production-image smoke test (`docker build -t bike-trip-journal:smoke .` then `docker run` on the compose network, no bind mount) run by the owner.
+
+PARTIAL 2026-09-29 (owner). `docker compose up --build` now works end to end on the owner's machine: `minio-init` creates the bucket, the api starts, and a stop with a photo uploads through the app. The runbook §3 production-image smoke test (`docker build` + `docker run`, no bind mount) is still to do.
+
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production image locally with `docker run` against compose's Postgres and MinIO, as in runbook §3 (smoke test). Keep `-e S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`, or photos won't load. Pass: `/api/health` `200`, `/` shows the paste-link screen, a local rider link renders the trip, and `docker ps` shows `(healthy)`.
 
 ## t-owner-container-app-definition
+
+DRAFTED 2026-09-29 (devops, owner-approved draft; nothing provisioned). The owner wrote a parallel version of `infra/azure/README.md` on main (`e0587bd`). On merge the owner chose option A: the owner's version is the base (environment and app create with `read -rsp` prompts, an `az rest` merge-patch probe script, the budget alert in runbook §1), plus three changes from the devops draft: no `GRAPH_*` on the app (Entry 27), a startup probe next to liveness, and `--max-replicas 1`. The devops-only sections (a README budget section, custom domain, the §6 verification list) were dropped. The existing sync Job section now passes `--secrets` at creation; before, its `secretref` env vars pointed at secrets that did not exist yet. Least privilege (decision-log Entry 27): no `GRAPH_*` on the app, the Job only. Still the owner's: running the commands and entering the values. Nothing was checked against `az --help` here.
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. `infra/` is off-limits without explicit approval, so this is the owner's; **devops can draft it with approval.** Add the Container App definition to `infra/azure/README.md` beside the Job:
 - external ingress, target port 8000, HTTPS only (`allowInsecure: false`);
