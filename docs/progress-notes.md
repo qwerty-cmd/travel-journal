@@ -2516,6 +2516,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-09-30. `POST /api/v2/trips` (one transaction: trip with NULL slugs + leader membership; users row locked FOR UPDATE, then replay → taken → cap 20 → insert, ON CONFLICT DO NOTHING), `PATCH /api/v2/trips/{tripId}` (`require_trip_leader` = writer gate + leader role; omit = no change, null/out-of-range → 422), `GET/HEAD /api/v2/me/trips` (active memberships, joined_at desc then id). `trip-create` limiter exempts only a replay by a still-active creator. Audits: `LEADER_ONLY` rule. Tests: test_v2_trip_create 68 + matrix section 14; suite 2789; frontend 385 + build. QA PASS (one missing mutant test, added). Debt: t-am-trip-create-gaps, t-am-trip-create-anon-ip-bucket (triggered).
+
 ## t-am-trip-leadership
 **Goal.** Peer leadership: see the members, promote, step down, leave. This is part (b) of the scrum change 10 split.
 **Scope.**
@@ -3049,3 +3051,11 @@ No token starts with a dash, so az passes them through. Running the module by fi
 ## t-am-stop-arrivedat-echo
 
 ORDINARY DEBT (test-writer + QA on t-am-v2-rider-writes). A fresh stop's 201 echoes `arrivedAt` in the offset the device sent, while the replay 200 returns UTC; same instant. The contract (Entry 26 paragraph) says UTC. Cause: the shared `store_stop` (legacy and v2). The same issue on photo `takenAt` was fixed in `d534ea7`. No current consumer compares spellings.
+
+## t-am-trip-create-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-trip-create). (1) The contract gives no wording for the 20-trip cap 409; `TRIP_CAP_MESSAGE` hard-codes "20" instead of using `LIFETIME_TRIP_CAP`. (2) The `/me/trips` order (joined_at desc, then id asc) is only in the route description, not the contract. (3) The non-leader 403 wording ("You're not a leader on this trip.") comes from the design spec, not the contract.
+
+## t-am-trip-create-anon-ip-bucket
+
+TRIGGERED DEBT (test-writer + QA on t-am-trip-create). A trip create with no stored session is charged to the IP `trip-create` bucket (3/day, the UserRateLimit fallback), so the 4th from one IP gets 429 with an 8 h Retry-After instead of 401. The queue pauses on 401 but waits on 429, so a signed-out device's queued create would stall 8 h instead of prompting sign-in. Promotion trigger: the offline queue starts sending trip creates. Fix then: skip the IP charge for trip-create when there is no session (the gate 401s it anyway).
