@@ -22,7 +22,11 @@ The gates built here:
 
 - ``require_session`` — a valid session, else ``401``. Account routes.
 - ``require_trip_access`` — legacy reads. Either slug, else ``404``. The session
-  is optional and only decides ``access``; it never refuses a read.
+  is optional and only decides ``access`` and ``viewer.role``; it never refuses
+  a read.
+- ``require_trip_reader`` — v2 reads, by ``{tripId}``. The trip exists and is
+  public, or the caller is an active member, else the byte-identical ``404``.
+  Never ``401``.
 - ``require_trip_writer`` — legacy writes, with a slug locator. Slug (``404``) →
   session (``401``) → active membership (``403``). A ``tripId`` locator for the
   v2 routes arrives with ``t-am-v2-rider-writes``, and ``require_trip_leader``
@@ -79,10 +83,11 @@ from app.core.sessions import (
     set_session_cookie,
 )
 from app.data.db import SessionDep
+from app.data.repositories.join_requests import has_pending
 from app.data.repositories.memberships import MembershipRecord, get_for_user
-from app.data.repositories.trips import TripRecord, get_by_slug
+from app.data.repositories.trips import TripRecord, get_by_id, get_by_slug
 from app.models.member import MemberRole
-from app.models.trip import Access
+from app.models.trip import Access, ViewerRole, Visibility
 
 # Shown to whoever followed a link that resolves to nothing. Deliberately says
 # nothing about the slug itself — not its value, not its length, not whether it
@@ -92,6 +97,12 @@ from app.models.trip import Access
 UNKNOWN_TRIP_MESSAGE = (
     "We couldn't find a trip for this link. Check that you have the whole link you were sent."
 )
+
+# The v2 reader's one 404 for a trip id: no such trip, *and* a private trip the
+# caller may not see. One constant for both is half of what makes the two
+# answers byte-identical (contract, "Private means invisible, not forbidden");
+# the other half is in `require_trip_reader`.
+TRIP_NOT_FOUND_MESSAGE = "We couldn't find this trip."
 
 # The one message for every 401 from the session gate: no cookie, garbage,
 # expired, over the 365-day cap, deleted, or a disabled account. One string so
@@ -122,6 +133,24 @@ class TripContext:
 
     trip: TripRecord
     access: Access
+    viewer_role: ViewerRole
+
+
+@dataclass(frozen=True, slots=True)
+class TripReaderContext:
+    """
+    What ``require_trip_reader`` hands a v2 read: the trip, and how much of it to show.
+
+    ``public_delay_hours`` is ``None`` for an active member (everything, no
+    delay) and the trip's delay for anyone else. Handlers pass it straight to
+    the repository filters, so the delay decision is made once, here, and not
+    re-derived per handler. ``trip`` carries both slugs and must not be
+    serialised (see ``TripContext``).
+    """
+
+    trip: TripRecord
+    viewer_role: ViewerRole
+    public_delay_hours: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +181,34 @@ def access_for_membership(membership: MembershipRecord | None) -> Access:
     enforcement still perfectly correct, and only a separate test catches that.
     """
     return Access.RIDER if membership is not None and membership.active else Access.VIEWER
+
+
+def viewer_role(
+    user: SessionUser | None, membership: MembershipRecord | None, pending: bool
+) -> ViewerRole:
+    """
+    ``TripOut.viewer.role`` (contract, "Roles relative to one trip").
+
+    ``anonymous`` with no valid session; the membership's role when it is
+    active; ``pending`` with a pending join request and no active membership
+    (a revoked member who has asked again included); ``none`` for everyone
+    else signed in -- revoked, rejected, blocked, cancelled, self-departed or a
+    stranger. Pure, so the flag stays testable apart from the gates.
+    """
+    if user is None:
+        return ViewerRole.ANONYMOUS
+    if membership is not None and membership.active:
+        return ViewerRole(membership.role.value)
+    return ViewerRole.PENDING if pending else ViewerRole.NONE
+
+
+async def _viewer_role_for(
+    db: AsyncSession, trip_id: str, user: SessionUser | None, membership: MembershipRecord | None
+) -> ViewerRole:
+    """``viewer_role``, reading ``join_requests`` only when the answer depends on it."""
+    needs_pending = user is not None and not (membership is not None and membership.active)
+    pending = await has_pending(db, trip_id, user.user_id) if needs_pending else False
+    return viewer_role(user, membership, pending)
 
 
 async def _locate_trip(slug: str, db: AsyncSession) -> TripRecord:
@@ -230,7 +287,8 @@ async def require_trip_access(
 
     ``access`` is ``rider`` iff the session user is an active member
     (``access_for_membership``), and ``viewer`` for everyone else, including
-    anonymous callers. The session is optional: it never turns a read into a
+    anonymous callers. ``viewer_role`` is ``TripOut.viewer.role``
+    (``viewer_role``). The session is optional: it never turns a read into a
     ``401``. ``access`` is a hint for rendering only — the enforcement point is
     ``require_trip_writer``, on the write routes, regardless of what the UI
     chose to show.
@@ -240,7 +298,83 @@ async def require_trip_access(
     trip = await _locate_trip(slug, session)
     user = await _optional_user(request, response, session)
     membership = await get_for_user(session, trip.id, user.user_id) if user else None
-    return TripContext(trip=trip, access=access_for_membership(membership))
+    return TripContext(
+        trip=trip,
+        access=access_for_membership(membership),
+        viewer_role=await _viewer_role_for(session, trip.id, user, membership),
+    )
+
+
+async def require_trip_reader(
+    trip_id: Annotated[
+        str,
+        Path(
+            alias="tripId",
+            description="The trip's id. Not a secret: it only names the trip. A private trip "
+            "the caller may not see answers exactly as a trip id that doesn't exist does.",
+        ),
+    ],
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> TripReaderContext:
+    """
+    v2 read gate: the trip exists and is public, or the caller is an active member; else ``404``.
+
+    **Never ``401``.** The session is optional: it decides whether the caller is
+    a member (no delay, private trips visible) and what ``viewer.role`` says.
+    An invalid, expired or garbage cookie reads as anonymous and is not cleared,
+    because a read has no ``401`` to carry the clearing ``Set-Cookie``.
+
+    **404, not 403, for a private trip** (Entry 29; contract, "Private means
+    invisible, not forbidden"). A trip id is public, so any answer to a
+    non-member other than the nonexistent-trip answer would let anyone test
+    whether a private trip exists. "Non-member" here means anyone who is not
+    an *active* member: anonymous, a stranger, a pending requester, and a
+    revoked member too (contract default 2).
+
+    **How the two 404s are made byte-identical** -- status, body *and*
+    headers, all but ``date``:
+
+    - One ``ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)`` raise for both, so the
+      body (and so ``content-length``) cannot differ.
+    - **The session is resolved first, for every trip id, existing or not.**
+      Resolving can bump ``last_used_at`` (the daily refresh). Were it resolved
+      only once a trip was found, a private trip would spend a stale session's
+      refresh and a nonexistent id would not, and the caller could read the
+      difference off their *next* response (a refresh ``Set-Cookie`` there, or
+      not). Resolving first spends it the same way for both.
+    - The refresh ``Set-Cookie`` goes on FastAPI's ``response`` parameter, which
+      is discarded when the request ends in an error (see ``require_session``).
+      So neither ``404`` carries a cookie, whatever was sent; a member's
+      successful read does carry the refresh.
+    - **The same database round trips for both.** A signed-in caller's
+      membership is read keyed on the *requested* id, whether or not a trip has
+      it (it is then simply ``None``). Reading it only for a trip that exists
+      made a private trip one statement slower than a nonexistent id: a timing
+      oracle for the very thing the 404 hides. Anonymous callers read no
+      membership either way. The join-request lookup behind ``viewer.role`` runs
+      only for a trip the caller may see, after the 404 decision, so it never
+      separates the two. Neither lookup adds a header.
+
+    ``public_delay_hours`` on the result is ``None`` for an active member and
+    the trip's delay for anyone else.
+    """
+    user = await _optional_user(request, response, session)
+    trip = await get_by_id(session, trip_id)
+    # Keyed on the requested id, not on `trip`: one statement whether or not the
+    # trip exists (see "The same database round trips" above).
+    membership = await get_for_user(session, trip_id, user.user_id) if user else None
+    member = membership is not None and membership.active
+
+    if trip is None or (trip.visibility != Visibility.PUBLIC and not member):
+        raise ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)
+
+    return TripReaderContext(
+        trip=trip,
+        viewer_role=await _viewer_role_for(session, trip.id, user, membership),
+        public_delay_hours=None if member else trip.public_delay_hours,
+    )
 
 
 async def require_trip_writer(
@@ -291,7 +425,13 @@ async def require_trip_writer(
     if not membership.active:
         raise ApiError.forbidden(NO_LONGER_A_RIDER_MESSAGE)
 
-    return TripWriterContext(trip=trip, access=Access.RIDER, user=user, role=membership.role)
+    return TripWriterContext(
+        trip=trip,
+        access=Access.RIDER,
+        viewer_role=ViewerRole(membership.role.value),
+        user=user,
+        role=membership.role,
+    )
 
 
 async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:

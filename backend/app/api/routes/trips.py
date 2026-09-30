@@ -18,9 +18,36 @@ from app.core.ratelimit import limit_public_read
 from app.core.security import TripContext, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.bikes import list_by_trip
-from app.models.trip import TripOut
+from app.data.repositories.trips import TripRecord, get_stats
+from app.models.trip import Access, TripOut, ViewerOut, ViewerRole
 
 router = APIRouter(prefix="/trips", tags=["trips"])
+
+
+async def trip_out(session: SessionDep, trip: TripRecord, role: ViewerRole) -> TripOut:
+    """
+    ``TripOut`` for ``trip`` as seen by a caller with ``role``.
+
+    Shared with ``GET /api/v2/trips/{tripId}``.
+
+    Built by explicit keyword, never by spreading the record (see ``get_trip``).
+    ``access`` is derived from ``role`` exactly as the contract states it:
+    ``rider`` when the role is ``rider`` or ``leader``, ``viewer`` otherwise.
+    ``riderCount`` and ``lastPublicStopAt`` are the same for every caller.
+    """
+    stats = await get_stats(session, trip.id)
+    return TripOut(
+        id=trip.id,
+        name=trip.name,
+        startDate=trip.start_date,
+        bikes=await list_by_trip(session, trip.id),
+        access=Access.RIDER if role in (ViewerRole.RIDER, ViewerRole.LEADER) else Access.VIEWER,
+        visibility=trip.visibility,
+        publicDelayHours=trip.public_delay_hours,
+        riderCount=stats.rider_count,
+        lastPublicStopAt=stats.last_public_stop_at,
+        viewer=ViewerOut(role=role),
+    )
 
 
 @router.get(
@@ -52,8 +79,11 @@ The session is optional here and never produces a 401. The dependency derives
 `access`: `rider` iff the session user has an active membership on this trip
 (read fresh on every request), `viewer` for everyone else — anonymous, a
 signed-in non-member, a pending requester or a revoked member. Which slug was
-followed plays no part. The value is passed straight through to
-`TripOut.access`; the handler never recomputes it. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
+followed plays no part. `viewer.role` is derived alongside it (`anonymous`,
+`none`, `pending`, `rider` or `leader`), and `access` is `rider` exactly when
+that role is `rider` or `leader`. `visibility`, `publicDelayHours`, `riderCount`
+and `lastPublicStopAt` are filled as on `GET /api/v2/trips/{tripId}`; this read
+itself stays full and undelayed for either slug. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
 filtered to this trip; a trip with no bikes returns `"bikes": []`, which is a
 normal trip and not a 404. Neither slug is in the response: `TripOut` has no
 slug field, and the slug is the credential.
@@ -76,11 +106,11 @@ async def get_trip(
     """
     The trip behind this slug, with its bikes and the caller's access level.
 
-    Built by explicit keyword, not by spreading the record. Three reasons, and
+    Built by explicit keyword in ``trip_out``, not by spreading the record. Three reasons, and
     they are the reason the next seven handlers should look like this one:
 
     - The wire names are camelCase and the columns are snake_case
-      (``tables.py``). ``startDate=context.trip.start_date`` is the mapping,
+      (``tables.py``). ``startDate=trip.start_date`` is the mapping,
       stated once, where both halves are visible together.
     - ``TripRecord`` carries **both slugs**. A spread — ``TripOut(**asdict(...))``
       or ``model_validate(record)`` — is a construct that reaches for every
@@ -88,15 +118,9 @@ async def get_trip(
       credentials. Naming four fields cannot pick up a fifth by accident.
     - ``access`` is not on the record at all. It is a property of the *request*
       (whether its session user is an active member), so it can only come from
-      the dependency's ``TripContext``, never from the row.
+      the dependency's ``TripContext`` (``viewer_role``), never from the row.
     """
-    return TripOut(
-        id=context.trip.id,
-        name=context.trip.name,
-        startDate=context.trip.start_date,
-        bikes=await list_by_trip(session, context.trip.id),
-        access=context.access,
-    )
+    return await trip_out(session, context.trip, context.viewer_role)
 
 
 # HEAD is GET without a body (RFC 9110 §9.3.2), so the same handler serves it:

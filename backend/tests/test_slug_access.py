@@ -651,6 +651,8 @@ async def test_repository_carries_both_slugs_and_the_trip_fields(
         start_date=trip.start_date,
         rider_slug=trip.rider_slug,
         viewer_slug=trip.viewer_slug,
+        visibility="private",
+        public_delay_hours=24,
     )
 
 

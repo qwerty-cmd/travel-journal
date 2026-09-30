@@ -23,35 +23,6 @@ class Access(StrEnum):
     VIEWER = "viewer"
 
 
-class TripOut(BaseModel):
-    """GET /trips/{slug} response. Works with either slug."""
-
-    id: str = Field(
-        description="The trip's id. Stable, and safe to show or log — it is not a "
-        "credential and cannot be used to reach the trip. Neither slug appears "
-        "anywhere in this response."
-    )
-    name: str = Field(description="The trip's display name, as the rider titled it.")
-    startDate: date = Field(
-        description="The day the trip starts, as an ISO 8601 date (YYYY-MM-DD). A date "
-        "with no time and no timezone: it is the calendar day the journal opens on, not "
-        "an instant, so it reads the same wherever the viewer is."
-    )
-    bikes: list[BikeOut] = Field(
-        description="The bikes on **this** trip, embedded so the app's first load is one "
-        "request rather than two. Empty list when no bikes have been added yet — that is a "
-        "normal trip, not an error. Order is not part of the contract; match bikes by `id`."
-    )
-    access: Access = Field(
-        description="Deprecated; kept for clients from before accounts. 'rider' when the "
-        "caller is signed in with an active membership on this trip (rider or leader), "
-        "'viewer' otherwise — anonymous, a signed-in non-member, a pending requester or a "
-        "revoked member. Which slug was used plays no part. A UI hint for whether to show "
-        "write UI (Add stop, upload photo, edit bikes); the server enforces access on every "
-        "write regardless."
-    )
-
-
 class Visibility(StrEnum):
     """Who can read a trip. Mirrors `trips_visibility_check` in migration 0003."""
 
@@ -81,6 +52,62 @@ class ViewerOut(BaseModel):
         "request: 'anonymous' (no session), 'none' (signed in, no membership or pending "
         "request — including revoked, rejected and blocked users), 'pending', 'rider' or "
         "'leader'. A UI hint only: the server enforces access on every write regardless."
+    )
+
+
+class TripOut(BaseModel):
+    """
+    One trip: `GET /api/trips/{slug}` (either slug) and `GET /api/v2/trips/{tripId}`.
+
+    Carries no slug, no username and no user id -- a non-member can receive it.
+    """
+
+    id: str = Field(
+        description="The trip's id. Stable, and safe to show or log — it is not a "
+        "credential and cannot be used to reach the trip. Neither slug appears "
+        "anywhere in this response."
+    )
+    name: str = Field(description="The trip's display name, as the rider titled it.")
+    startDate: date = Field(
+        description="The day the trip starts, as an ISO 8601 date (YYYY-MM-DD). A date "
+        "with no time and no timezone: it is the calendar day the journal opens on, not "
+        "an instant, so it reads the same wherever the viewer is."
+    )
+    bikes: list[BikeOut] = Field(
+        description="The bikes on **this** trip, embedded so the app's first load is one "
+        "request rather than two. Empty list when no bikes have been added yet — that is a "
+        "normal trip, not an error. Order is not part of the contract; match bikes by `id`."
+    )
+    access: Access = Field(
+        description="Deprecated; kept for clients from before accounts. 'rider' when the "
+        "caller is signed in with an active membership on this trip (rider or leader), "
+        "'viewer' otherwise — anonymous, a signed-in non-member, a pending requester or a "
+        "revoked member. Which slug was used plays no part. A UI hint for whether to show "
+        "write UI (Add stop, upload photo, edit bikes); the server enforces access on every "
+        "write regardless."
+    )
+    visibility: Visibility = Field(
+        description="Who can read the trip: 'public' (anyone, with the public delay applied "
+        "for non-members) or 'private' (members only; anyone else gets the same 404 as for a "
+        "trip that doesn't exist)."
+    )
+    publicDelayHours: int = Field(
+        description="How many hours a stop stays hidden from non-members after its "
+        "`arrivedAt`, from 0 to 168. Members see every stop at once, whatever this says."
+    )
+    riderCount: int = Field(
+        description="How many people are on the trip: its active members, leaders included. "
+        "A count only; who they are is never in this response."
+    )
+    lastPublicStopAt: datetime | None = Field(
+        description="The latest `arrivedAt` among the stops visible to the public, i.e. with "
+        "the public delay applied, as a timezone-aware ISO 8601 instant. The same value for "
+        "every caller, members included. Null when no stop is visible to the public yet."
+    )
+    viewer: ViewerOut = Field(
+        description="What the caller is to this trip, computed from the session on every "
+        "request. Replaces `access`. A UI hint only: the server enforces access on every "
+        "write regardless."
     )
 
 

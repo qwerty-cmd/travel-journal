@@ -52,13 +52,42 @@ class TripRecord:
     needs both to work out which kind of link it was handed. That is also why
     this is not a Pydantic response model — ``TripOut`` deliberately has no slug
     fields, and these values must never be serialised into a response.
+
+    Both slugs are ``None`` on a trip created in the app (migration 0003 made
+    them nullable, paired). ``visibility`` (``'public'`` or ``'private'``) and
+    ``public_delay_hours`` are what the v2 read gate and the delay filters read.
     """
 
     id: str
     name: str
     start_date: date
-    rider_slug: str
-    viewer_slug: str
+    rider_slug: str | None
+    viewer_slug: str | None
+    visibility: str
+    public_delay_hours: int
+
+
+_TRIP_COLUMNS = (
+    trips.c.id,
+    trips.c.name,
+    trips.c.start_date,
+    trips.c.rider_slug,
+    trips.c.viewer_slug,
+    trips.c.visibility,
+    trips.c.public_delay_hours,
+)
+
+
+def _record(row) -> TripRecord:
+    return TripRecord(
+        id=row.id,
+        name=row.name,
+        start_date=row.start_date,
+        rider_slug=row.rider_slug,
+        viewer_slug=row.viewer_slug,
+        visibility=row.visibility,
+        public_delay_hours=row.public_delay_hours,
+    )
 
 
 async def get_by_slug(session: AsyncSession, slug: str) -> TripRecord | None:
@@ -100,25 +129,82 @@ async def get_by_slug(session: AsyncSession, slug: str) -> TripRecord | None:
     if "\x00" in slug:
         return None
 
-    statement = select(
-        trips.c.id,
-        trips.c.name,
-        trips.c.start_date,
-        trips.c.rider_slug,
-        trips.c.viewer_slug,
-    ).where(or_(trips.c.rider_slug == slug, trips.c.viewer_slug == slug))
+    statement = select(*_TRIP_COLUMNS).where(
+        or_(trips.c.rider_slug == slug, trips.c.viewer_slug == slug)
+    )
 
     row = (await session.execute(statement)).first()
-    if row is None:
-        return None
+    return None if row is None else _record(row)
 
-    return TripRecord(
-        id=row.id,
-        name=row.name,
-        start_date=row.start_date,
-        rider_slug=row.rider_slug,
-        viewer_slug=row.viewer_slug,
+
+async def get_by_id(session: AsyncSession, trip_id: str) -> TripRecord | None:
+    """
+    The trip with this id, whatever its visibility; ``None`` if there is none.
+
+    Visibility is deliberately not filtered here: whether the caller may see a
+    private trip is a membership question, answered in ``core/security.py``
+    (``require_trip_reader``). The id is taken as given, with no format check:
+    trips from before migration 0003 need not have UUID ids, and a string that
+    is no trip's id is simply ``None``, like any other unknown id. A NUL byte is
+    ``None`` without a query, for the reason ``get_by_slug`` gives.
+    """
+    if "\x00" in trip_id:
+        return None
+    row = (await session.execute(select(*_TRIP_COLUMNS).where(trips.c.id == trip_id))).first()
+    return None if row is None else _record(row)
+
+
+def _last_public_stop_at():
+    """
+    ``max(arrived_at)`` over the trip's stops visible to the public, correlated on ``trips``.
+
+    Visible means ``arrived_at <= now() - public_delay_hours``, on the database
+    clock at statement time: the same rule ``stops.public_visibility`` applies to
+    the stop list and the map, so ``lastPublicStopAt`` always names a stop a
+    non-member can see.
+    """
+    delay = func.make_interval(0, 0, 0, 0, trips.c.public_delay_hours)
+    return (
+        select(func.max(stops.c.arrived_at))
+        .where(stops.c.trip_id == trips.c.id, stops.c.arrived_at <= func.now() - delay)
+        .scalar_subquery()
     )
+
+
+def _rider_count():
+    """Active ``trip_members`` rows (leaders included), correlated on ``trips``."""
+    return (
+        select(func.count())
+        .select_from(trip_members)
+        .where(trip_members.c.trip_id == trips.c.id, trip_members.c.revoked_at.is_(None))
+        .scalar_subquery()
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class TripStats:
+    """The two derived ``TripOut`` values: the same for every caller, members included."""
+
+    rider_count: int
+    last_public_stop_at: datetime | None
+
+
+async def get_stats(session: AsyncSession, trip_id: str) -> TripStats:
+    """
+    ``riderCount`` and ``lastPublicStopAt`` for one trip, computed as the public list computes them.
+
+    One statement, built from the same two expressions as ``list_public``, so
+    a trip's own page and its Discover entry can't disagree.
+    """
+    row = (
+        await session.execute(
+            select(
+                _rider_count().label("rider_count"),
+                _last_public_stop_at().label("last_public_stop_at"),
+            ).where(trips.c.id == trip_id)
+        )
+    ).one()
+    return TripStats(rider_count=row.rider_count, last_public_stop_at=row.last_public_stop_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,25 +248,13 @@ async def list_public(
     ``after`` is the ``(last_public_stop_at, id)`` of the previous page's last
     row, or ``None`` for the first page.
     """
-    delay = func.make_interval(0, 0, 0, 0, trips.c.public_delay_hours)
-    last_public_stop_at = (
-        select(func.max(stops.c.arrived_at))
-        .where(stops.c.trip_id == trips.c.id, stops.c.arrived_at <= func.now() - delay)
-        .scalar_subquery()
-    )
-    rider_count = (
-        select(func.count())
-        .select_from(trip_members)
-        .where(trip_members.c.trip_id == trips.c.id, trip_members.c.revoked_at.is_(None))
-        .scalar_subquery()
-    )
     public = (
         select(
             trips.c.id,
             trips.c.name,
             trips.c.start_date,
-            rider_count.label("rider_count"),
-            last_public_stop_at.label("last_public_stop_at"),
+            _rider_count().label("rider_count"),
+            _last_public_stop_at().label("last_public_stop_at"),
         )
         .where(trips.c.visibility == "public")
         .subquery()

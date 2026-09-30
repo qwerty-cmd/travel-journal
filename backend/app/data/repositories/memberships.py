@@ -59,7 +59,14 @@ async def get_for_user(
     rows newest first, and only the first row is read. There is at most one
     active row per (trip, user) (``ux_trip_members_active``), so the answer is
     never ambiguous.
+
+    ``trip_id`` may be any string a caller sent, including one no trip has (the
+    v2 reader looks membership up before knowing whether the trip exists). A NUL
+    byte, which Postgres ``text`` can't hold, is ``None`` without a query, like
+    ``trips.get_by_id``; no trip id can contain one.
     """
+    if "\x00" in trip_id:
+        return None
     row = (
         await session.execute(
             select(trip_members.c.role, trip_members.c.revoked_at)

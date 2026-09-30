@@ -23,7 +23,10 @@ iff the caller is an active member.
 
 This file is where later tasks add the v2 rows (``t-am-v2-rider-writes``) and
 the leader column (``t-am-trip-create``). ``t-am-write-gate-legacy`` owns the
-legacy rows below.
+legacy rows below; ``t-am-v2-trip-reads`` added the v2 read columns (section
+12): public read ``200`` for everyone, delayed for non-members and full for
+members; private read ``200`` full for members and, for everyone else, the
+``404`` a nonexistent trip id gets.
 
 Every rejection is also checked against the tables: a ``401`` or ``403`` that
 still wrote the row is the failure that matters, and the status alone can't show
@@ -50,7 +53,7 @@ from conftest import (
     make_async_client,
 )
 from httpx import AsyncClient, Response
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.security import (
@@ -1507,3 +1510,157 @@ async def test_a_private_trip_located_by_slug_is_403_not_404(
     assert unknown.status_code == HTTPStatus.NOT_FOUND
     assert response.content != unknown.content
     assert await snapshot(migrated_engine, cast.trip.id) == before
+
+
+# --------------------------------------------------------------------------
+# 12. The v2 read columns: "Public read" and "Private read" (t-am-v2-trip-reads)
+# --------------------------------------------------------------------------
+
+V2_READS = ("", "/bikes", "/stops", "/stops/{stop}/photos", "/map")
+
+# Contract matrix: the read columns. rider / leader: 200 full on both;
+# everyone else: 200 delayed on public, 404 on private.
+EXPECTED_ROLE = {
+    "anonymous": "anonymous",
+    "non_member": "none",
+    "pending": "pending",
+    "rider": "rider",
+    "revoked": "none",
+    "leader": "leader",
+}
+
+
+@pytest.mark.parametrize("read", V2_READS)
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_read_row(
+    client: AsyncClient, cast: Cast, visibility: str, identity: str, read: str
+) -> None:
+    """
+    The matrix cell for every v2 read, on both visibilities.
+
+    A refusal is compared with the same request for a random trip id: the same
+    status and the same bytes. (The full header comparison, HEAD included, is
+    obligation 2's suite, ``test_v2_public_reads.py``.)
+    """
+    suffix = read.format(stop=cast.stop_id)
+    response = await client.get(
+        f"/api/v2/trips/{cast.trip.id}{suffix}", headers=cast.headers(identity)
+    )
+
+    if identity in MEMBERS or visibility == "public":
+        assert response.status_code == HTTPStatus.OK, response.text
+        return
+
+    nonexistent = await client.get(
+        f"/api/v2/trips/{uuid4()}{suffix}", headers=cast.headers(identity)
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+    assert envelope(response).code is ErrorCode.NOT_FOUND
+    assert response.content == nonexistent.content
+    assert session_cookies(response) == []
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_public_read_is_delayed_for_non_members_only(
+    client: AsyncClient, migrated_engine: AsyncEngine, cast: Cast, visibility: str, identity: str
+) -> None:
+    """
+    "200, delayed" vs "200, full": a stop an hour old shows to members only.
+
+    The cast's own stop (months old) is visible to everyone who can read the
+    trip. The trip keeps the default 24 h delay.
+    """
+    recent_id = f"matrix-recent-{uuid4()}"
+    async with migrated_engine.begin() as conn:
+        await conn.execute(
+            tables.stops.insert().values(
+                id=recent_id,
+                trip_id=cast.trip.id,
+                name="Matrix recent stop",
+                lat=-14.47,
+                lng=132.27,
+                location_source="gps",
+                arrived_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+
+    response = await client.get(
+        f"/api/v2/trips/{cast.trip.id}/stops", headers=cast.headers(identity)
+    )
+
+    if identity not in MEMBERS and visibility == "private":
+        assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+        return
+    assert response.status_code == HTTPStatus.OK, response.text
+    ids = {stop["id"] for stop in response.json()}
+    expected = {cast.stop_id, recent_id} if identity in MEMBERS else {cast.stop_id}
+    assert ids == expected
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_and_legacy_trip_report_the_viewer_role(
+    client: AsyncClient, cast: Cast, visibility: str, identity: str
+) -> None:
+    """
+    ``viewer.role`` for every identity, and ``access`` derived from it, on both surfaces.
+
+    The legacy GET answers every identity (a slug always locates); the v2 GET
+    answers wherever the read column says ``200``.
+    """
+    legacy = await client.get(f"/api/trips/{cast.trip.viewer_slug}", headers=cast.headers(identity))
+    responses = [legacy]
+    if identity in MEMBERS or visibility == "public":
+        responses.append(
+            await client.get(f"/api/v2/trips/{cast.trip.id}", headers=cast.headers(identity))
+        )
+
+    for response in responses:
+        assert response.status_code == HTTPStatus.OK, response.text
+        body = response.json()
+        assert body["viewer"] == {"role": EXPECTED_ROLE[identity]}
+        assert body["access"] == ("rider" if identity in MEMBERS else "viewer")
+        assert body["visibility"] == visibility
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("read", V2_READS)
+@pytest.mark.parametrize("identity", ["non_member", "pending", "revoked"])
+async def test_a_private_trip_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+    read: str,
+) -> None:
+    """
+    No timing oracle: the private-trip 404 runs as many SQL statements as a nonexistent id's.
+
+    Before the fix the membership lookup ran only for a trip that exists, so a
+    signed-in caller's private-trip 404 took one more round trip than a
+    nonexistent id's -- measurable, and exactly what the byte-identical body is
+    meant to hide. Counted with a ``before_cursor_execute`` listener on the
+    engine the app is using.
+    """
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await client.get(
+            f"/api/v2/trips/{trip_id}{read.format(stop=cast.stop_id)}",
+            headers=cast.headers(identity),
+        )
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count

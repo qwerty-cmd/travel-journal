@@ -350,6 +350,25 @@ class TestListPhotos:
 
         assert response.status_code == HTTPStatus.NOT_FOUND
 
+    async def test_nul_stop_id_returns_the_unknown_stop_404(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+    ) -> None:
+        """
+        ``%00`` decodes to a NUL byte Postgres ``text`` can't hold: still the unknown-stop 404.
+
+        Before the guard in ``photos.stop_belongs_to_trip`` the driver raised and
+        this was a ``500`` / ``INTERNAL_ERROR``.
+        """
+        trip = seeded_trips[0]
+        unknown = await client.get(PHOTOS_PATH.format(slug=trip.rider_slug, stop_id="no-such-stop"))
+
+        response = await client.get(PHOTOS_PATH.format(slug=trip.rider_slug, stop_id="%00"))
+
+        assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+        assert response.content == unknown.content
+
     async def test_head_on_get_route_works(
         self,
         client: AsyncClient,

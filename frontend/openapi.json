@@ -11,7 +11,7 @@
           "trips"
         ],
         "summary": "Get a trip's metadata and its bikes",
-        "description": "**Context.** A trip from before accounts was shared through two links, a rider\nlink and a viewer link. Since decision-log Entry 29 either link only *locates*\nthe trip; what the caller may do is decided by their membership. This is the\nendpoint both links open first. It answers three questions in one round trip \u2014\nwhich trip is this, which bikes are on it, and should the UI offer writes \u2014\nbecause the app is used on the Stuart Hwy where a second request is a second\nchance to be offline. Tasks `t-trip-metadata-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches.\nThe session is optional here and never produces a 401. The dependency derives\n`access`: `rider` iff the session user has an active membership on this trip\n(read fresh on every request), `viewer` for everyone else \u2014 anonymous, a\nsigned-in non-member, a pending requester or a revoked member. Which slug was\nfollowed plays no part. The value is passed straight through to\n`TripOut.access`; the handler never recomputes it. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,\nfiltered to this trip; a trip with no bikes returns `\"bikes\": []`, which is a\nnormal trip and not a 404. Neither slug is in the response: `TripOut` has no\nslug field, and the slug is the credential.\n\n`access` is a **UI hint**, deprecated, and not the enforcement point. It tells\nthe frontend whether to render Add stop / upload photo / edit bikes. The write\nendpoints check the session and membership themselves regardless of what the UI\nchose to show.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits\nabove, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and\n`POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the\nmember-only writes behind the `bikes` list returned here.",
+        "description": "**Context.** A trip from before accounts was shared through two links, a rider\nlink and a viewer link. Since decision-log Entry 29 either link only *locates*\nthe trip; what the caller may do is decided by their membership. This is the\nendpoint both links open first. It answers three questions in one round trip \u2014\nwhich trip is this, which bikes are on it, and should the UI offer writes \u2014\nbecause the app is used on the Stuart Hwy where a second request is a second\nchance to be offline. Tasks `t-trip-metadata-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches.\nThe session is optional here and never produces a 401. The dependency derives\n`access`: `rider` iff the session user has an active membership on this trip\n(read fresh on every request), `viewer` for everyone else \u2014 anonymous, a\nsigned-in non-member, a pending requester or a revoked member. Which slug was\nfollowed plays no part. `viewer.role` is derived alongside it (`anonymous`,\n`none`, `pending`, `rider` or `leader`), and `access` is `rider` exactly when\nthat role is `rider` or `leader`. `visibility`, `publicDelayHours`, `riderCount`\nand `lastPublicStopAt` are filled as on `GET /api/v2/trips/{tripId}`; this read\nitself stays full and undelayed for either slug. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,\nfiltered to this trip; a trip with no bikes returns `\"bikes\": []`, which is a\nnormal trip and not a 404. Neither slug is in the response: `TripOut` has no\nslug field, and the slug is the credential.\n\n`access` is a **UI hint**, deprecated, and not the enforcement point. It tells\nthe frontend whether to render Add stop / upload photo / edit bikes. The write\nendpoints check the session and membership themselves regardless of what the UI\nchose to show.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits\nabove, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and\n`POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the\nmember-only writes behind the `bikes` list returned here.",
         "operationId": "get_trip_api_trips__slug__get",
         "parameters": [
           {
@@ -1378,6 +1378,399 @@
         }
       }
     },
+    "/api/v2/trips/{tripId}": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Get a trip",
+        "description": "**Context.** A trip's page, located by its id rather than a slug (decision-log\nEntry 29). Anyone can open a public trip; a private one is visible to its\nactive members only.\n\n**How it works.** `{tripId}` is resolved by `require_trip_reader`: the trip must exist and be\npublic, or the caller must be an active member (rider or leader); anything else\nis a 404 identical to a trip id that doesn't exist. The session is optional and\nnever produces a 401. Active members see everything with no delay. Anyone else\nsees only stops with `arrivedAt <= now() - publicDelayHours`, on the server\nclock at request time. `viewer.role` is computed from the session on every\nrequest: `anonymous`, `none`, `pending`, `rider` or `leader`. `access` is\ndeprecated and is `rider` exactly when the role is `rider` or `leader`.\n`riderCount` and `lastPublicStopAt` are the same for every caller, members\nincluded; `lastPublicStopAt` is the latest `arrivedAt` among stops visible to\nthe public. Bikes are not delayed. No slug, username or user id is in the\nresponse.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/stops`, `/map`, `/bikes` and\n`/stops/{stopId}/photos` for the rest of the trip; `GET /api/v2/trips` for the\npublic list.",
+        "operationId": "get_trip_api_v2_trips__tripId__get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trip, its bikes, and what the caller is to it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member. The two are byte-identical -- status, body and headers -- so a trip id can't be used to learn whether a private trip exists. Never a 401: a read needs no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/bikes": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "List a trip's bikes",
+        "description": "**Context.** The bikes on a trip, with the rider name on each. The same list\n`TripOut.bikes` embeds.\n\n**How it works.** `{tripId}` is resolved by `require_trip_reader`: the trip must exist and be\npublic, or the caller must be an active member (rider or leader); anything else\nis a 404 identical to a trip id that doesn't exist. The session is optional and\nnever produces a 401. Active members see everything with no delay. Anyone else\nsees only stops with `arrivedAt <= now() - publicDelayHours`, on the server\nclock at request time. Bikes are **not** delayed: every caller who may see the\ntrip sees every bike. A trip with no bikes is a `200` with `[]`. Order is for\nresponse stability only; match bikes by `id`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}` embeds the same list.",
+        "operationId": "list_bikes_api_v2_trips__tripId__bikes_get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every bike on this trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BikeOut"
+                  },
+                  "title": "Response List Bikes Api V2 Trips  Tripid  Bikes Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member. The two are byte-identical -- status, body and headers -- so a trip id can't be used to learn whether a private trip exists. Never a 401: a read needs no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/stops": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "List a trip's stops",
+        "description": "**Context.** The journal itself: where the riders got to, when, and what they\nwrote. The only v2 read that serves `notes` and `locationSource`.\n\n**How it works.** `{tripId}` is resolved by `require_trip_reader`: the trip must exist and be\npublic, or the caller must be an active member (rider or leader); anything else\nis a 404 identical to a trip id that doesn't exist. The session is optional and\nnever produces a 401. Active members see everything with no delay. Anyone else\nsees only stops with `arrivedAt <= now() - publicDelayHours`, on the server\nclock at request time. A stop hidden by the delay is simply absent, and a stop\nwhose `arrivedAt` is in the future is hidden from non-members even at a delay\nof 0. A trip with no visible stops is a `200` with `[]`. Order is for response\nstability only; match stops by `id`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/map` for the same stops as\nGeoJSON, `GET /api/v2/trips/{tripId}/stops/{stopId}/photos` for a stop's\nphotos.",
+        "operationId": "list_stops_api_v2_trips__tripId__stops_get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stops on this trip the caller may see.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StopOut"
+                  },
+                  "title": "Response List Stops Api V2 Trips  Tripid  Stops Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member. The two are byte-identical -- status, body and headers -- so a trip id can't be used to learn whether a private trip exists. Never a 401: a read needs no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/stops/{stopId}/photos": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "List a stop's photos",
+        "description": "**Context.** The photos attached to one stop, each with a presigned URL into\nobject storage, generated fresh per request and valid for an hour.\n\n**How it works.** `{tripId}` is resolved by `require_trip_reader`: the trip must exist and be\npublic, or the caller must be an active member (rider or leader); anything else\nis a 404 identical to a trip id that doesn't exist. The session is optional and\nnever produces a 401. Active members see everything with no delay. Anyone else\nsees only stops with `arrivedAt <= now() - publicDelayHours`, on the server\nclock at request time. A photo is visible exactly when its stop is: its own\n`takenAt` plays no part. A stop hidden by the delay answers `404`, the same as a\nstop that doesn't exist on this trip. A visible stop with no photos is a `200`\nwith `[]`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/stops` for the stops.",
+        "operationId": "list_photos_api_v2_trips__tripId__stops__stopId__photos_get",
+        "parameters": [
+          {
+            "name": "stopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The stop's id. A stop on another trip, or one hidden from the caller by the public delay, is answered exactly as a stop that doesn't exist: 404.",
+              "title": "Stopid"
+            },
+            "description": "The stop's id. A stop on another trip, or one hidden from the caller by the public delay, is answered exactly as a stop that doesn't exist: 404."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every photo on this stop, each with a presigned URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PhotoOut"
+                  },
+                  "title": "Response List Photos Api V2 Trips  Tripid  Stops  Stopid  Photos Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member. The two are byte-identical -- status, body and headers -- so a trip id can't be used to learn whether a private trip exists. Never a 401: a read needs no session. Also: the stop does not exist on this trip, or is hidden from the caller by the public delay -- the same 404 for both.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/map": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "GeoJSON map of a trip's stops and trail",
+        "description": "**Context.** What the map renders: a pin per stop and a trail in arrival order.\n\n**How it works.** `{tripId}` is resolved by `require_trip_reader`: the trip must exist and be\npublic, or the caller must be an active member (rider or leader); anything else\nis a 404 identical to a trip id that doesn't exist. The session is optional and\nnever produces a 401. Active members see everything with no delay. Anyone else\nsees only stops with `arrivedAt <= now() - publicDelayHours`, on the server\nclock at request time. Pins **and** trail are built from the visible stops\nonly: the trail is drawn only when 2 or more stops are visible, so a non-member\nnever sees a line leading towards a hidden stop. Coordinates are\n`[longitude, latitude]`. A trip with no visible stops is a `200` with\n`features: []`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/stops` for each stop's notes and\n`locationSource`, matched by `Feature.id`.",
+        "operationId": "get_map_api_v2_trips__tripId__map_get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A private trip the caller may not see answers exactly as a trip id that doesn't exist does."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A GeoJSON FeatureCollection: one Point per visible stop, and a LineString trail when 2 or more are visible.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapFeatureCollection"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member. The two are byte-identical -- status, body and headers -- so a trip id can't be used to learn whether a private trip exists. Never a 401: a read needs no session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -2164,6 +2557,37 @@
           "access": {
             "$ref": "#/components/schemas/Access",
             "description": "Deprecated; kept for clients from before accounts. 'rider' when the caller is signed in with an active membership on this trip (rider or leader), 'viewer' otherwise \u2014 anonymous, a signed-in non-member, a pending requester or a revoked member. Which slug was used plays no part. A UI hint for whether to show write UI (Add stop, upload photo, edit bikes); the server enforces access on every write regardless."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "description": "Who can read the trip: 'public' (anyone, with the public delay applied for non-members) or 'private' (members only; anyone else gets the same 404 as for a trip that doesn't exist)."
+          },
+          "publicDelayHours": {
+            "type": "integer",
+            "title": "Publicdelayhours",
+            "description": "How many hours a stop stays hidden from non-members after its `arrivedAt`, from 0 to 168. Members see every stop at once, whatever this says."
+          },
+          "riderCount": {
+            "type": "integer",
+            "title": "Ridercount",
+            "description": "How many people are on the trip: its active members, leaders included. A count only; who they are is never in this response."
+          },
+          "lastPublicStopAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastpublicstopat",
+            "description": "The latest `arrivedAt` among the stops visible to the public, i.e. with the public delay applied, as a timezone-aware ISO 8601 instant. The same value for every caller, members included. Null when no stop is visible to the public yet."
+          },
+          "viewer": {
+            "$ref": "#/components/schemas/ViewerOut",
+            "description": "What the caller is to this trip, computed from the session on every request. Replaces `access`. A UI hint only: the server enforces access on every write regardless."
           }
         },
         "type": "object",
@@ -2172,10 +2596,15 @@
           "name",
           "startDate",
           "bikes",
-          "access"
+          "access",
+          "visibility",
+          "publicDelayHours",
+          "riderCount",
+          "lastPublicStopAt",
+          "viewer"
         ],
         "title": "TripOut",
-        "description": "GET /trips/{slug} response. Works with either slug."
+        "description": "One trip: `GET /api/trips/{slug}` (either slug) and `GET /api/v2/trips/{tripId}`.\n\nCarries no slug, no username and no user id -- a non-member can receive it."
       },
       "TripPageOut": {
         "properties": {
@@ -2255,6 +2684,41 @@
         ],
         "title": "TripSummaryOut",
         "description": "One public trip in the Discover list. The same for every caller."
+      },
+      "ViewerOut": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/ViewerRole",
+            "description": "The caller's role on this trip, computed from the session on every request: 'anonymous' (no session), 'none' (signed in, no membership or pending request \u2014 including revoked, rejected and blocked users), 'pending', 'rider' or 'leader'. A UI hint only: the server enforces access on every write regardless."
+          }
+        },
+        "type": "object",
+        "required": [
+          "role"
+        ],
+        "title": "ViewerOut",
+        "description": "What the caller is to this trip. Tells the UI what to show; never what is allowed."
+      },
+      "ViewerRole": {
+        "type": "string",
+        "enum": [
+          "anonymous",
+          "none",
+          "pending",
+          "rider",
+          "leader"
+        ],
+        "title": "ViewerRole",
+        "description": "The caller's relationship to one trip \u2014 a UI hint only; the server enforces access.\n\nRevoked, rejected, blocked and self-departed users are all `none`."
+      },
+      "Visibility": {
+        "type": "string",
+        "enum": [
+          "public",
+          "private"
+        ],
+        "title": "Visibility",
+        "description": "Who can read a trip. Mirrors `trips_visibility_check` in migration 0003."
       }
     }
   }

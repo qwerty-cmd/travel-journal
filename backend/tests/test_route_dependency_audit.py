@@ -24,7 +24,11 @@ class, decided by name first and path second:
   ``require_session``, reads and unsafe methods alike, and only under
   ``/api/v2``.
 - **Trip-scoped** (everything else): must sit under ``/api/trips`` or
-  ``/api/v2/trips``. A read (GET/HEAD) declares the trip read guard. An unsafe
+  ``/api/v2/trips``. A read (GET/HEAD) declares the trip read guard for its
+  surface: ``require_trip_access`` (by slug) under ``/api/trips``,
+  ``require_trip_reader`` (by trip id, private trips hidden) under
+  ``/api/v2/trips`` (``t-am-v2-trip-reads``). Swapping them is a failure too:
+  the legacy gate on a v2 path would serve private trips to anyone. An unsafe
   method declares exactly one membership gate from ``TRIP_UNSAFE_GUARDS`` —
   ``require_trip_writer``, and ``require_trip_leader`` once it is built
   (``t-am-trip-create``) — and nothing else (``t-am-write-gate-legacy``, Entry
@@ -86,12 +90,17 @@ from typing import Annotated, Any
 import pytest
 from fastapi import APIRouter, Depends
 
-from app.core.security import require_session, require_trip_access, require_trip_writer
+from app.core.security import (
+    require_session,
+    require_trip_access,
+    require_trip_reader,
+    require_trip_writer,
+)
 from app.main import app
 
 # Every guard the audit recognises. `_declared_guards` reports any of these found
 # at any depth of a route's dependency tree.
-GUARDS = (require_trip_access, require_trip_writer, require_session)
+GUARDS = (require_trip_access, require_trip_reader, require_trip_writer, require_session)
 
 # Methods that only read, and methods that change something. A method in
 # neither set — a DELETE endpoint, say — is a hard failure rather than a skip:
@@ -100,8 +109,10 @@ GUARDS = (require_trip_access, require_trip_writer, require_session)
 READ_METHODS = frozenset({"GET", "HEAD"})
 UNSAFE_METHODS = frozenset({"POST", "PATCH"})
 
-# The trip guard a trip-scoped read must declare.
-TRIP_READ_GUARD = require_trip_access
+# The trip guard a trip-scoped read must declare, by surface: the legacy slug
+# gate under /api/trips, the trip-id reader gate under /api/v2/trips.
+LEGACY_TRIP_READ_GUARD = require_trip_access
+V2_TRIP_READ_GUARD = require_trip_reader
 
 # The membership gates an unsafe trip-scoped route may declare, exactly one of.
 # `require_trip_leader` joins this set (and GUARDS) when `t-am-trip-create`
@@ -256,10 +267,13 @@ def _violation(method: str, route: Any) -> str | None:
             "ANONYMOUS_BY_DESIGN or ACCOUNT_SCOPED"
         )
     if method in READ_METHODS:
-        if guards != {TRIP_READ_GUARD}:
+        read_guard = (
+            V2_TRIP_READ_GUARD if route.path.startswith("/api/v2/") else LEGACY_TRIP_READ_GUARD
+        )
+        if guards != {read_guard}:
             return (
                 f"{label} is a trip-scoped read and must declare exactly "
-                f"`{TRIP_READ_GUARD.__name__}`; it declares {_names(guards) or 'no trip guard'}"
+                f"`{read_guard.__name__}`; it declares {_names(guards) or 'no trip guard'}"
             )
         return None
 
@@ -488,6 +502,15 @@ def test_the_rules_reject_miswired_routes() -> None:
 
     scratch.add_api_route("/api/trips/{slug}/session-only", session_only, methods=["POST"])
     scratch.add_api_route("/api/trips/{slug}/doubled", doubled, methods=["POST"])
+
+    # Each surface's read guard on the other surface's path (t-am-v2-trip-reads):
+    # the legacy slug gate on a v2 read would serve a private trip to anyone.
+    async def v2_read(guard: Annotated[Any, Depends(require_trip_reader)]) -> None:
+        return None
+
+    scratch.add_api_route("/api/v2/trips/{tripId}/things", read, methods=["GET"])
+    scratch.add_api_route("/api/trips/{slug}/v2-guarded", v2_read, methods=["GET"])
+    scratch.add_api_route("/api/v2/trips/{tripId}/fine", v2_read, methods=["GET"])
     routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
 
     must_fail = [
@@ -498,11 +521,17 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("DELETE", "/api/trips/{slug}/things/{id}"),
         ("POST", "/api/trips/{slug}/session-only"),
         ("POST", "/api/trips/{slug}/doubled"),
+        ("GET", "/api/v2/trips/{tripId}/things"),
+        ("GET", "/api/trips/{slug}/v2-guarded"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
 
-    for key in [("GET", "/api/trips/{slug}/things"), ("PATCH", "/api/trips/{slug}/things/{id}")]:
+    for key in [
+        ("GET", "/api/trips/{slug}/things"),
+        ("PATCH", "/api/trips/{slug}/things/{id}"),
+        ("GET", "/api/v2/trips/{tripId}/fine"),
+    ]:
         assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
 
 

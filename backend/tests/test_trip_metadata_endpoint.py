@@ -83,7 +83,19 @@ UNKNOWN_SLUG = "definitely-not-a-real-slug-0000"
 # derived from the model, on purpose: deriving it from `TripOut.model_fields`
 # would make the assertion "the response matches the model" and this test is
 # meant to catch the model itself drifting away from the written contract.
-CONTRACT_KEYS = {"id", "name", "startDate", "bikes", "access"}
+# `TripOut` as extended by Entry 29 (contract, "Models by file (additions)").
+CONTRACT_KEYS = {
+    "id",
+    "name",
+    "startDate",
+    "bikes",
+    "access",
+    "visibility",
+    "publicDelayHours",
+    "riderCount",
+    "lastPublicStopAt",
+    "viewer",
+}
 
 BIKE_CONTRACT_KEYS = {"id", "riderName", "make", "model", "year", "specs"}
 
@@ -210,7 +222,7 @@ async def test_body_has_exactly_the_contract_keys(
     client: AsyncClient, seeded_trips: list[SeededTrip], seeded_bikes: list[SeededBike]
 ) -> None:
     """
-    ``{id, name, startDate, bikes, access}`` — no more, no fewer.
+    ``CONTRACT_KEYS`` — no more, no fewer.
 
     Both halves matter. A *missing* key breaks the generated client's type. An
     *extra* one is worse than untidy here: the only extra values in scope are

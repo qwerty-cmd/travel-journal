@@ -53,6 +53,14 @@ that has them.
 ``test_slug_access.py`` §6 stays where it is. It covers the dependency in
 isolation, which is a different claim from this one, and it keeps working if
 every route in the app is deleted.
+
+**The v2 public reads are in scope too** (section 4, ``t-am-v2-trip-reads``,
+Entry 29 obligation 11). Under ``/api/v2/trips`` a non-member can read a public
+trip, so every response there is checked for more than slugs: no username, no
+user id and not the string ``email`` either (contract, "Never in any response a
+non-member can receive"). Same rules as above: the route set comes from the live
+app, every case asserts its status first, and headers are searched as well as
+the body.
 """
 
 from __future__ import annotations
@@ -61,7 +69,7 @@ import io
 import secrets
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Any
 from uuid import uuid4
@@ -69,6 +77,7 @@ from uuid import uuid4
 import pytest
 from conftest import SeededBike, SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient, Response
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from test_route_dependency_audit import _api_routes
 
@@ -544,3 +553,202 @@ async def test_no_slug_value_comes_back_from_a_replay_or_a_conflict(
             f"{method} {path} {label} ({int(expected)}) returned a body or header containing "
             f"the {leaked}. Response: {response.text[:300]!r}"
         )
+
+
+# --------------------------------------------------------------------------
+# 4. The v2 public reads: no slug, username, user id or "email" (obligation 11)
+# --------------------------------------------------------------------------
+
+# What each v2 GET/HEAD under /api/v2/trips answers on the *public* trip, and on
+# the *private* one for a non-member. Compared against the live route tree by
+# equality, as `EXPECTED_STATUS` is, so a v2 read added later must be planned
+# here before it can pass. `None` = the route takes no trip (the list).
+V2_READ = {"public": HTTPStatus.OK, "private": HTTPStatus.NOT_FOUND}
+V2_EXPECTED_STATUS: dict[tuple[str, str], dict[str, HTTPStatus] | None] = {
+    ("GET", "/api/v2/trips"): None,
+    ("HEAD", "/api/v2/trips"): None,
+    **{
+        (method, f"/api/v2/trips/{{tripId}}{suffix}"): V2_READ
+        for method in ("GET", "HEAD")
+        for suffix in ("", "/bikes", "/stops", "/stops/{stopId}/photos", "/map")
+    },
+}
+
+V2_ROUTES = sorted(
+    {
+        (method, route.path)
+        for method, route in _api_routes()
+        if route.path.startswith("/api/v2/trips") and method in {"GET", "HEAD"}
+    }
+)
+
+# The callers a public v2 response can reach. `rider` is a member of both seeded
+# trips, so its responses are the full, undelayed ones: those must not carry
+# anyone's identity either.
+V2_IDENTITIES = ("anonymous", "non_member", "rider")
+
+V2_CASES = [
+    (method, path, visibility, identity)
+    for method, path in V2_ROUTES
+    for visibility in ("public", "private")
+    for identity in V2_IDENTITIES
+    # The list takes no trip, so one visibility covers it.
+    if not (path == "/api/v2/trips" and visibility == "private")
+]
+
+
+@dataclass(frozen=True, slots=True)
+class V2World:
+    """Trip 0 public with a visible stop and photo; trip 1 private with its own stop."""
+
+    stops: dict[str, str]  # visibility -> a stop id on that trip
+
+
+@pytest.fixture
+async def v2_world(
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    seeded_bikes: list[SeededBike],
+) -> V2World:
+    """
+    Seeded trip 0 made public, with a stop old enough to be visible and a photo on it.
+
+    Straight into the tables, like ``seeded_stop``. Seeded trip 1 stays private
+    (the migration default) and gets a stop too, so its 404s are driven with a
+    real stop id. Everything goes with the trips (``ON DELETE CASCADE``).
+    """
+    public, private = seeded_trips
+    stops = {"public": f"v2-stop-{uuid4()}", "private": f"v2-stop-{uuid4()}"}
+    arrived = datetime.now(UTC) - timedelta(hours=48)
+    async with migrated_engine.begin() as conn:
+        await conn.execute(
+            update(tables.trips).where(tables.trips.c.id == public.id).values(visibility="public")
+        )
+        for visibility, trip in (("public", public), ("private", private)):
+            await conn.execute(
+                tables.stops.insert().values(
+                    id=stops[visibility],
+                    trip_id=trip.id,
+                    name="Tennant Creek",
+                    lat=-19.6480,
+                    lng=134.1910,
+                    location_source="gps",
+                    arrived_at=arrived,
+                )
+            )
+        await conn.execute(
+            tables.photos.insert().values(
+                id=str(uuid4()),
+                stop_id=stops["public"],
+                object_key=f"{public.id}/v2-leak-check.jpg",
+                uploaded_by="Test Rider",
+                taken_at=arrived,
+            )
+        )
+    return V2World(stops=stops)
+
+
+def find_leaked_value(response: Response, secrets_: dict[str, str]) -> str | None:
+    """
+    The name of the first value found in the response, body or headers, or ``None``.
+
+    Case-insensitive, so ``email`` catches ``Email`` and ``EMAIL`` too.
+    """
+    haystack = (
+        response.text + "\n" + "\n".join(f"{k}: {v}" for k, v in response.headers.items())
+    ).lower()
+    return next((name for name, value in secrets_.items() if value.lower() in haystack), None)
+
+
+def test_the_v2_leak_check_catches_each_kind_of_leak() -> None:
+    """The detector finds a username, a user id and ``email``, in a body and in a header."""
+    secrets_ = {"username": "tabc123", "user id": "u-1", "the string email": "email"}
+
+    assert find_leaked_value(Response(200, text='{"by": "tabc123"}'), secrets_) == "username"
+    assert find_leaked_value(Response(200, headers={"x-u": "u-1"}, text="{}"), secrets_) == (
+        "user id"
+    )
+    assert find_leaked_value(Response(200, text='{"Email": null}'), secrets_) == (
+        "the string email"
+    )
+    assert find_leaked_value(Response(200, text='{"id": "trip-1"}'), secrets_) is None
+
+
+def test_every_v2_read_has_a_plan() -> None:
+    """``V2_EXPECTED_STATUS`` and the live v2 GET/HEAD routes are the same set."""
+    assert V2_ROUTES, "route enumeration found no /api/v2/trips reads — the walk is broken"
+    assert set(V2_ROUTES) == set(V2_EXPECTED_STATUS), (
+        f"registered but unplanned: {sorted(set(V2_ROUTES) - set(V2_EXPECTED_STATUS))}; "
+        f"planned but not registered: {sorted(set(V2_EXPECTED_STATUS) - set(V2_ROUTES))}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "visibility", "identity"),
+    V2_CASES,
+    ids=[f"{m} {p} [{v}, {i}]" for m, p, v, i in V2_CASES],
+)
+async def test_no_identity_or_slug_comes_back_from_a_v2_read(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    seeded_trips: list[SeededTrip],
+    v2_world: V2World,
+    rider_session: SignedInAccount,
+    non_member_session: SignedInAccount,
+    method: str,
+    path: str,
+    visibility: str,
+    identity: str,
+) -> None:
+    """
+    Drive the v2 read for real, assert its status, then search the whole response.
+
+    Searched for: both trips' slugs (the seeded trips have them, as pre-0003
+    trips do), both accounts' usernames and user ids, and ``email``. The
+    private trip is driven as a non-member (its 404) and as a member (its 200).
+    """
+    trip = seeded_trips[0] if visibility == "public" else seeded_trips[1]
+    url = path.format(tripId=trip.id, stopId=v2_world.stops[visibility])
+    account = {"non_member": non_member_session, "rider": rider_session}.get(identity)
+    headers = account.headers if account is not None else {}
+
+    response = await client.request(method, url, headers=headers)
+
+    plan = V2_EXPECTED_STATUS[method, path]
+    if plan is None or identity == "rider":
+        expected = HTTPStatus.OK
+    else:
+        expected = plan[visibility]
+    assert response.status_code == expected, (
+        f"{method} {url} as {identity} answered {response.status_code}, expected "
+        f"{int(expected)} — this case proves nothing until it reaches that response. "
+        f"Body: {response.text[:300]!r}"
+    )
+
+    accounts = {"rider": rider_session, "non-member": non_member_session}
+    async with migrated_engine.connect() as conn:
+        usernames = {
+            row.id: row.username
+            for row in await conn.execute(
+                select(tables.users.c.id, tables.users.c.username).where(
+                    tables.users.c.id.in_([a.user_id for a in accounts.values()])
+                )
+            )
+        }
+    other = seeded_trips[1] if visibility == "public" else seeded_trips[0]
+    leaked = find_leaked_value(
+        response,
+        {
+            "rider slug": trip.rider_slug,
+            "viewer slug": trip.viewer_slug,
+            "another trip's rider slug": other.rider_slug,
+            "another trip's viewer slug": other.viewer_slug,
+            **{f"{name}'s user id": a.user_id for name, a in accounts.items()},
+            **{f"{name}'s username": usernames[a.user_id] for name, a in accounts.items()},
+            "the string email": "email",
+        },
+    )
+    assert leaked is None, (
+        f"{method} {url} as {identity} returned a body or header containing {leaked}. "
+        f"Response: {response.text[:300]!r}"
+    )

@@ -21,16 +21,39 @@ from functools import partial
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.repositories.stops import public_visibility
 from app.data.tables import photos, stops
 from app.models.photo import PhotoOut
 from app.storage.s3_client import BUCKET_NAME, get_presign_client
 
 
-async def stop_belongs_to_trip(session: AsyncSession, trip_id: str, stop_id: str) -> bool:
-    """True when this stop exists and is on this trip."""
+async def stop_belongs_to_trip(
+    session: AsyncSession, trip_id: str, stop_id: str, *, public_delay_hours: int | None = None
+) -> bool:
+    """
+    True when this stop exists and is on this trip -- and, given ``public_delay_hours``,
+    is visible to the public (``stops.public_visibility``).
+
+    A stop hidden by the delay is ``False`` exactly like one that doesn't exist,
+    so its photos are unreachable to a non-member and the route's ``404`` is the
+    same in both cases.
+
+    A NUL byte is ``False`` without a query: Postgres ``text`` cannot hold one,
+    so the driver would raise and the read would be a ``500``, not the unknown
+    stop's ``404`` (the same guard as ``trips.get_by_slug`` / ``get_by_id``).
+    ``%00`` in the path reaches here decoded.
+    """
+    if "\x00" in stop_id:
+        return False
     return bool(
         await session.scalar(
-            select(exists().where(stops.c.id == stop_id, stops.c.trip_id == trip_id))
+            select(
+                exists().where(
+                    stops.c.id == stop_id,
+                    stops.c.trip_id == trip_id,
+                    public_visibility(public_delay_hours),
+                )
+            )
         )
     )
 
