@@ -11,10 +11,12 @@ repositories. What leaves here is a ``UserRecord``, never a ``Row``.
 
 - **No secret comes back by accident.** ``UserRecord`` carries no
   ``password_hash`` and no ``recovery_code_hash``, so a record can be logged,
-  returned or put into a response model without dragging a hash along. The one
-  read that needs the password hash (signin) is its own function,
-  ``get_credentials_by_username``, returning a ``UserCredentials`` whose hash is
-  left out of its ``repr``.
+  returned or put into a response model without dragging a hash along. The
+  reads that need the password hash (signin by username; password change and
+  rotation by id) are their own functions, ``get_credentials_by_username`` and
+  ``get_credentials_by_id``, returning a ``UserCredentials`` whose hash is
+  left out of its ``repr``. The recovery-code hash is never read out at all:
+  ``consume_recovery_code`` and ``recovery_code_matches`` compare it in SQL.
 - **The caller owns the transaction.** Nothing here commits. Signup inserts
   the user and its first session together, and signin resets the lockout
   alongside its session work; one commit keeps each together.
@@ -34,6 +36,9 @@ repositories. What leaves here is a ``UserRecord``, never a ``Row``.
     threshold is counted, and never touches a lock already in force.
   - ``reset_lockout`` (a success) clears the counter only while no lock is in
     force, so it can't wipe a lock a concurrent failure set.
+  - ``consume_recovery_code`` (a successful recovery) is the same kind of
+    statement: it matches only the current code and only while unlocked, and
+    replaces the code in the same write, so a code can be used once.
 
   Postgres re-checks a row's ``WHERE`` against the newest committed version
   when a concurrent transaction changed it first, so each statement sees the
@@ -246,6 +251,109 @@ async def reset_lockout(session: AsyncSession, user_id: str, *, now: datetime) -
         .returning(users.c.id)
     )
     return cleared.first() is not None
+
+
+async def get_credentials_by_id(session: AsyncSession, user_id: str) -> UserCredentials | None:
+    """
+    The account with id ``user_id``, with its password hash and lockout state, or ``None``.
+
+    For a signed-in caller re-confirming their password (password change,
+    recovery-code rotation). Disabled accounts are returned too.
+    """
+    row = (
+        await session.execute(
+            select(
+                users.c.id,
+                users.c.username,
+                users.c.display_name,
+                users.c.created_at,
+                users.c.password_hash,
+                users.c.locked_until,
+                users.c.disabled_at,
+            ).where(users.c.id == user_id)
+        )
+    ).first()
+
+    if row is None:
+        return None
+
+    return UserCredentials(
+        id=row.id,
+        username=row.username,
+        display_name=row.display_name,
+        created_at=row.created_at,
+        password_hash=row.password_hash,
+        locked_until=row.locked_until,
+        disabled_at=row.disabled_at,
+    )
+
+
+async def consume_recovery_code(
+    session: AsyncSession,
+    user_id: str,
+    *,
+    code_hash: str,
+    new_password_hash: str,
+    new_code_hash: str,
+    now: datetime,
+) -> bool:
+    """
+    Recover ``user_id`` if ``code_hash`` is its current recovery code. Does not commit.
+
+    One conditional ``UPDATE``: only while the stored ``recovery_code_hash``
+    equals ``code_hash`` and no lock is in force at ``now``, it sets the new
+    password, replaces the code with ``new_code_hash`` and resets the lockout.
+    True if it matched.
+
+    This is what makes a code single-use under concurrency. Two recoveries
+    presenting the same code both target the same row; the second one's
+    ``WHERE`` is re-checked against the first one's committed row, whose code
+    has already changed, so it matches nothing. A ``NULL`` stored code never
+    matches.
+    """
+    recovered = await session.execute(
+        update(users)
+        .where(
+            users.c.id == user_id,
+            users.c.recovery_code_hash == code_hash,
+            _not_locked(now),
+        )
+        .values(
+            password_hash=new_password_hash,
+            password_changed_at=now,
+            recovery_code_hash=new_code_hash,
+            failed_logins=0,
+            locked_until=None,
+        )
+        .returning(users.c.id)
+    )
+    return recovered.first() is not None
+
+
+async def recovery_code_matches(session: AsyncSession, user_id: str, code_hash: str) -> bool:
+    """Whether ``code_hash`` is ``user_id``'s current recovery code, as stored now."""
+    matched = await session.execute(
+        select(users.c.id).where(users.c.id == user_id, users.c.recovery_code_hash == code_hash)
+    )
+    return matched.first() is not None
+
+
+async def set_password(
+    session: AsyncSession, user_id: str, *, password_hash: str, now: datetime
+) -> None:
+    """Replace ``user_id``'s password hash and stamp ``password_changed_at``. Does not commit."""
+    await session.execute(
+        update(users)
+        .where(users.c.id == user_id)
+        .values(password_hash=password_hash, password_changed_at=now)
+    )
+
+
+async def set_recovery_code(session: AsyncSession, user_id: str, *, code_hash: str) -> None:
+    """Replace ``user_id``'s recovery-code hash, so the old code stops working. Does not commit."""
+    await session.execute(
+        update(users).where(users.c.id == user_id).values(recovery_code_hash=code_hash)
+    )
 
 
 async def get_locked_until(session: AsyncSession, user_id: str) -> datetime | None:

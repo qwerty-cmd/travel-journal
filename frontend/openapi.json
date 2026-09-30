@@ -824,6 +824,283 @@
         }
       }
     },
+    "/api/v2/auth/signout-all": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sign every device out of this account",
+        "description": "**Context.** For a lost or shared device: ends every session of the account at\nonce, this one included (decision-log Entry 29; contract, \"Sessions\" \u2192\nRevocation).\n\n**How it works.** Gated by `require_session`. Deletes every session row of the\nsigned-in account and clears this device's cookie. Any other device's cookie\ngets `401` on its next request. The account, its password and its recovery code\nare unchanged.\n\n**Related APIs.** `POST /api/v2/auth/signout` (this device only),\n`POST /api/v2/auth/signin`, `POST /api/v2/auth/password` (also revokes every\nsession).",
+        "operationId": "signout_all_api_v2_auth_signout_all_post",
+        "responses": {
+          "204": {
+            "description": "Signed out everywhere. Every session of the account is deleted, and this device's cookie is cleared (`Set-Cookie: __Host-btj_session=\"\"; Max-Age=0; \u2026`)."
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` per-account limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/auth/recover": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Set a new password with the recovery code, and sign this device in",
+        "description": "**Context.** Accounts have no email, so a forgotten password is recovered with\nthe one-time recovery code shown at signup, after the last recovery or rotation,\nor handed over by the operator (decision-log Entry 29).\n\n**How it works.** Anonymous. The code is read case-insensitively, with hyphens\nand spaces ignored and `O`, `I` and `L` read as `0`, `1` and `1`, and compared\nby its SHA-256. A wrong username, a wrong or already-used code and a disabled\naccount all get the same `401` with \"Username or recovery code is incorrect.\".\nA wrong code counts toward the same lockout as signin: the 10th failure locks\nthe account for 15 minutes, during which recover is `429` with `Retry-After`,\neven for the correct code. On success, in one transaction: the new password is\nset, every session of the account is revoked, a new recovery code replaces the\nused one, and the lockout is reset. Then this device is signed in with a\n`Set-Cookie`. A code works once: of two recoveries racing with the same code,\nonly one succeeds.\n\n**Related APIs.** `POST /api/v2/auth/recovery-code` (rotate the code while\nsigned in), `POST /api/v2/auth/signin`, `POST /api/v2/auth/signup`.",
+        "operationId": "recover_api_v2_auth_recover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRecover"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The account and its new recovery code, shown this once; the code just used has stopped working. Signs this device in: `Set-Cookie: __Host-btj_session=\u2026; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`. The cookie is HttpOnly, so JavaScript never sees the session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodeIssuedOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The username or recovery code is wrong, the code was already used, or the account is disabled. One message for all of these. A wrong code counts toward the account lockout. Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is missing a field, the recovery code is over 1024 characters, or the new password breaks its rule (see the request body's field descriptions).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct code. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/auth/password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change the password, signing every other device out",
+        "description": "**Context.** Lets a signed-in rider change their password, and cuts off anyone\nelse who was signed in to the account (decision-log Entry 29; contract,\n\"Sessions\" \u2192 Revocation).\n\n**How it works.** Gated by `require_session`. `currentPassword` is\nNFKC-normalised and verified; a wrong one is `403`, counted toward the same\nlockout as signin, and a locked account is `429` with `Retry-After`. A\n`newPassword` equal to the current one is `422`. On success, in one\ntransaction: the new password is stored as an argon2id hash, every session of\nthe account is deleted (this one included), and exactly one new session is\nissued to this device with a `Set-Cookie`. The recovery code is unchanged.\n\n**Related APIs.** `POST /api/v2/auth/recover` (without the current password),\n`POST /api/v2/auth/signout-all`, `GET /api/v2/auth/me`.",
+        "operationId": "change_password_api_v2_auth_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The signed-in account. Every earlier session is revoked. Signs this device in: `Set-Cookie: __Host-btj_session=\u2026; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`. The cookie is HttpOnly, so JavaScript never sees the session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`currentPassword` is wrong. Counts toward the account lockout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is missing a field, `currentPassword` is over 1024 characters, the new password breaks its rule, or it equals the current one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/auth/recovery-code": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Replace the recovery code with a new one",
+        "description": "**Context.** The recovery code is shown only once. A rider who lost it, or whose\nsignup response never arrived, gets a new one here from the Account screen\n(decision-log Entry 29).\n\n**How it works.** Gated by `require_session`, and the password is re-confirmed:\na wrong one is `403`, counted toward the same lockout as signin, and a locked\naccount is `429` with `Retry-After`. On success a new random code (26 Crockford\nbase32 characters) replaces the old one, which stops working at once; only its\nSHA-256 is stored, and this response is the only time it is shown. Sessions\nare not touched.\n\n**Related APIs.** `POST /api/v2/auth/recover` (where the code is used),\n`POST /api/v2/auth/signup` (the first code), `POST /api/v2/auth/password`.",
+        "operationId": "rotate_recovery_code_api_v2_auth_recovery_code_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCodeCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The account and its new recovery code, shown this once; the old code has stopped working.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodeIssuedOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`password` is wrong. Counts toward the account lockout.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is missing `password`, or it is over 1024 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -886,6 +1163,34 @@
         ],
         "title": "AccountCreate",
         "description": "POST /api/v2/auth/signup body."
+      },
+      "AccountRecover": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The login handle chosen at signup, compared case-insensitively. Not format-checked: an unknown username is the same 401 as a wrong code."
+          },
+          "recoveryCode": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Recoverycode",
+            "description": "The one-time recovery code shown at signup, after the last recovery or rotation, or handed over by the operator. Case-insensitive; hyphens and spaces are ignored, and O, I and L are read as 0, 1 and 1. A wrong code is a 401 and counts against the account lockout. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          },
+          "newPassword": {
+            "type": "string",
+            "title": "Newpassword",
+            "description": "The password to set on success. Any printable text: NFKC-normalised, then 15-128 characters (code points) with no control characters (Unicode category Cc). Not trimmed \u2014 leading and trailing spaces count. Anything else is rejected with 422 / VALIDATION_ERROR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "recoveryCode",
+          "newPassword"
+        ],
+        "title": "AccountRecover",
+        "description": "POST /api/v2/auth/recover body."
       },
       "BikeCreate": {
         "properties": {
@@ -1191,6 +1496,28 @@
         "title": "MeOut",
         "description": "The signed-in account. The only response that ever contains a username."
       },
+      "PasswordChange": {
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Currentpassword",
+            "description": "The account's current password. Not format-checked: a wrong one is a 403 and counts against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          },
+          "newPassword": {
+            "type": "string",
+            "title": "Newpassword",
+            "description": "The password to set. Equal to the current one is a 422. Any printable text: NFKC-normalised, then 15-128 characters (code points) with no control characters (Unicode category Cc). Not trimmed \u2014 leading and trailing spaces count. Anything else is rejected with 422 / VALIDATION_ERROR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ],
+        "title": "PasswordChange",
+        "description": "POST /api/v2/auth/password body."
+      },
       "PhotoOut": {
         "properties": {
           "id": {
@@ -1262,6 +1589,22 @@
         ],
         "title": "PointGeometry",
         "description": "GeoJSON Point geometry \u2014 the location of a single stop pin."
+      },
+      "RecoveryCodeCreate": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Password",
+            "description": "The account's current password, re-confirmed before a new recovery code is issued. Not format-checked: a wrong one is a 403 and counts against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "RecoveryCodeCreate",
+        "description": "POST /api/v2/auth/recovery-code body \u2014 rotates the recovery code."
       },
       "RecoveryCodeIssuedOut": {
         "properties": {

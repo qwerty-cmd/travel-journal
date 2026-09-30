@@ -126,6 +126,16 @@ async def delete(session: AsyncSession, token_hash: bytes) -> None:
     await session.execute(sessions.delete().where(sessions.c.token_hash == token_hash))
 
 
+async def delete_all_for_user(session: AsyncSession, user_id: str) -> None:
+    """
+    Delete every session of ``user_id``, the caller's own included. Does not commit.
+
+    Signout-all, a password change and a recovery (contract, "Sessions" →
+    Revocation).
+    """
+    await session.execute(sessions.delete().where(sessions.c.user_id == user_id))
+
+
 async def delete_expired_for_user(
     session: AsyncSession, user_id: str, *, idle_cutoff: datetime, now: datetime
 ) -> None:

@@ -18,8 +18,7 @@ read that needs a *session*, not a trip. So every route falls into exactly one
 class, decided by name first and path second:
 
 - **Anonymous** (``ANONYMOUS_BY_DESIGN``, by route name): no guard at all.
-  Health, the ``/api`` catch-all, signup, signin and signout (and later
-  recover). A guard declared on one of these fails too — signout, for one, must
+  Health, the ``/api`` catch-all, signup, signin, signout and recover. A guard declared on one of these fails too — signout, for one, must
   answer ``204`` whether or not a session was sent.
 - **Account-scoped** (``ACCOUNT_SCOPED``, by route name): exactly
   ``require_session``, reads and unsafe methods alike, and only under
@@ -117,13 +116,18 @@ TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
 #                       (contract, "The gates": none (anonymous)).
 #   signout           — anonymous with the session optional: always 204, and it
 #                       clears the cookie whether or not a session was sent.
-ANONYMOUS_BY_DESIGN = {"health", "unknown_api_path", "signup", "signin", "signout"}
+#   recover           — how a caller who forgot the password gets a session back
+#                       with the recovery code; it can't require one either.
+ANONYMOUS_BY_DESIGN = {"health", "unknown_api_path", "signup", "signin", "signout", "recover"}
 
 # Routes about the caller's own account rather than a trip, by route name. Each
 # declares exactly `require_session`, and sits under /api/v2.
 #
-#   get_me            — GET/HEAD /api/v2/auth/me, the signed-in account.
-ACCOUNT_SCOPED = {"get_me"}
+#   get_me               — GET/HEAD /api/v2/auth/me, the signed-in account.
+#   signout_all          — POST /api/v2/auth/signout-all, every session of the account.
+#   change_password      — POST /api/v2/auth/password, re-confirms the current password.
+#   rotate_recovery_code — POST /api/v2/auth/recovery-code, re-confirms the password.
+ACCOUNT_SCOPED = {"get_me", "signout_all", "change_password", "rotate_recovery_code"}
 
 
 def _walk_tree(routes: Any) -> tuple[list[Any], list[Any]]:
