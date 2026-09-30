@@ -42,7 +42,7 @@ Tick each box as you go.
 
 ## 1. Cloud service setup (story `s-cloud-service-setup`)
 
-- [ ] **You. Azure budget alert FIRST** (spec §13). Set a low-threshold alert, which acts as a tripwire
+- [x] **You. Azure budget alert FIRST** (spec §13). **Set by you, 2026-09-30.** Set a low-threshold alert, which acts as a tripwire
   rather than a hard limit, before any other Azure resource exists. Do it in the portal: Cost Management → Budgets → Add, with an
   email alert. Create the resource group only after the alert exists.
 - [ ] **You. Neon.** Create the project and database, then copy the connection string into your password
@@ -189,6 +189,10 @@ the **Job only**, for least privilege: the web app never reads them, only the sy
 
 ## 4. Seed the trip in production (story `s-seed-trip-record`, `t-owner-production-seed`)
 
+**Done, 2026-09-30.** Production holds one trip, "test-trip". To rename it, `UPDATE` that row; `seed_trip`
+refuses a second trip. The rider link was pasted into an agent chat, so you rotated `trips.rider_slug`
+on 2026-09-30 (§8, "A leaked rider link"). Share only the new rider link.
+
 Only you do this. Keep it out of any agent session, because it prints the permanent slugs.
 
 - [ ] Point `DATABASE_URL` at Neon in your own shell, not in a committed file.
@@ -221,12 +225,18 @@ Only you do this, because it needs real `GRAPH_*` values.
   (`%2F`) and with characters OneDrive forbids in names (`? : / \ | " * < >`). Every real id is a UUID,
   so this only matters if a non-UUID id ever appears. Check the archived name matches `<photo id>.<ext>`,
   and record what Graph did in `t-onedrive-graph-name-charset`'s notes.
+- [x] **Production run passed, 2026-09-30.** A run of the sync Job archived a photo to OneDrive.
 - [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
   token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
   the Job carries that new token (the Container App has no `GRAPH_*`, step 2).
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
+- [ ] **If you ever recreate the sync Job**, don't copy the `--command "sh" "-c" ...` line from
+  `infra/azure/README.md` as it stands. The az CLI swallows the bare `-c`, and every run fails with
+  `sh: 0: cannot open cd /app/backend ...`. Use the shape the live Job now has: `--command
+  "/app/backend/.venv/bin/python" --args "/app/backend/app/storage/onedrive_sync.py"` plus the env var
+  `PYTHONPATH=/app/backend`. The README fix is `t-sync-job-command-dash-arg` and waits on your approval.
 
 ### If archiving stops mid-trip
 

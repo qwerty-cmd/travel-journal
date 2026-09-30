@@ -126,8 +126,9 @@ Rebuilt from `progress.json` on 2026-09-29. Every row below is `not_started`. Th
 **Owner steps (agent `owner`).** No agent can do these: they need your accounts, your approval, or a real phone.
 - `t-owner-compose-smoke-test`: run the production image locally against compose (runbook §3).
 - `t-owner-container-app-definition`: approve the Container App definition in `infra/` (ingress 8000, HTTPS only, multiple-revision mode, min replicas 0, its secrets). devops can draft it with your approval.
-- `t-owner-production-seed`: seed the trip in Neon and save the two links (runbook §4).
-- `t-onedrive-preflight-check`: one real sync against your OneDrive with a freshly minted token (runbook §5).
+- ~~`t-owner-production-seed`~~: **done on 2026-09-30.** Production holds one trip. The rider link was pasted into an agent chat, so you rotated it on 2026-09-30 (runbook §8). Share only the new link.
+- `t-onedrive-preflight-check`: the production run passed on 2026-09-30. Only the re-run close to departure with a freshly minted token remains (runbook §5).
+- `t-sync-job-command-dash-arg`: the Job create command in `infra/azure/README.md` is broken (the live Job is already fixed). It needs your approval to correct the README (runbook §5).
 - `t-owner-cutover`: the deploy itself (runbook §6–§7).
 - `t-owner-real-device-test-day`: [real-device-test-plan.md](real-device-test-plan.md).
 - `t-owner-handover-finish`: fill in this document's TODOs (URL, revision names, mint dates).

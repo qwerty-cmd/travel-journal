@@ -40,6 +40,8 @@ CLOSED `in_progress` -> `done` 2026-09-29 (review docs pass). `t-dockerignore-ro
 
 Touches OneDrive/.env/deployment config — devops agent only, needs explicit human approval per CLAUDE.md off-limits list. Known trap, empirically confirmed by QA, **now fixed by t-neon-sslmode-url**: Neon's console connection string includes ?sslmode=require (and channel_binding=require), which asyncpg rejects (it takes ssl=, not libpq's sslmode=). normalize_database_url in app/data/db.py used to pass the query string through untouched, which failed at connect time with TypeError: connect() got an unexpected keyword argument 'sslmode'. That error looks like a credentials problem and is not one. It now translates sslmode to ssl and drops channel_binding, so the Neon string can be pasted as-is. Neon connectivity itself is still untested live. Migration runner has only been exercised against local docker-compose Postgres 16, never Neon. The simple-query path is a wire-protocol feature rather than a vendor one so it should carry over, but that is untested.
 
+2026-09-30: **Azure budget alert set by the owner** (owner-reported; runbook §1 ticked, spec §13). It has no task row; the story title names it. **The story STAYS `in_progress`**: it still holds one open row, `t-onedrive-preflight-check` (`not_started`; the production pass is done, and the pre-departure re-run with a freshly minted token remains, runbook §5). Every other row under this story is `done`. It closes when that re-run is done.
+
 ## s-seed-trip-record
 
 Constraint from decision-log.md Entry 3: the seed script must NOT use INSERT ... ON CONFLICT (slug) DO UPDATE. Slugs are random secrets.token_urlsafe tokens, so a collision is a bug signal, not a routine condition — DO UPDATE would silently overwrite an existing trip's slug, producing exactly the authorization leak the UNIQUE constraint exists to prevent. Let the constraint reject the insert and regenerate. Script must also generate both slugs and print them for the user to save; slug values live only in Postgres and are never committed. Sequencing revised by ba: the original argument — that without a seeded trip every endpoint task validates against fixtures alone — no longer holds, because conftest.py's seeded_trips fixture inserts real rows into real Postgres with real generated slugs, so automated coverage gains nothing from a seed. Two reasons survive and downgrade this from blocker to preference: (1) manual/Swagger exploratory validation (spec Section 12) has no entry point without a slug, and hand-inserting one in psql across five endpoint stories is exactly where someone pastes the same string into both slug columns; (2) this script is the only production-path writer of a trip row, and migration 0002's CHECK was added anticipating it, so landing it now is when that constraint gets its real exercise. SCRIPT BUILT, TRIP NOT YET SEEDED. Running it is a human step, deliberately not done by any agent - it prints permanent unrotatable slugs that must not land in an agent transcript. Command: cd backend && uv run python -m app.data.seed_trip --name '<name>' --start-date YYYY-MM-DD. The printed output is the only copy handed to the operator; recovery afterwards is SELECT rider_slug, viewer_slug FROM trips. Story closes when the trip actually exists.
@@ -1158,6 +1160,8 @@ ORDINARY DEBT, filed out of `t-onedrive-sync-job` 2026-09-17. Do not implement o
 
 ## t-onedrive-preflight-check
 
+PRODUCTION RUN PASSED 2026-09-30 (owner). A run of the scheduled sync Job completed and archived a photo to OneDrive, after the Job's command was fixed live (`t-sync-job-command-dash-arg`; every earlier scheduled run had failed before reaching Graph). The row stays `not_started` on purpose: runbook §5's "run it again close to departure with a freshly minted token" item is still open, and that is now the only thing left. The owner did not report the §5 archive-isolation or encoded-filename checks, so `t-onedrive-graph-name-charset` is untouched.
+
 LOCAL RUN PASSED 2026-09-29 (owner). Full local stack (`docker compose up --build` with the boto3 `minio-init`, migrate, seed, a stop with a photo uploaded through the app) plus the owner's real Graph app registration and a refresh token minted with `get_refresh_token`: `python -m app.storage.onedrive_sync` archived the photo to OneDrive. This is the first confirmation against real Graph of the `/common` token flow, the `Files.ReadWrite offline_access` scope, the upload URL form and the `conflictBehavior=replace` placement, which were all previously unverified. Still open: the same run with **production** values (Neon/R2), and the re-run with a freshly minted token close to departure.
 
 ROW ADDED 2026-09-17 — it existed only as an id, cited by three places (`onedrive_sync.py`'s module docstring, the `s-photo-upload-onedrive-sync` story closeout above, and `t-onedrive-filename-url-encoding`) but was never written into `progress.json`. `qa`'s independent verification pass on `t-onedrive-sync-job` found the row missing and flagged it; `ba`'s original scoping text is transcribed verbatim as the task title and blocker.
@@ -1967,6 +1971,10 @@ OWNER TASK, `gate: none`, story `s-deploy-cutover`. `infra/` is off-limits witho
 
 OWNER TASK, `gate: none`, story `s-seed-trip-record`. Runbook §4: migrate Neon, run `seed_trip` once, save both printed links in the password manager straight away. Keep it out of any agent session. Never delete and re-seed; recover slugs by SQL. The story closes when this is done.
 
+DONE 2026-09-30 (owner); story `s-seed-trip-record` closed with it. The owner migrated Neon and seeded one trip. Verified by a read-only `GET /api/trips/{slug}` against the live app: 200, name "test-trip", startDate 2026-09-29, access "rider"; `GET /api/health` 200. The owner confirmed the name "test-trip" is intentional.
+- **Production holds exactly one trip, and `seed_trip` refuses a second.** A later rename is an `UPDATE` on the existing `trips` row, not a re-seed.
+- **Rotation done 2026-09-30 (owner-reported).** The rider link was pasted into an agent chat session on 2026-09-30, contrary to runbook §4. The owner then rotated `trips.rider_slug` on Neon following decision-log Entry 21 (runbook §8, "A leaked rider link"). This rests on the owner's report; no agent verified it, and no agent should, because checking it would mean handling the new slug. The old rider link is dead; riders need the new one.
+
 ## t-owner-cutover
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. Runbook §6–§7: devops runs the commands after the owner confirms. Build and push the commit-tagged image, record the rollback target, migrate Neon before traffic moves, update the app (new revision `<app>--rel-<tag>`), move traffic when healthy, update the Job to the same tag, then the post-deploy checks. Record the revision names for `t-owner-handover-finish`.
@@ -2109,3 +2117,19 @@ CreatedTime                Active    Replicas    TrafficWeight    HealthState   
 - The other `probes-*` revision is no longer listed as active.
 - `Replicas 0` on both is scale-to-zero at idle (`--min-replicas 0`), not a fault.
 - No `/api/health` check was captured after the change; the evidence is the revision list above only.
+
+## t-sync-job-command-dash-arg
+
+`gate: broken`, story `s-deploy-cutover`, agent `devops`. Filed 2026-09-30. **NEEDS THE OWNER'S APPROVAL** — the fix is in `infra/`, which is off-limits without it.
+
+**The defect.** `infra/azure/README.md` (~L416, the `az containerapp job create` block from `t-onedrive-sync-scheduler`) passes `--command "sh" "-c" "cd /app/backend && exec .venv/bin/python -m app.storage.onedrive_sync"`. The az CLI swallows the bare `-c` token, so the live Job was created with command `["sh"]` and args `["cd /app/backend && ..."]` (confirmed with `az containerapp job show`). `sh` then tried to open that string as a script file, and every run failed with `sh: 0: cannot open cd /app/backend && exec ...: No such file`.
+
+**Impact.** Every scheduled run since the Job was created failed. Nothing was lost: photos stay in R2, and pending ones archive on the next good run.
+
+**Live fix, applied by the owner 2026-09-30.**
+```
+az containerapp job update -n bike-trip-onedrive-sync -g rg-bike-trip-log --command "/app/backend/.venv/bin/python" --args "/app/backend/app/storage/onedrive_sync.py" --set-env-vars PYTHONPATH=/app/backend
+```
+No token starts with a dash, so az passes them through. Running the module by file path instead of `-m` works because `onedrive_sync.py` uses only absolute `from app...` imports (satisfied by `PYTHONPATH=/app/backend`) and has a `__main__` block. Its only cwd-relative path is `env_file=".env"`, which is absent in the container anyway. The next Job run succeeded and archived a photo (`t-onedrive-preflight-check`).
+
+**Remaining work.** Change the README create block to the same shape: `--command "/app/backend/.venv/bin/python" --args "/app/backend/app/storage/onedrive_sync.py"` and a `PYTHONPATH=/app/backend` env var. Until then, a Job recreated from the README breaks the same way. Runbook §5 warns anyone recreating the Job.
