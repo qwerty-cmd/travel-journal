@@ -2413,6 +2413,8 @@ docker compose up -d postgres minio minio-init
 cd backend && uv run pytest tests/test_jpeg_strip.py tests/test_photo_endpoints.py tests/test_photo_upload_storage.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
+DONE 2026-09-30. `core/jpeg.py` pure-Python walker (drops APP1–APP15 and COM before SOS, keeps everything else byte-identical, copies from SOS on; handles fill bytes and RST; `JpegError` on anything else; kept runs copied whole, so peak ≤ ~2× output). `routes/photos.py`: `CappedBodyRoute` (POST only) refuses `Content-Length` > 16 MiB before reading and counts chunked bodies; 15 MiB file cap; walker in `asyncio.to_thread`; checks after replay and before conflict/S3/insert. Five existing tests moved from fake bytes to fixture JPEGs (approved churn). Tests: test_jpeg_strip 208, test_photo_jpeg_http 31, +1 GET-cap test; suite 2511; frontend 385 + build. QA PASS (200k fuzz cases, only `JpegError`; Pillow decode check in scratch) with F1 (1 GiB on crafted input) and F3 (cap on GET) fixed before commit. Debt: t-am-jpeg-after-sos (triggered), t-am-jpeg-gaps.
+
 ## t-am-v2-rider-writes
 **Goal.** v2 creates and patches located by tripId, session checked first.
 **Scope.** `routes/v2/` (stops, photos, bikes writes), a tripId locator for `require_trip_writer`, tests, Kubb regen.
@@ -2435,6 +2437,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 ```
 
 **Added AC (from t-am-v2-trip-reads).** Client-supplied ids on write paths may still reach Postgres with a NUL byte (stop/bike/photo create bodies, the upload form's id, `PATCH …/bikes/{id}`), giving a 500 instead of a 4xx. Check each write path this task adds or reuses and guard like `trips.get_by_id` / `photos.stop_belongs_to_trip`; test a NUL id on each.
+
+**Added AC (from t-am-photo-exif-strip QA, triggered debt promoted here).** The 16 MiB pre-read cap depends on `route_class=CappedBodyRoute` on the router. The v2 photo upload route must use it (or share the legacy router's class) and run the same `_stripped_jpeg` path; test a v2 `Content-Length` > 16 MiB → 422 with 0 body messages read, and EXIF stripped on v2 uploads.
 
 ## t-am-trip-create
 **Goal.** Create trips, list your trips, and edit a trip as a leader. This is part (a) of the scrum change 10 split.
@@ -2917,3 +2921,11 @@ ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-list). (1) The sort key depe
 ## t-am-trip-reads-gaps
 
 ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-reads). (1) The five v2 reads declare 422 in OpenAPI (the legacy convention, keeping FastAPI's validation schema out of the client) but the contract rows list 200/404/429 — align one or the other. (2) No test reaches the NUL guard in `memberships.get_for_user` with a signed-in caller (the malformed-id test is anonymous). (3) `data/repositories/trips.py` module docstring still describes the two-slug model.
+
+## t-am-jpeg-after-sos
+
+TRIGGERED DEBT (dev + QA on t-am-photo-exif-strip). Everything from the first SOS on is copied untouched per the contract, so APPn/COM between progressive scans and data after EOI (MPF secondary images with their own EXIF, Motion Photo MP4 trailers) survive. No current consumer: `frontend/src/photo.ts` always re-encodes on a canvas. Promotion trigger: any upload path that sends original bytes (non-web client, a keep-original option). Needs a contract change (architect).
+
+## t-am-jpeg-gaps
+
+ORDINARY DEBT (QA on t-am-photo-exif-strip). (1) A crafted 15 MiB file still costs 2–4 s of CPU in a worker thread (memory fixed); only an active member within the writes limit can send one. (2) FastAPI reads and spools the multipart body (≤ 16 MiB) before the membership gate and limiter run; only CSRF and the cap precede it. (3) An oversized upload is 422 before the gate (unknown slug/anonymous see 422, not 404/401); add a sentence to the contract's legacy gate order.
