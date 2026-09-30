@@ -5,6 +5,7 @@ export type { GetMapApiTripsSlugMapGetQueryKey } from "./useGetMapApiTripsSlugMa
 export type { GetMeApiV2AuthMeGetQueryKey } from "./useGetMeApiV2AuthMeGet";
 export type { GetTripApiTripsSlugGetQueryKey } from "./useGetTripApiTripsSlugGet";
 export type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey } from "./useListPhotosApiTripsSlugStopsStopIdPhotosGet";
+export type { ListPublicTripsApiV2TripsGetQueryKey } from "./useListPublicTripsApiV2TripsGet";
 export type { ListStopsApiTripsSlugStopsGetQueryKey } from "./useListStopsApiTripsSlugStopsGet";
 export type { PatchBikeApiTripsSlugBikesIdPatchMutationKey } from "./usePatchBikeApiTripsSlugBikesIdPatch";
 export type { RecoverApiV2AuthRecoverPostMutationKey } from "./useRecoverApiV2AuthRecoverPost";
@@ -35,6 +36,9 @@ export { useGetTripApiTripsSlugGet } from "./useGetTripApiTripsSlugGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey } from "./useListPhotosApiTripsSlugStopsStopIdPhotosGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGetQueryOptions } from "./useListPhotosApiTripsSlugStopsStopIdPhotosGet";
 export { useListPhotosApiTripsSlugStopsStopIdPhotosGet } from "./useListPhotosApiTripsSlugStopsStopIdPhotosGet";
+export { listPublicTripsApiV2TripsGetQueryKey } from "./useListPublicTripsApiV2TripsGet";
+export { listPublicTripsApiV2TripsGetQueryOptions } from "./useListPublicTripsApiV2TripsGet";
+export { useListPublicTripsApiV2TripsGet } from "./useListPublicTripsApiV2TripsGet";
 export { listStopsApiTripsSlugStopsGetQueryKey } from "./useListStopsApiTripsSlugStopsGet";
 export { listStopsApiTripsSlugStopsGetQueryOptions } from "./useListStopsApiTripsSlugStopsGet";
 export { useListStopsApiTripsSlugStopsGet } from "./useListStopsApiTripsSlugStopsGet";

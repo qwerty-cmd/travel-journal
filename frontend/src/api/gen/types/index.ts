@@ -16,6 +16,7 @@ export type { GetMeApiV2AuthMeGet200, GetMeApiV2AuthMeGet401, GetMeApiV2AuthMeGe
 export type { GetTripApiTripsSlugGet200, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGetQuery, GetTripApiTripsSlugGetQueryResponse } from "./GetTripApiTripsSlugGet";
 export type { LineStringGeometry } from "./LineStringGeometry";
 export type { ListPhotosApiTripsSlugStopsStopIdPhotosGet200, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422, ListPhotosApiTripsSlugStopsStopIdPhotosGet429, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGetQuery, ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse } from "./ListPhotosApiTripsSlugStopsStopIdPhotosGet";
+export type { ListPublicTripsApiV2TripsGet200, ListPublicTripsApiV2TripsGet422, ListPublicTripsApiV2TripsGet429, ListPublicTripsApiV2TripsGetQuery, ListPublicTripsApiV2TripsGetQueryParams, ListPublicTripsApiV2TripsGetQueryResponse } from "./ListPublicTripsApiV2TripsGet";
 export type { ListStopsApiTripsSlugStopsGet200, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422, ListStopsApiTripsSlugStopsGet429, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGetQuery, ListStopsApiTripsSlugStopsGetQueryResponse } from "./ListStopsApiTripsSlugStopsGet";
 export type { LocationSource, LocationSourceEnumKey } from "./LocationSource";
 export type { MapFeatureCollection } from "./MapFeatureCollection";
@@ -40,6 +41,8 @@ export type { StopOut } from "./StopOut";
 export type { TrailFeature } from "./TrailFeature";
 export type { TrailFeatureProperties } from "./TrailFeatureProperties";
 export type { TripOut } from "./TripOut";
+export type { TripPageOut } from "./TripPageOut";
+export type { TripSummaryOut } from "./TripSummaryOut";
 export type { UploadPhotoApiTripsSlugStopsStopIdPhotosPost200, UploadPhotoApiTripsSlugStopsStopIdPhotosPost201, UploadPhotoApiTripsSlugStopsStopIdPhotosPost401, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422, UploadPhotoApiTripsSlugStopsStopIdPhotosPost429, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutation, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams } from "./UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 export { accessEnum } from "./Access";
 export { errorCodeEnum } from "./ErrorCode";

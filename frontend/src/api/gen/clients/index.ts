@@ -5,6 +5,7 @@ export { getMapApiTripsSlugMapGet } from "./getMapApiTripsSlugMapGet";
 export { getMeApiV2AuthMeGet } from "./getMeApiV2AuthMeGet";
 export { getTripApiTripsSlugGet } from "./getTripApiTripsSlugGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "./listPhotosApiTripsSlugStopsStopIdPhotosGet";
+export { listPublicTripsApiV2TripsGet } from "./listPublicTripsApiV2TripsGet";
 export { listStopsApiTripsSlugStopsGet } from "./listStopsApiTripsSlugStopsGet";
 export { patchBikeApiTripsSlugBikesIdPatch } from "./patchBikeApiTripsSlugBikesIdPatch";
 export { recoverApiV2AuthRecoverPost } from "./recoverApiV2AuthRecoverPost";
