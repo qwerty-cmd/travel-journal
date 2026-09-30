@@ -1,8 +1,12 @@
 export { createBikeApiTripsSlugBikesPost } from "./createBikeApiTripsSlugBikesPost";
 export { createStopApiTripsSlugStopsPost } from "./createStopApiTripsSlugStopsPost";
 export { getMapApiTripsSlugMapGet } from "./getMapApiTripsSlugMapGet";
+export { getMeApiV2AuthMeGet } from "./getMeApiV2AuthMeGet";
 export { getTripApiTripsSlugGet } from "./getTripApiTripsSlugGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "./listPhotosApiTripsSlugStopsStopIdPhotosGet";
 export { listStopsApiTripsSlugStopsGet } from "./listStopsApiTripsSlugStopsGet";
 export { patchBikeApiTripsSlugBikesIdPatch } from "./patchBikeApiTripsSlugBikesIdPatch";
+export { signinApiV2AuthSigninPost } from "./signinApiV2AuthSigninPost";
+export { signoutApiV2AuthSignoutPost } from "./signoutApiV2AuthSignoutPost";
+export { signupApiV2AuthSignupPost } from "./signupApiV2AuthSignupPost";
 export { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from "./uploadPhotoApiTripsSlugStopsStopIdPhotosPost";
