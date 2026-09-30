@@ -232,11 +232,10 @@ Only you do this, because it needs real `GRAPH_*` values.
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
-- [ ] **If you ever recreate the sync Job**, don't copy the `--command "sh" "-c" ...` line from
-  `infra/azure/README.md` as it stands. The az CLI swallows the bare `-c`, and every run fails with
-  `sh: 0: cannot open cd /app/backend ...`. Use the shape the live Job now has: `--command
-  "/app/backend/.venv/bin/python" --args "/app/backend/app/storage/onedrive_sync.py"` plus the env var
-  `PYTHONPATH=/app/backend`. The README fix is `t-sync-job-command-dash-arg` and waits on your approval.
+- **If you ever recreate the sync Job**, use the create block in `infra/azure/README.md`; it carries
+  the working command shape (`t-sync-job-command-dash-arg`). If your copy of the README still has
+  `--command "sh" "-c" ...`, it is out of date: az swallows the bare `-c`, and every run fails with
+  `sh: 0: cannot open cd /app/backend ...`.
 
 ### If archiving stops mid-trip
 

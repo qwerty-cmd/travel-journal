@@ -193,8 +193,8 @@
     { "id": "t-owner-deactivate-superseded-revisions", "storyId": "s-deploy-cutover", "title": "Deactivate the superseded Container App revisions left by the probe run — DONE by the owner 2026-09-30: two active remain, --probes-20260929140739-718d (100% traffic) and --rel-1bbe81bcbec5 (rollback target)", "status": "done", "agent": "owner", "blockers": [], "gate": "observable" },
     { "id": "t-owner-real-device-test-day", "storyId": "s-real-device-testing", "title": "Run docs/real-device-test-plan.md on real iPhone and Android against the production URL", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
     { "id": "t-owner-handover-finish", "storyId": "s-handover-docs", "title": "Fill the handover's cutover TODOs — live URL, revision names, Graph token and client-secret mint/expiry dates", "status": "not_started", "agent": "owner", "blockers": [], "gate": "none" },
-    { "id": "t-sync-job-command-dash-arg", "storyId": "s-deploy-cutover", "title": "infra/azure/README.md Job create block passes --command \"sh\" \"-c\" ...; az swallows the bare -c so the live Job ran command [sh] and every run failed — live Job fixed by the owner 2026-09-30; README must carry the same no-dash command/args shape plus PYTHONPATH — NEEDS THE OWNER'S APPROVAL (infra/ off-limits)", "status": "not_started", "agent": "devops", "blockers": [], "gate": "broken" }
+    { "id": "t-sync-job-command-dash-arg", "storyId": "s-deploy-cutover", "title": "infra/azure/README.md Job create block passes --command \"sh\" \"-c\" ...; az swallows the bare -c so the live Job ran command [sh] and every run failed — live Job fixed by the owner 2026-09-30; README must carry the same no-dash command/args shape plus PYTHONPATH — DONE 2026-09-30 (owner-approved): README create block now uses --command python / --args onedrive_sync.py plus PYTHONPATH; block not re-run, matches the proven live shape", "status": "done", "agent": "devops", "blockers": [], "gate": "broken" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-30T22:00:00Z"
+  "lastUpdated": "2026-09-30T23:00:00Z"
 }

@@ -2133,3 +2133,11 @@ az containerapp job update -n bike-trip-onedrive-sync -g rg-bike-trip-log --comm
 No token starts with a dash, so az passes them through. Running the module by file path instead of `-m` works because `onedrive_sync.py` uses only absolute `from app...` imports (satisfied by `PYTHONPATH=/app/backend`) and has a `__main__` block. Its only cwd-relative path is `env_file=".env"`, which is absent in the container anyway. The next Job run succeeded and archived a photo (`t-onedrive-preflight-check`).
 
 **Remaining work.** Change the README create block to the same shape: `--command "/app/backend/.venv/bin/python" --args "/app/backend/app/storage/onedrive_sync.py"` and a `PYTHONPATH=/app/backend` env var. Until then, a Job recreated from the README breaks the same way. Runbook §5 warns anyone recreating the Job.
+
+**Done, 2026-09-30 (owner-approved).** devops changed `infra/azure/README.md`:
+- The `az containerapp job create` block now passes `--command "/app/backend/.venv/bin/python"` and `--args "/app/backend/app/storage/onedrive_sync.py"`, and adds `PYTHONPATH=/app/backend` to `--env-vars`.
+- The "How it works → Command" bullet explains why no token may start with a dash (az swallows it) and why `PYTHONPATH` is needed (file-path run, absolute `from app...` imports).
+- The section intro names the file path instead of `python -m`.
+- The env/secret split bullet lists `PYTHONPATH` as a plain var, not a secret.
+
+**Caveat.** The create block itself was not re-run, because no agent runs `az` writes. It matches the owner's live `job update` above field for field, and that shape produced a successful run. The live Job was already fixed by the owner and needed no change. Runbook §5's recreate warning was reduced to a pointer at the README.
