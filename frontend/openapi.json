@@ -616,6 +616,214 @@
         }
       }
     },
+    "/api/v2/auth/signup": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Create an account and sign this device in",
+        "description": "**Context.** Accounts are how a rider is known (decision-log Entry 29). There is\nno email, so the account's only way back after a forgotten password is the\nrecovery code this response carries, and this is the **only** time it is shown.\n\n**How it works.** The username is lowercased and must be unique; the password is\nNFKC-normalised and stored as an argon2id hash. A random recovery code (26\nCrockford base32 characters) is generated and only its SHA-256 is stored. In\none transaction the account and its first session are created; a session\nalready on the request is deleted in the same transaction. The response is `201`\nwith the account and the code, and a `Set-Cookie` that signs this device in.\nA taken username is `409` and nothing is stored.\n\n**Related APIs.** `POST /api/v2/auth/signin` for later devices,\n`GET /api/v2/auth/me` for who is signed in, `POST /api/v2/auth/signout`.",
+        "operationId": "signup_api_v2_auth_signup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new account and its recovery code, shown this once. Signs this device in: `Set-Cookie: __Host-btj_session=\u2026; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`. The cookie is HttpOnly, so JavaScript never sees the session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryCodeIssuedOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That username is taken. The message doesn't repeat the name. Signup is not idempotent: a retry whose first response was lost gets this too, and the user then signs in instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The username, display name or password breaks its rule (see the request body's field descriptions).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many signups from this address, or overall (the `signup-ip` and `signup-global` limits). Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/auth/signin": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sign this device in with a username and password",
+        "description": "**Context.** How a rider signs in on a new device, or again after a session\nexpired or was signed out (decision-log Entry 29).\n\n**How it works.** The username is compared case-insensitively and the password\nis NFKC-normalised before argon2id verifies it. A wrong username or password is\n`401` with \"Username or password is incorrect.\", identical in both cases; an\nunknown username still runs a full argon2id verification so the timing matches.\nA disabled account gets the same `401`. Each wrong password increments the\naccount's failure counter in Postgres; the 10th locks the account for 15\nminutes, during which every signin, even with the right password, is `429`\nwith `Retry-After` set to the seconds left. The lock survives a server restart.\nSuccess resets the counter, deletes this account's expired sessions, and signs\nthis device in with a `Set-Cookie`.\n\n**Related APIs.** `POST /api/v2/auth/signup`, `POST /api/v2/auth/signout`,\n`GET /api/v2/auth/me`.",
+        "operationId": "signin_api_v2_auth_signin_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The signed-in account. Signs this device in: `Set-Cookie: __Host-btj_session=\u2026; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`. The cookie is HttpOnly, so JavaScript never sees the session token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The username or password is wrong, or the account is disabled. One message for all of these. A wrong password counts toward the account lockout. Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body is missing a field, or the password is over 1024 characters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/auth/signout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Sign this device out",
+        "description": "**Context.** Ends the session on this device only (decision-log Entry 29). Other\ndevices stay signed in.\n\n**How it works.** Anonymous: no session is required, and the answer is `204`\nwhether or not one was sent. If the request carries a session cookie, its\nsession row is deleted. The response always clears the cookie. Nothing is\nrate-limited here.\n\n**Related APIs.** `POST /api/v2/auth/signin`, `GET /api/v2/auth/me`.",
+        "operationId": "signout_api_v2_auth_signout_post",
+        "responses": {
+          "204": {
+            "description": "Signed out. Always clears the session cookie (`Set-Cookie: __Host-btj_session=\"\"; Max-Age=0; \u2026`), whether or not a session was present."
+          }
+        }
+      }
+    },
+    "/api/v2/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "The signed-in account",
+        "description": "**Context.** Tells the frontend who is signed in on this device, so it can show\nthe account and decide whether to offer sign-in (decision-log Entry 29).\n\n**How it works.** Gated by `require_session`. Returns the caller's `id`,\n`username`, `displayName` and `createdAt`. At most once a day a valid session's\n`last_used_at` is bumped, and this response then re-issues the session cookie\nwith a fresh `Max-Age`. No session is `401`.\n\n**Related APIs.** `POST /api/v2/auth/signin`, `POST /api/v2/auth/signup`,\n`POST /api/v2/auth/signout`.",
+        "operationId": "get_me_api_v2_auth_me_get",
+        "responses": {
+          "200": {
+            "description": "The caller's own account. The only response that ever contains a username.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` per-address limit. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -649,6 +857,35 @@
           "viewer"
         ],
         "title": "Access"
+      },
+      "AccountCreate": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The private login handle. Unique, stored lowercase, and never shown to anyone but its owner. Lowercased, then it must match `^[a-z0-9][a-z0-9_.-]{2,31}$` (3-32 characters), or the request is rejected with 422 / VALIDATION_ERROR. Only ASCII is accepted."
+          },
+          "displayName": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Displayname",
+            "description": "The public name shown on the trips, stops and photos this account contributes to. Trimmed, then 1-40 characters with no control characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "description": "The account's password. Any printable text: NFKC-normalised, then 15-128 characters (code points) with no control characters (Unicode category Cc). Not trimmed \u2014 leading and trailing spaces count. Anything else is rejected with 422 / VALIDATION_ERROR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "displayName",
+          "password"
+        ],
+        "title": "AccountCreate",
+        "description": "POST /api/v2/auth/signup body."
       },
       "BikeCreate": {
         "properties": {
@@ -920,6 +1157,40 @@
         "title": "MapFeatureCollection",
         "description": "`GET /trips/{slug}/map` response \u2014 one GeoJSON FeatureCollection, handed\nstraight to Leaflet. Works with either slug (spec Sections 4 and 5)."
       },
+      "MeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The account's id, a server-generated UUID4. Private: it is never in a response a non-member of a trip can receive."
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The private login handle, lowercase. Only ever returned to its owner."
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "The public name shown on the trips, stops and photos this account contributes to."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "When the account was created, as a timezone-aware ISO 8601 instant."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "username",
+          "displayName",
+          "createdAt"
+        ],
+        "title": "MeOut",
+        "description": "The signed-in account. The only response that ever contains a username."
+      },
       "PhotoOut": {
         "properties": {
           "id": {
@@ -991,6 +1262,48 @@
         ],
         "title": "PointGeometry",
         "description": "GeoJSON Point geometry \u2014 the location of a single stop pin."
+      },
+      "RecoveryCodeIssuedOut": {
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/MeOut",
+            "description": "The account the recovery code belongs to."
+          },
+          "recoveryCode": {
+            "type": "string",
+            "title": "Recoverycode",
+            "description": "The new one-time recovery code: 26 Crockford base32 characters. This is the **only** time it is shown \u2014 only its hash is stored, and any earlier code has stopped working. Show it to the user to write down."
+          }
+        },
+        "type": "object",
+        "required": [
+          "account",
+          "recoveryCode"
+        ],
+        "title": "RecoveryCodeIssuedOut",
+        "description": "Signup, recover and rotation response: the account plus a freshly issued recovery code."
+      },
+      "SessionCreate": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The login handle chosen at signup, compared case-insensitively. Not format-checked: an unknown or malformed username gets the same 401 as a wrong password."
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Password",
+            "description": "The account's password. Not format-checked: a wrong password is a 401 with the same message as an unknown username. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "SessionCreate",
+        "description": "POST /api/v2/auth/signin body."
       },
       "StopCreate": {
         "properties": {

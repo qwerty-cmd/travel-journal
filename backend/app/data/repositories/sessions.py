@@ -16,8 +16,9 @@ It never sees a token, only its hash.
 - **One query per request.** ``get_with_user`` joins ``users`` so the session
   gate learns, in the same round trip, who the session belongs to and whether
   that account is disabled.
-- **Who commits.** ``insert`` does not commit: signup, recovery and password
-  change issue a session inside a larger transaction. ``touch`` commits, because
+- **Who commits.** ``insert`` and the deletes do not commit: signup, signin,
+  signout, recovery and password change change sessions inside a larger
+  transaction. ``touch`` commits, because
   it is the only write in the session gate and nothing else in the request
   should be held open behind it.
 - **It never raises ``ApiError``.** A missing row is ``None``.
@@ -31,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.tables import sessions, users
@@ -118,3 +119,26 @@ async def touch(session: AsyncSession, token_hash: bytes, now: datetime) -> None
         update(sessions).where(sessions.c.token_hash == token_hash).values(last_used_at=now)
     )
     await session.commit()
+
+
+async def delete(session: AsyncSession, token_hash: bytes) -> None:
+    """Delete the session stored under ``token_hash``, if there is one. Does not commit."""
+    await session.execute(sessions.delete().where(sessions.c.token_hash == token_hash))
+
+
+async def delete_expired_for_user(
+    session: AsyncSession, user_id: str, *, idle_cutoff: datetime, now: datetime
+) -> None:
+    """
+    Delete ``user_id``'s sessions that can no longer be used. Does not commit.
+
+    Expired means idle since ``idle_cutoff`` or earlier (``last_used_at <=
+    now - 90 days``) or past ``absolute_expires_at``: exactly the rows the
+    validity rule in ``app/core/sessions.py`` already refuses.
+    """
+    await session.execute(
+        sessions.delete().where(
+            sessions.c.user_id == user_id,
+            or_(sessions.c.last_used_at <= idle_cutoff, sessions.c.absolute_expires_at <= now),
+        )
+    )

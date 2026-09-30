@@ -343,6 +343,10 @@ async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     return envelope_response(exc.status_code, exc.code, exc.message, exc.headers)
 
 
+# What pydantic puts in front of a custom validator's `ValueError` message.
+_VALUE_ERROR_PREFIX = "Value error, "
+
+
 def _format_validation_errors(errors: list[dict[str, Any]]) -> str:
     """
     A short, rider-readable summary of what failed validation.
@@ -363,6 +367,11 @@ def _format_validation_errors(errors: list[dict[str, Any]]) -> str:
     leaves pydantic's bare `Field required` — a message with no subject. The
     condition is exactly that pair; a `missing` on a named field (`("body",
     "lat")`) still renders as `lat: Field required`.
+
+    A `value_error` (a custom validator raising `ValueError`, such as the
+    signup username and password rules in `app/models/account.py`) keeps its
+    location and message but loses pydantic's `"Value error, "` prefix: the
+    message after it is the rider-facing sentence.
     """
     parts: list[str] = []
     for error in errors:
@@ -374,6 +383,10 @@ def _format_validation_errors(errors: list[dict[str, Any]]) -> str:
             continue
         location = ".".join(str(item) for item in error.get("loc", ()) if item != "body")
         message = str(error.get("msg", "Invalid value"))
+        if error.get("type") == "value_error":
+            # A custom validator's `ValueError` text is written for the rider;
+            # pydantic prefixes it with its own type label, which is not.
+            message = message.removeprefix(_VALUE_ERROR_PREFIX)
         parts.append(f"{location}: {message}" if location else message)
     if not parts:
         return "The request could not be validated."
