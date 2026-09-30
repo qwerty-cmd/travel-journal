@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "../clients/listPhotosApiTripsSlugStopsStopIdPhotosGet";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey = ({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"] | undefined; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] | undefined }) => [{ url: '/api/trips/:slug/stops/:stop_id/photos', params: {slug:slug,stop_id:stop_id} }] as const
 
@@ -34,8 +34,8 @@ export function listPhotosApiTripsSlugStopsStopIdPhotosGetQueryOptions({ stop_id
  * accepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404
  * if it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.
  * **Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,
- * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (rider slug
- * only).
+ * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (active
+ * members only).
  * @summary List a stop's photos
  * {@link /api/trips/:slug/stops/:stop_id/photos}
  */

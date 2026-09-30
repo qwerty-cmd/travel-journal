@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import type { ListStopsApiTripsSlugStopsGetQueryResponse, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422 } from "../types/ListStopsApiTripsSlugStopsGet";
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import { listStopsApiTripsSlugStopsGet } from "../clients/listStopsApiTripsSlugStopsGet";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const listStopsApiTripsSlugStopsGetQueryKey = ({ slug }: { slug: ListStopsApiTripsSlugStopsGetPathParams["slug"] | undefined }) => [{ url: '/api/trips/:slug/stops', params: {slug:slug} }] as const
 
@@ -47,7 +47,7 @@ export function listStopsApiTripsSlugStopsGetQueryOptions({ slug }: { slug: List
  * by position. The map endpoint's chronological trail is established by the map
  * handler itself and does not read its ordering guarantee from here.
  * **Related APIs.** `GET /api/trips/{slug}` for the trip header and its bikes,
- * `POST /api/trips/{slug}/stops` to add a stop (rider slug only),
+ * `POST /api/trips/{slug}/stops` to add a stop (active members only),
  * `GET /api/trips/{slug}/stops/{id}/photos` for one stop's photos, and
  * `GET /api/trips/{slug}/map` for the same stops as GeoJSON.
  * @summary List a trip's stops

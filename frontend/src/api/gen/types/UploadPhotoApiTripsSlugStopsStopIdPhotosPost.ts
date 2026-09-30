@@ -13,7 +13,7 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams = {
     */
     stop_id: string;
     /**
-     * @description The trip\'s **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.
+     * @description The trip\'s rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.
      * @type string
     */
     slug: string;
@@ -33,7 +33,13 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost201 = PhotoOut;
 
 /**
  * ErrorEnvelope
- * @description The slug resolved, but it is the trip\'s **viewer** slug.
+ * @description No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was stored.
+*/
+export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 = ErrorEnvelope;
+
+/**
+ * ErrorEnvelope
+ * @description Signed in, and the slug located the trip, but the account has no active membership on it: \"You\'re not a rider on this trip.\" for a non-member, \"You\'re no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was stored, and a replay of an already-stored id is refused the same way.
 */
 export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 = ErrorEnvelope;
 
@@ -66,5 +72,5 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutation = {
     Response: UploadPhotoApiTripsSlugStopsStopIdPhotosPost200 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost201;
     Request: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest;
     PathParams: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams;
-    Errors: UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422;
+    Errors: UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422;
 };

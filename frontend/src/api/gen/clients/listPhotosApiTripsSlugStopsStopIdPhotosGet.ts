@@ -20,8 +20,8 @@ function getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }: { s
  * accepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404
  * if it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.
  * **Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,
- * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (rider slug
- * only).
+ * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (active
+ * members only).
  * @summary List a stop's photos
  * {@link /api/trips/:slug/stops/:stop_id/photos}
  */

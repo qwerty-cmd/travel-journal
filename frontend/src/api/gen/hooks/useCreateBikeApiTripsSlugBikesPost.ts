@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
+import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost401, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422 } from "../types/CreateBikeApiTripsSlugBikesPost";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
-import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422 } from "../types/CreateBikeApiTripsSlugBikesPost";
-import { mutationOptions, useMutation } from "@tanstack/react-query";
 import { createBikeApiTripsSlugBikesPost } from "../clients/createBikeApiTripsSlugBikesPost";
+import { mutationOptions, useMutation } from "@tanstack/react-query";
 
 export const createBikeApiTripsSlugBikesPostMutationKey = () => [{ url: '/api/trips/:slug/bikes' }] as const
 
@@ -16,7 +16,7 @@ export type CreateBikeApiTripsSlugBikesPostMutationKey = ReturnType<typeof creat
 export function createBikeApiTripsSlugBikesPostMutationOptions<TContext = unknown>(config: Partial<RequestConfig<CreateBikeApiTripsSlugBikesPostMutationRequest>> & { client?: Client } = {}) {
 
         const mutationKey = createBikeApiTripsSlugBikesPostMutationKey()
-        return mutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>({
+        return mutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>({
           mutationKey,
           mutationFn: async({ slug, data }) => {
             return createBikeApiTripsSlugBikesPost({ slug, data }, config)
@@ -27,12 +27,15 @@ export function createBikeApiTripsSlugBikesPostMutationOptions<TContext = unknow
 
 /**
  * @description **Context.** Bikes are registered per trip so the journal records who is riding
- * what. Rider slug only -- a viewer link can read bikes (via `GET /trips/{slug}`)
- * but not add one. Task `t-bikes-create-endpoint`.
+ * what. Only a signed-in, active member of the trip can add one; either slug just
+ * locates the trip (decision-log Entry 29, contract default 21). The server sets
+ * `created_by` from the session. Tasks `t-bikes-create-endpoint`,
+ * `t-am-write-gate-legacy`.
  * **How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`
  * (decision-log Entry 14): unseen id creates the bike (201), id already on this
  * trip is a replay (200, stored record returned unchanged), id on a different trip
- * is a 409 with nothing disclosed about the conflicting record.
+ * is a 409 with nothing disclosed about the conflicting record. `require_trip_writer`
+ * runs first: slug (404), session (401), active membership (403).
  * **Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,
  * `PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.
  * @summary Add a bike to a trip
@@ -40,7 +43,7 @@ export function createBikeApiTripsSlugBikesPostMutationOptions<TContext = unknow
  */
 export function useCreateBikeApiTripsSlugBikesPost<TContext>(options: 
 {
-  mutation?: UseMutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext> & { client?: QueryClient },
+  mutation?: UseMutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext> & { client?: QueryClient },
   client?: Partial<RequestConfig<CreateBikeApiTripsSlugBikesPostMutationRequest>> & { client?: Client },
 }
  = {}) {
@@ -49,13 +52,13 @@ export function useCreateBikeApiTripsSlugBikesPost<TContext>(options:
           const { client: queryClient, ...mutationOptions } = mutation;
           const mutationKey = mutationOptions.mutationKey ?? createBikeApiTripsSlugBikesPostMutationKey()
 
-          const baseOptions = createBikeApiTripsSlugBikesPostMutationOptions(config) as UseMutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>
+          const baseOptions = createBikeApiTripsSlugBikesPostMutationOptions(config) as UseMutationOptions<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>
           
 
-          return useMutation<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>({
+          return useMutation<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>({
             ...baseOptions,
             mutationKey,
             ...mutationOptions,
-          }, queryClient) as UseMutationResult<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>
+          }, queryClient) as UseMutationResult<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, {slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"], data: CreateBikeApiTripsSlugBikesPostMutationRequest}, TContext>
       
 }

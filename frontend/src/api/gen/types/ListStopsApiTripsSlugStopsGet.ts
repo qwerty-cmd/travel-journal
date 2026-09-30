@@ -8,7 +8,7 @@ import type { StopOut } from "./StopOut";
 
 export type ListStopsApiTripsSlugStopsGetPathParams = {
     /**
-     * @description The trip\'s rider or viewer slug — the unguessable link the trip was shared with. Read endpoints accept either one.
+     * @description The trip\'s rider or viewer slug — the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.
      * @type string
     */
     slug: string;

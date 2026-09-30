@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
+import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost401, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 import { buildFormData } from "../.kubb/config";
 
 function getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }: { stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"]; slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"] }) {
@@ -15,10 +15,15 @@ function getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }: {
 
 /**
  * @description **Context.** This is how a photo gets into the journal. Multipart: form fields
- * (`id`, `uploadedBy`, `takenAt`) alongside the binary `file` part. Rider slug
- * only. Task `t-photo-upload-endpoint`.
- * **How it works.** `{slug}` is resolved by `require_rider_access` (403 on viewer,
- * 404 on unknown). `{stop_id}` is verified to belong to the resolved trip.
+ * (`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary
+ * `file` part. Only a signed-in, active member of the trip can upload; either slug
+ * just locates the trip (decision-log Entry 29, contract default 21). Tasks
+ * `t-photo-upload-endpoint`, `t-am-write-gate-legacy`.
+ * **How it works.** `require_trip_writer` checks the slug (404), the session (401)
+ * and an active membership (403), in that order, before anything else — a replay
+ * is not an exception to it. `{stop_id}` is verified to belong to the resolved trip.
+ * The stored `uploadedBy` is the signed-in account's display name at upload time,
+ * whatever the form sent, and `created_by` is the account.
  * The `id` form field decides the three-way idempotency branch: unseen -> 201,
  * same stop -> 200 replay, different stop -> 409. The file is stored in S3 with
  * object key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in
@@ -34,6 +39,6 @@ export async function uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ stop_id, sl
 
   const requestData = data
   const formData = buildFormData(requestData)
-  const res = await request<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>({ method : "POST", url : getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }).url.toString(), data : formData as FormData, ... requestConfig })
+  const res = await request<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>({ method : "POST", url : getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }).url.toString(), data : formData as FormData, ... requestConfig })
   return res.data
 }

@@ -32,7 +32,7 @@ export type TripOut = {
     */
     bikes: BikeOut[];
     /**
-     * @description Which kind of slug was used to make this request — \'rider\' or \'viewer\'. The frontend uses this, not a stored user role, to decide whether to show write UI (Add stop, upload photo, edit bikes).
+     * @description Deprecated; kept for clients from before accounts. \'rider\' when the caller is signed in with an active membership on this trip (rider or leader), \'viewer\' otherwise — anonymous, a signed-in non-member, a pending requester or a revoked member. Which slug was used plays no part. A UI hint for whether to show write UI (Add stop, upload photo, edit bikes); the server enforces access on every write regardless.
      * @type string
     */
     access: Access;

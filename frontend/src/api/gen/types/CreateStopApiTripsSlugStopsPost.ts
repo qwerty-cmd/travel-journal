@@ -9,7 +9,7 @@ import type { StopOut } from "./StopOut";
 
 export type CreateStopApiTripsSlugStopsPostPathParams = {
     /**
-     * @description The trip\'s **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.
+     * @description The trip\'s rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.
      * @type string
     */
     slug: string;
@@ -29,13 +29,19 @@ export type CreateStopApiTripsSlugStopsPost201 = StopOut;
 
 /**
  * ErrorEnvelope
- * @description The slug resolved, but it is the trip\'s **viewer** slug — a read-only link. Deliberately not a 404: the link genuinely works, just not for writes. Nothing was created.
+ * @description No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.
+*/
+export type CreateStopApiTripsSlugStopsPost401 = ErrorEnvelope;
+
+/**
+ * ErrorEnvelope
+ * @description Signed in, and the slug located the trip, but the account has no active membership on it: \"You\'re not a rider on this trip.\" for a non-member, \"You\'re no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was written.
 */
 export type CreateStopApiTripsSlugStopsPost403 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess — see `docs/api-contract.md`, \'Access control: 403 and 404 are different answers\'.
+ * @description No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess, and checked before the session — see `docs/api-contract.md`, \'Access control: 401, 403 and 404 are three different answers\'.
 */
 export type CreateStopApiTripsSlugStopsPost404 = ErrorEnvelope;
 
@@ -62,5 +68,5 @@ export type CreateStopApiTripsSlugStopsPostMutation = {
     Response: CreateStopApiTripsSlugStopsPost200 | CreateStopApiTripsSlugStopsPost201;
     Request: CreateStopApiTripsSlugStopsPostMutationRequest;
     PathParams: CreateStopApiTripsSlugStopsPostPathParams;
-    Errors: CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422;
+    Errors: CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422;
 };
