@@ -2360,6 +2360,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-09-30. `routes/v2/trips.py` GET/HEAD `/api/v2/trips` (anonymous, `public-read` first), `trips.list_public` (public filter before the keyset; `lastPublicStopAt` = max `arrived_at` older than each trip's own delay on the DB clock; `riderCount` = unrevoked members incl. leaders). Cursor: base64url of `[at|null, id]`, must round-trip exactly; ids must be UTF-8-encodable, instants normalised to UTC with overflow → 422. QA first FAIL (3 crafted cursors → 500), fixed, re-QA PASS: 591 fuzzed cursors, 0 × 500. Tests: 36; suite 1881; frontend 385 + build. Debt: t-am-trip-list-gaps.
+
 ## t-am-v2-trip-reads
 **Goal.** Anonymous browsing of a public trip, with the delay applied.
 **Scope.**
@@ -2901,3 +2903,7 @@ ORDINARY DEBT (dev, test-writer, QA on t-am-rate-limits). (1) Contract gaps to w
 ## t-am-ratelimit-ipv6-sweep
 
 TRIGGERED DEBT (QA on t-am-rate-limits). Keys are exact addresses, so a client rotating IPv6 addresses (e.g. within a /64) gets a fresh bucket each and can churn the registry enough to evict idle buckets; the eviction sweep scans up to 50k entries under the lock on the loop (~49 ms worst case, about once per 5k new keys). Promotion trigger: abuse from rotating IPv6 addresses, or moving buckets to Postgres (t-am-ratelimit-postgres / Entry 29 multi-replica reopen). Fix then: key IPv6 by /64 and make eviction incremental.
+
+## t-am-trip-list-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-list). (1) The sort key depends on `now()`, so a trip whose stop leaves the delay window between page requests can move, and be skipped or repeated across pages. (2) Each page computes the stop subquery for every public trip (planner inlines it into the keyset predicate, up to 4× per trip) — TRIGGERED on setting a Discover latency budget or a public-trip count threshold. (3) The AC says OpenAPI declares 429 on GET and HEAD; Entry 11 keeps HEAD out of the schema — reword the AC pattern for later v2 reads. (4) `TripRecord.rider_slug`/`viewer_slug` are typed `str` but nullable since 0003.
