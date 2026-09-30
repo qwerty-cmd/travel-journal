@@ -2490,6 +2490,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-photo-exif-strip QA, triggered debt promoted here).** The 16 MiB pre-read cap depends on `route_class=CappedBodyRoute` on the router. The v2 photo upload route must use it (or share the legacy router's class) and run the same `_stripped_jpeg` path; test a v2 `Content-Length` > 16 MiB → 422 with 0 body messages read, and EXIF stripped on v2 uploads.
 
+DONE 2026-09-30. `routes/v2/rider_writes.py`: POST stops, POST photos (own router with `CappedBodyRoute`; form `id`/`takenAt`/`file`), POST and PATCH bikes, located by tripId, `writes` limiter first. Writer gate with a tripId locator: session first (anonymous 401 byte-identical for public/private/random id), then trip + membership with equal statements for private vs missing (non-member private → the reader's 404), public non-member / revoked → 403. Legacy handlers now call shared `store_stop`/`store_bike`/`store_photo`/`apply_bike_patch` (behaviour unchanged, QA diffed). NUL guards on every client id, legacy and v2. Tests: test_v2_rider_writes 105 + matrix rows; suite 2698; frontend 385 + build. QA PASS, 8/8 mutants caught. Debt: t-am-stop-arrivedat-echo.
+
 ## t-am-trip-create
 **Goal.** Create trips, list your trips, and edit a trip as a leader. This is part (a) of the scrum change 10 split.
 **Scope.**
@@ -3043,3 +3045,7 @@ No token starts with a dash, so az passes them through. Running the module by fi
 - The env/secret split bullet lists `PYTHONPATH` as a plain var, not a secret.
 
 **Caveat.** The create block itself was not re-run, because no agent runs `az` writes. It matches the owner's live `job update` above field for field, and that shape produced a successful run. The live Job was already fixed by the owner and needed no change. Runbook §5's recreate warning was reduced to a pointer at the README.
+
+## t-am-stop-arrivedat-echo
+
+ORDINARY DEBT (test-writer + QA on t-am-v2-rider-writes). A fresh stop's 201 echoes `arrivedAt` in the offset the device sent, while the replay 200 returns UTC; same instant. The contract (Entry 26 paragraph) says UTC. Cause: the shared `store_stop` (legacy and v2). The same issue on photo `takenAt` was fixed in `d534ea7`. No current consumer compares spellings.
