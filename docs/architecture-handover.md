@@ -126,14 +126,16 @@ Rebuilt from `progress.json` on 2026-09-29. Every row below is `not_started`. Th
 **Owner steps (agent `owner`).** No agent can do these: they need your accounts, your approval, or a real phone.
 - `t-owner-compose-smoke-test`: run the production image locally against compose (runbook §3).
 - `t-owner-container-app-definition`: approve the Container App definition in `infra/` (ingress 8000, HTTPS only, multiple-revision mode, min replicas 0, its secrets). devops can draft it with your approval.
-- `t-owner-production-seed`: seed the trip in Neon and save the two links (runbook §4).
-- `t-onedrive-preflight-check`: one real sync against your OneDrive with a freshly minted token (runbook §5).
+- ~~`t-owner-production-seed`~~: **done on 2026-09-30.** Production holds one trip. The rider link was pasted into an agent chat, so you rotated it on 2026-09-30 (runbook §8). Share only the new link.
+- `t-onedrive-preflight-check`: the production run passed on 2026-09-30. Only the re-run close to departure with a freshly minted token remains (runbook §5).
+- ~~`t-sync-job-command-dash-arg`~~: **done on 2026-09-30.** With your approval, the Job create command in `infra/azure/README.md` now uses the same working shape as the live Job. Nothing left for you here.
 - `t-owner-cutover`: the deploy itself (runbook §6–§7).
 - `t-owner-real-device-test-day`: [real-device-test-plan.md](real-device-test-plan.md).
 - `t-owner-handover-finish`: fill in this document's TODOs (URL, revision names, mint dates).
 
 **Triggered debt.** Waits for a specific event.
-- `t-infra-container-apps-probe`: Container Apps ignores the Dockerfile `HEALTHCHECK`, so the Container App needs its own liveness probe on `/api/health`. Blocked by `t-owner-container-app-definition`.
+- ~~`t-infra-container-apps-probe`~~: **done, applied to the live app on 2026-09-30.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the app carries its own startup and liveness probes on `/api/health`. Nothing left for you here.
+- ~~`t-owner-deactivate-superseded-revisions`~~: **done by you on 2026-09-30.** Two revisions are active: `bike-trip-journal--probes-20260929140739-718d` serves all traffic, and **`bike-trip-journal--rel-1bbe81bcbec5` is the rollback target** (runbook §8). After any future template change, deactivate the superseded revisions again, keeping one rollback target.
 - `t-onedrive-graph-name-charset`: unverified how real Graph treats `%2F` and OneDrive-forbidden characters in a filename. Every id today is a UUID, so none reach it. Check during the preflight.
 - `t-stop-rider-offset`: store the rider's UTC offset so rider-local time can be shown (decision-log Entry 26). Trigger: the spec asks for rider-local time.
 - Neon password characters (notes of `t-neon-sslmode-url`, no row): a password containing a raw `?` or `#` would break `normalize_database_url`. Percent-encode those if you ever set a password by hand.
@@ -191,7 +193,7 @@ Send traffic back to the previous revision (runbook §8). Don't rebuild forward 
 
 ### Health
 
-`/api/health` answers `200` when the process is up. It does not check the database or storage. Locally, the Dockerfile `HEALTHCHECK` and compose use it. Container Apps ignores `HEALTHCHECK`, so production needs its own liveness probe in the app definition (`t-infra-container-apps-probe`).
+`/api/health` answers `200` when the process is up. It does not check the database or storage — which is why the app has a startup and a liveness probe but deliberately no readiness probe. Locally, the Dockerfile `HEALTHCHECK` and compose use it. Container Apps ignores `HEALTHCHECK`, so the probes are set on the Container App itself; they were applied and verified on 2026-09-30 (`t-infra-container-apps-probe`).
 
 ### Logs
 

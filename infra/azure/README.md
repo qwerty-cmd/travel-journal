@@ -107,6 +107,19 @@ silently patching if that name is absent or ambiguous. The probes are
 deliberately startup + liveness, not readiness: `/api/health` does not check
 Postgres or object storage.
 
+**The patch must carry a fresh `revisionSuffix`.** A revision is named
+`<app-name>--<revisionSuffix>`, and `az containerapp create` stores the
+`--revision-suffix` it was given in `properties.template.revisionSuffix`. A
+PATCH merges, so *omitting* the field leaves that stored value in place: the RP
+then tries to create a revision whose name is already taken and rejects the
+whole update with `Field 'template.revisionsuffix' is invalid ... revision with
+suffix ... already exists`. The PATCH is still accepted (`202`) and then applies
+nothing — silently, as far as the CLI is concerned. This is documented
+behaviour (microsoft/azure-container-apps#1278; Learn: "This value must be
+unique as the runtime rejects any conflicts with existing revision name suffix
+values"). So the script generates a suffix per run instead of reusing or
+decorating the stored one, which would work once and collide on every re-run.
+
 A `properties.template` change is a **long-running operation**
 (`final-state-via: location`): ARM provisions a new revision and answers `202
 Accepted` with **no body**, only `Location`/`Retry-After` headers. So the
@@ -117,12 +130,31 @@ malformed URI included). Every `az` call whose failure matters is therefore
 checked explicitly with `if ! ...`, not left to `set -e`, whose behaviour
 differs between a script file and a pasted interactive session.
 
-The proof that the patch took effect is the re-read. Because the new revision
-takes seconds to provision, the probe assertion is polled — up to 18 attempts,
-10 s apart — and the first pass wins; failing attempts print what is still
-missing. It deliberately does not wait on `provisioningState` (which can still
-report an *earlier* failed operation, so it would hang on a patch that worked)
-or on `latestReadyRevisionName` (observed to lag). One more detail makes this
+The proof that the patch took effect is the re-read, and the re-read is a raw
+ARM GET via `az rest` rather than `az containerapp show`. That is the
+non-obvious part: ARM reports a rejected template update in
+`properties.deploymentErrors`, a field that is **not** in the `2026-07-01`
+swagger's `ContainerAppProperties` and that **`az containerapp show` drops**
+(verified: `'deploymentErrors' in properties` is `False` through the CLI, `True`
+through a raw GET of the same resource). Polling the CLI's view therefore polls
+something that structurally cannot contain the error, and a patch ARM refused
+looks exactly like a patch that is merely slow.
+
+Because the new revision takes seconds to provision, the probe assertion is
+still polled — up to 18 attempts, 10 s apart — and the first pass wins; failing
+attempts print what is still missing. What is new is the early exit: a reading
+of `provisioningState: Failed` together with a non-empty `deploymentErrors`
+stops the loop immediately and prints the error, turning three minutes of
+silence into a 30-second diagnosis. Both fields still describe the *previous*
+operation at the moment a fresh PATCH is accepted, so the script captures them
+with the same raw GET **before** patching and only treats a reading that
+*differs* from that baseline as this run's failure; an identical repeat error is
+left to time out rather than risk blaming this run for the last one's. Success
+is still the probe assertion alone — it deliberately does not wait on
+`provisioningState` reaching a good value (a stale earlier failure would hang a
+patch that worked) or on `latestReadyRevisionName` (observed to lag).
+
+One more detail makes this
 work under Git Bash on Windows as well as bash on Linux/macOS: Python's stdout
 is forced to LF — text-mode stdout would otherwise emit CRLF and leave a stray
 carriage return inside the resource id and the JSON body, which ARM answers
@@ -143,7 +175,9 @@ if ! APP_JSON=$(az containerapp show \
 fi
 if ! PATCH_DATA=$(python -c '
 import json
+import secrets
 import sys
+import time
 
 # Windows text-mode stdout emits CRLF, which would leave a carriage return in
 # the resource id and the JSON body split out below. json.dumps escapes any
@@ -194,9 +228,31 @@ for container in matches:
         "failureThreshold": 3,
     })
 
+# A PATCH merges, so leaving revisionSuffix out keeps the value stored by
+# "az containerapp create" and the RP rejects the whole update because the
+# revision name "<app-name>--<that suffix>" already exists. This is built fresh
+# and independently of the stored suffix, so a re-run never collides with its
+# own previous run either.
+#
+# Value rules: the revision is named "<app-name>--<revisionSuffix>" and that
+# whole name is capped at 63 characters; the suffix is lowercase alphanumerics
+# and dashes, starting and ending alphanumeric, with no consecutive dashes.
+# "probes-" + 14-digit UTC timestamp + "-" + 4 hex digits is 26 characters, and
+# Azure caps a Container App name at 32, so the longest possible name here is
+# 32 + 2 + 26 = 60 - inside the cap for any <app-name> the create step accepted.
+# The random tail is what guarantees freshness: the timestamp alone repeats if
+# the script is run twice within the same second.
+revision_suffix = "probes-%s-%s" % (
+    time.strftime("%Y%m%d%H%M%S", time.gmtime()),
+    secrets.token_hex(2),
+)
+
 patch = {
     "location": app["location"],
-    "properties": {"template": {"containers": containers}},
+    "properties": {"template": {
+        "revisionSuffix": revision_suffix,
+        "containers": containers,
+    }},
 }
 print(app["id"])
 print(json.dumps(patch, separators=(",", ":")))
@@ -206,6 +262,26 @@ print(json.dumps(patch, separators=(",", ":")))
 fi
 APP_RESOURCE_ID=${PATCH_DATA%%$'\n'*}
 PATCH_BODY=${PATCH_DATA#*$'\n'}
+
+# properties.deploymentErrors is where ARM reports a rejected template update,
+# it is absent from the 2026-07-01 swagger, and "az containerapp show" drops it
+# - hence the raw GET here and in the poll below. Both it and provisioningState
+# still describe the *previous* operation when a fresh PATCH is accepted, so
+# this pre-patch snapshot is what the poll compares against before blaming a
+# failure on this run.
+if ! BASELINE=$(az rest --method get \
+  --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2026-07-01" \
+  | python -c '
+import json
+import sys
+
+sys.stdout.reconfigure(newline="\n")
+properties = json.load(sys.stdin)["properties"]
+print(json.dumps([properties.get("provisioningState"), properties.get("deploymentErrors")]))
+'); then
+  printf 'reading the pre-patch deployment state failed; nothing was patched\n' >&2
+  exit 1
+fi
 
 # Long-running operation: 202 with an empty body is the normal success case, so
 # the response proves nothing and only the exit code is checked here.
@@ -218,18 +294,35 @@ if ! az rest --method patch \
 fi
 
 # The new revision takes seconds to provision, so poll the assertion itself:
-# the probes appearing on the template is the success condition. Up to 3 minutes.
+# the probes appearing on the template is the success condition. Up to 3 minutes,
+# cut short by a new provisioning failure (exit status 2 below).
 PROBES_OK=
 for _ in {1..18}; do
-  if az containerapp show \
-    --name <app-name> \
-    --resource-group <resource-group> \
-    --output json | python -c '
+  PROBE_STATUS=0
+  az rest --method get \
+    --uri "https://management.azure.com${APP_RESOURCE_ID}?api-version=2026-07-01" \
+    | python -c '
 import json
 import sys
 
 app = json.load(sys.stdin)
 container_name = sys.argv[1]
+baseline = sys.argv[2]
+properties = app["properties"]
+
+# Fail fast on a provisioning failure that is not simply the pre-patch one read
+# back. Same text and state as the baseline is treated as stale and polled
+# through; an identical repeat failure just times out as before.
+deployment_errors = properties.get("deploymentErrors")
+current = json.dumps([properties.get("provisioningState"), deployment_errors])
+if (
+    properties.get("provisioningState") == "Failed"
+    and deployment_errors
+    and current != baseline
+):
+    sys.stderr.write("deployment failed: %s\n" % (deployment_errors,))
+    raise SystemExit(2)
+
 matches = [
     container
     for container in app["properties"]["template"]["containers"]
@@ -257,9 +350,14 @@ if missing:
         % (container_name, ", ".join(missing))
     )
 print("probes verified on container %r: Startup, Liveness" % container_name)
-' "$APP_CONTAINER_NAME"; then
+' "$APP_CONTAINER_NAME" "$BASELINE" || PROBE_STATUS=$?
+  if [ "$PROBE_STATUS" -eq 0 ]; then
     PROBES_OK=1
     break
+  fi
+  if [ "$PROBE_STATUS" -eq 2 ]; then
+    printf 'the new revision did not provision; not waiting out the poll\n' >&2
+    exit 1
   fi
   sleep 10
 done
@@ -276,7 +374,7 @@ separate template revision, so verify traffic and health after applying it.
 ## OneDrive sync job
 
 A scheduled Container Apps Job runs one OneDrive archive pass
-(`python -m app.storage.onedrive_sync`) every 30 minutes, from the **same GHCR
+(`app/storage/onedrive_sync.py`) every 30 minutes, from the **same GHCR
 image** as the app. It is one-way background work: the app never waits on it.
 A pass with `GRAPH_REFRESH_TOKEN` empty logs "not configured" and exits 0.
 
@@ -315,7 +413,8 @@ az containerapp job create \
   --replica-retry-limit 0 \
   --replica-timeout 900 \
   --cpu 0.25 --memory 0.5Gi \
-  --command "sh" "-c" "cd /app/backend && exec .venv/bin/python -m app.storage.onedrive_sync" \
+  --command "/app/backend/.venv/bin/python" \
+  --args "/app/backend/app/storage/onedrive_sync.py" \
   --secrets \
     database-url="$DATABASE_URL" \
     s3-endpoint-url="$S3_ENDPOINT_URL" \
@@ -336,7 +435,8 @@ az containerapp job create \
     GRAPH_CLIENT_SECRET=secretref:graph-client-secret \
     GRAPH_REFRESH_TOKEN=secretref:graph-refresh-token \
     GRAPH_ONEDRIVE_FOLDER=<onedrive-folder-path> \
-    ENVIRONMENT=<non-local-environment-name>
+    ENVIRONMENT=<non-local-environment-name> \
+    PYTHONPATH=/app/backend
 
 unset GHCR_USERNAME GHCR_READ_PACKAGES_TOKEN DATABASE_URL S3_ENDPOINT_URL \
   S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET_NAME GRAPH_CLIENT_ID \
@@ -364,10 +464,18 @@ argument from local process inspection while the CLI is running.
 How it works:
 - **Schedule.** Cron `*/30 * * * *` is evaluated in **UTC**.
 - **Command.** The image `WORKDIR` is `/app` and the Python package and venv
-  live in `/app/backend` (see the repo-root `Dockerfile`), hence the `cd`.
-  `STATIC_FILES_DIR` is baked into the image and is not set here.
+  live in `/app/backend` (see the repo-root `Dockerfile`), hence the absolute
+  paths. No `--command`/`--args` token may start with a dash: az parses a bare
+  `-c` or `-m` as one of its own options and silently drops it (an earlier
+  `--command "sh" "-c" "..."` became command `["sh"]` and every run failed with
+  `sh: 0: cannot open ...`). So the module runs by file path, not `-m`. That
+  puts `app/storage` on `sys.path` instead of `/app/backend`, hence
+  `PYTHONPATH=/app/backend`: the module uses only absolute `from app...`
+  imports and has a `__main__` block. `STATIC_FILES_DIR` is baked into the
+  image and is not set here.
 - **Env/secret split** follows `docs/deploy-cutover-runbook.md` §2: everything
-  is a secret except `S3_REGION`, `GRAPH_ONEDRIVE_FOLDER` and `ENVIRONMENT`.
+  is a secret except `S3_REGION`, `GRAPH_ONEDRIVE_FOLDER`, `ENVIRONMENT` and
+  `PYTHONPATH`.
   Secret names are the env var name in lower kebab case; the app must use the
   same secret names.
 - **No overlapping runs.** `--parallelism 1` only limits replicas *within one

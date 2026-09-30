@@ -42,7 +42,7 @@ Tick each box as you go.
 
 ## 1. Cloud service setup (story `s-cloud-service-setup`)
 
-- [ ] **You. Azure budget alert FIRST** (spec §13). Set a low-threshold alert, which acts as a tripwire
+- [x] **You. Azure budget alert FIRST** (spec §13). **Set by you, 2026-09-30.** Set a low-threshold alert, which acts as a tripwire
   rather than a hard limit, before any other Azure resource exists. Do it in the portal: Cost Management → Budgets → Add, with an
   email alert. Create the resource group only after the alert exists.
 - [ ] **You. Neon.** Create the project and database, then copy the connection string into your password
@@ -96,12 +96,18 @@ Tick each box as you go.
   needs your approval. Section "Container Apps environment and app", in order: the environment, the
   Container App (the step 2 secrets marked "App + Job"; no `GRAPH_*`; `--max-replicas 1`), then the
   `/api/health` startup and liveness probes applied with the `az rest` script
-  (`t-infra-container-apps-probe`, see the table at the end). That script sends a plain
-  `application/json` PATCH; the call is long-running, so it answers `202` with no body and the script
-  proves the probes landed by re-reading the app until they appear (up to 3 minutes) rather than by
-  reading the response. Run it as a script file or inside `bash <<'EOF' ... EOF` — it exits non-zero on
-  failure, which would end a shell you pasted it into. Then check traffic and health on the revisions,
-  as that section says.
+  (`t-infra-container-apps-probe`, see the table at the end). **These probes have already been applied
+  to the live app once (2026-09-30) and verified by a raw ARM read**, so on that app this step is done;
+  the instructions below are what to do on a rebuilt app, or after any later template change. The script
+  sends a plain `application/json` PATCH; the call is long-running, so it answers `202` with no body and
+  the script proves the probes landed by re-reading the app until they appear (up to 3 minutes) rather
+  than by reading the response. It generates a **fresh revision suffix on every run** — a PATCH merges,
+  so reusing the stored suffix makes ARM refuse the whole update while still answering `202` — and it
+  polls a raw `az rest` GET for `properties.deploymentErrors`, because `az containerapp show` drops that
+  field and would hide exactly this refusal. Run it as a script file or inside `bash <<'EOF' ... EOF` —
+  it exits non-zero on failure, which would end a shell you pasted it into. Then check traffic and health
+  on the revisions, as that section says, and **deactivate the superseded revisions** (§8) — each one
+  left active keeps a replica and its own Neon connection pool.
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
   secret store**, separate from the app's. Set the shared secrets with the same names and values as the
@@ -183,6 +189,10 @@ the **Job only**, for least privilege: the web app never reads them, only the sy
 
 ## 4. Seed the trip in production (story `s-seed-trip-record`, `t-owner-production-seed`)
 
+**Done, 2026-09-30.** Production holds one trip, "test-trip". To rename it, `UPDATE` that row; `seed_trip`
+refuses a second trip. The rider link was pasted into an agent chat, so you rotated `trips.rider_slug`
+on 2026-09-30 (§8, "A leaked rider link"). Share only the new rider link.
+
 Only you do this. Keep it out of any agent session, because it prints the permanent slugs.
 
 - [ ] Point `DATABASE_URL` at Neon in your own shell, not in a committed file.
@@ -215,12 +225,17 @@ Only you do this, because it needs real `GRAPH_*` values.
   (`%2F`) and with characters OneDrive forbids in names (`? : / \ | " * < >`). Every real id is a UUID,
   so this only matters if a non-UUID id ever appears. Check the archived name matches `<photo id>.<ext>`,
   and record what Graph did in `t-onedrive-graph-name-charset`'s notes.
+- [x] **Production run passed, 2026-09-30.** A run of the sync Job archived a photo to OneDrive.
 - [ ] Run it again close to departure **with a freshly minted token** (step 1, "When to mint"), so the
   token is known to be healthy when the trip starts and its ~90-day life covers the whole trip. Make sure
   the Job carries that new token (the Container App has no `GRAPH_*`, step 2).
 - [ ] **Caveat once the sync job exists (step 1).** Don't run this laptop preflight while a scheduled run
   could be active, because two passes at once can overlap. Either trigger the job itself with
   `az containerapp job start`, or run the laptop pass just after a scheduled run has finished.
+- **If you ever recreate the sync Job**, use the create block in `infra/azure/README.md`; it carries
+  the working command shape (`t-sync-job-command-dash-arg`). If your copy of the README still has
+  `--command "sh" "-c" ...`, it is out of date: az swallows the bare `-c`, and every run fails with
+  `sh: 0: cannot open cd /app/backend ...`.
 
 ### If archiving stops mid-trip
 
@@ -332,6 +347,17 @@ checks pass. It never deploys: every step below stays manual. See `infra/azure/R
 - [ ] **devops, after your confirmation.** Send traffic back to the last known-good revision with
   `az containerapp ingress traffic set ... --revision-weight <good-revision>=100`, or reactivate that
   revision. Don't rebuild forward under pressure.
+- [ ] **After any template change, deactivate the revisions it superseded — but keep one.** In
+  multiple-revision mode a superseded revision **stays active until you deactivate it**; moving traffic
+  off it is not enough. Each active revision keeps a replica running, and each replica opens its own Neon
+  connection pool — the thing `--max-replicas 1` was chosen to avoid (`infra/azure/README.md`, beside that
+  flag). Keep the revision serving traffic **and one known-good rollback target** for the step above, then
+  deactivate the rest:
+  `az containerapp revision deactivate --name <app-name> --resource-group <resource-group> --revision <old-revision>`
+  This is a live write on the running app, so **you approve it**; devops can run it after that, never on
+  its own initiative. Applying the probes in step 1 left three active revisions this way
+  (`t-owner-deactivate-superseded-revisions` — done 2026-09-30; the rollback target is
+  `bike-trip-journal--rel-1bbe81bcbec5`).
 - [ ] **Schema is forward-only.** An image rollback does not undo a migration, so check that the older
   image still works with the current schema before you rely on it.
 - [ ] **A leaked rider link is a different kind of incident.** Handle it by rotating `trips.rider_slug`
@@ -340,11 +366,12 @@ checks pass. It never deploys: every step below stays manual. See `infra/azure/R
 
 ## Triggered debt to decide at cutover
 
-One item is waiting on you: it is drafted, and applying it is part of creating the Container App.
+Nothing is waiting on you. Both items below are done.
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The startup and liveness probes are drafted in `infra/azure/README.md` ("Container Apps environment and app"), applied with an `az rest` PATCH (plain `application/json`) that writes back the whole containers array. The call is long-running: `202`, no body, a new revision. The script checks `az`'s exit code, then polls the re-read until the probes appear. **The live round trip has not been run** (`t-probe-patch-script-defects`). | Run the probe script right after creating the app (step 1), then check the new revision's health and which revision has traffic. |
+| `t-infra-container-apps-probe` | **Applied and verified, 2026-09-30 — nothing to decide.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the startup and liveness probes on `/api/health`:8000 are set on the app itself, with the `az rest` PATCH in `infra/azure/README.md` ("Container Apps environment and app"). The live round trip **has** now been run, and the probes were confirmed by a raw ARM read rather than by the script's own assertion: `provisioningState: Succeeded`, `deploymentErrors: None`, app serving throughout. Taking three rounds to get the script right is written up under `t-probe-patch-script-defects`. | Nothing, on this app. On a rebuilt app, run the script after creating it (step 1), then check health and traffic — and deactivate the superseded revisions (§8). |
+| `t-owner-deactivate-superseded-revisions` | **Done by you, 2026-09-30 — nothing to decide.** Applying the probes had left three active revisions; two remain: `bike-trip-journal--probes-20260929140739-718d` serving 100% of traffic, and the pre-probe `bike-trip-journal--rel-1bbe81bcbec5` kept as the rollback target. | Nothing, on this app. After a future template change, repeat §8's deactivation step. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,
