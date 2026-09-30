@@ -134,7 +134,7 @@ Rebuilt from `progress.json` on 2026-09-29. Every row below is `not_started`. Th
 
 **Triggered debt.** Waits for a specific event.
 - ~~`t-infra-container-apps-probe`~~: **done, applied to the live app on 2026-09-30.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the app carries its own startup and liveness probes on `/api/health`. Nothing left for you here.
-- `t-owner-deactivate-superseded-revisions`: applying those probes left **three active revisions**, each keeping a replica with its own Neon connection pool. Deactivate the superseded ones (runbook §8), keeping the one serving traffic and one rollback target. It is a live write, so it needs your approval.
+- ~~`t-owner-deactivate-superseded-revisions`~~: **done by you on 2026-09-30.** Two revisions are active: `bike-trip-journal--probes-20260929140739-718d` serves all traffic, and **`bike-trip-journal--rel-1bbe81bcbec5` is the rollback target** (runbook §8). After any future template change, deactivate the superseded revisions again, keeping one rollback target.
 - `t-onedrive-graph-name-charset`: unverified how real Graph treats `%2F` and OneDrive-forbidden characters in a filename. Every id today is a UUID, so none reach it. Check during the preflight.
 - `t-stop-rider-offset`: store the rider's UTC offset so rider-local time can be shown (decision-log Entry 26). Trigger: the spec asks for rider-local time.
 - Neon password characters (notes of `t-neon-sslmode-url`, no row): a password containing a raw `?` or `#` would break `normalize_database_url`. Percent-encode those if you ever set a password by hand.

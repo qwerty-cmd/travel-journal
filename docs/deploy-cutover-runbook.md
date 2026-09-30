@@ -333,7 +333,8 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
   `az containerapp revision deactivate --name <app-name> --resource-group <resource-group> --revision <old-revision>`
   This is a live write on the running app, so **you approve it**; devops can run it after that, never on
   its own initiative. Applying the probes in step 1 left three active revisions this way
-  (`t-owner-deactivate-superseded-revisions`).
+  (`t-owner-deactivate-superseded-revisions` — done 2026-09-30; the rollback target is
+  `bike-trip-journal--rel-1bbe81bcbec5`).
 - [ ] **Schema is forward-only.** An image rollback does not undo a migration, so check that the older
   image still works with the current schema before you rely on it.
 - [ ] **A leaked rider link is a different kind of incident.** Handle it by rotating `trips.rider_slug`
@@ -342,12 +343,12 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 ## Triggered debt to decide at cutover
 
-One item is waiting on you. The probe item that used to sit here is done.
+Nothing is waiting on you. Both items below are done.
 
 | Task | Why it matters now | Options |
 |---|---|---|
 | `t-infra-container-apps-probe` | **Applied and verified, 2026-09-30 — nothing to decide.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the startup and liveness probes on `/api/health`:8000 are set on the app itself, with the `az rest` PATCH in `infra/azure/README.md` ("Container Apps environment and app"). The live round trip **has** now been run, and the probes were confirmed by a raw ARM read rather than by the script's own assertion: `provisioningState: Succeeded`, `deploymentErrors: None`, app serving throughout. Taking three rounds to get the script right is written up under `t-probe-patch-script-defects`. | Nothing, on this app. On a rebuilt app, run the script after creating it (step 1), then check health and traffic — and deactivate the superseded revisions (§8). |
-| `t-owner-deactivate-superseded-revisions` | **Waiting on you.** Applying the probes left **three active revisions** — the pre-probe one plus two `probes-*` ones, because the script ran twice. A superseded revision stays active until it is deactivated, and each active revision keeps a replica holding its own Neon connection pool, which is what `--max-replicas 1` was chosen to avoid. | Deactivate the superseded ones (§8), keeping the revision serving traffic and one known-good rollback target. It is a live write, so it needs your approval; no agent does it unprompted. |
+| `t-owner-deactivate-superseded-revisions` | **Done by you, 2026-09-30 — nothing to decide.** Applying the probes had left three active revisions; two remain: `bike-trip-journal--probes-20260929140739-718d` serving 100% of traffic, and the pre-probe `bike-trip-journal--rel-1bbe81bcbec5` kept as the rollback target. | Nothing, on this app. After a future template change, repeat §8's deactivation step. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,

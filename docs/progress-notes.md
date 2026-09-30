@@ -2095,3 +2095,17 @@ OWNER TASK, `gate: observable`, story `s-deploy-cutover`. Filed 2026-09-30 from 
 **What the owner does.** Deactivate the superseded revisions, keeping the one serving traffic **and one known-good rollback target** (runbook §8 depends on a previous revision still being available). Then re-check traffic and health.
 
 **Not an agent action.** Deactivating a revision is a live-app write on off-limits infrastructure. No agent does this unprompted; it needs the owner's explicit approval, and `devops` may run it only after that. The general rule — deactivate superseded revisions after any template change, keep one rollback target — is now in the runbook (§1 and §8).
+
+**Done — the owner ran the deactivation themselves on 2026-09-30.** Their own `az containerapp revision list -n bike-trip-journal -g rg-bike-trip-log -o table` afterwards:
+
+```
+CreatedTime                Active    Replicas    TrafficWeight    HealthState    ProvisioningState    Name
+2026-09-29T12:50:39+00:00  True      0           0                Healthy        Provisioned          bike-trip-journal--rel-1bbe81bcbec5
+2026-09-29T14:07:48+00:00  True      0           100              Healthy        Provisioned          bike-trip-journal--probes-20260929140739-718d
+```
+
+- **Serving traffic (100%):** `bike-trip-journal--probes-20260929140739-718d`.
+- **Rollback target (0%):** `bike-trip-journal--rel-1bbe81bcbec5`, the pre-probe revision — this is the one runbook §8's rollback uses.
+- The other `probes-*` revision is no longer listed as active.
+- `Replicas 0` on both is scale-to-zero at idle (`--min-replicas 0`), not a fault.
+- No `/api/health` check was captured after the change; the evidence is the revision list above only.
