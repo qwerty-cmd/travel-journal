@@ -1,3 +1,4 @@
+export { changePasswordApiV2AuthPasswordPost } from "./changePasswordApiV2AuthPasswordPost";
 export { createBikeApiTripsSlugBikesPost } from "./createBikeApiTripsSlugBikesPost";
 export { createStopApiTripsSlugStopsPost } from "./createStopApiTripsSlugStopsPost";
 export { getMapApiTripsSlugMapGet } from "./getMapApiTripsSlugMapGet";
@@ -6,7 +7,10 @@ export { getTripApiTripsSlugGet } from "./getTripApiTripsSlugGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "./listPhotosApiTripsSlugStopsStopIdPhotosGet";
 export { listStopsApiTripsSlugStopsGet } from "./listStopsApiTripsSlugStopsGet";
 export { patchBikeApiTripsSlugBikesIdPatch } from "./patchBikeApiTripsSlugBikesIdPatch";
+export { recoverApiV2AuthRecoverPost } from "./recoverApiV2AuthRecoverPost";
+export { rotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./rotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { signinApiV2AuthSigninPost } from "./signinApiV2AuthSigninPost";
+export { signoutAllApiV2AuthSignoutAllPost } from "./signoutAllApiV2AuthSignoutAllPost";
 export { signoutApiV2AuthSignoutPost } from "./signoutApiV2AuthSignoutPost";
 export { signupApiV2AuthSignupPost } from "./signupApiV2AuthSignupPost";
 export { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from "./uploadPhotoApiTripsSlugStopsStopIdPhotosPost";
