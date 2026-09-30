@@ -2298,6 +2298,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-auth-sessions).** `tests/test_auth_endpoints.py` makes > 10 signins from one client IP (lockout tests); the per-test limiter reset must cover it so those tests keep testing the lockout, not the IP bucket.
 
+**Added AC (from t-am-write-gate-legacy).** The contract lists 429 on the legacy write routes; declare it in their OpenAPI responses when the `writes` limiter lands.
+
 ## t-am-write-gate-legacy
 **Goal.** One membership gate. Slugs locate trips but never authorise.
 **Blockers.** This task depends directly on `t-am-identity-core`, `t-am-auth-sessions` and `t-am-auth-account` (scrum change 5). `t-am-rate-limits` now follows it.
@@ -2336,6 +2338,8 @@ cd backend && uv run pytest tests/test_access_matrix.py tests/test_route_depende
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+DONE 2026-09-30. `require_trip_writer` (slug 404 → session 401 → active membership 403, two messages), `require_trip_access` derives `access` from membership (optional session), `memberships.get_for_user` (uncached; active first, else newest revoked). `created_by` from the session on stops/photos/bikes; photo `uploaded_by` = display name, form `uploadedBy` ignored. Audit: unsafe trip routes declare exactly one membership gate. Scope widened (approved) to test_trip_metadata_endpoint, test_csrf, test_no_slug_in_response_bodies, test_openapi_error_responses and the `TripOut.access` description. Tests: test_access_matrix 435; suite 1803; frontend 385 + build. QA PASS: no bypass across all routes/methods, 12/12 behavioural + 4 audit mutants caught. Private-trip legacy write by a non-member is 403 (contract: legacy slug always locates). Debt: t-am-write-gate-gaps; rate-limit 429 declarations stay with t-am-rate-limits.
 
 ## t-am-v2-trip-list
 **Goal.** The anonymous public trip list.
@@ -2541,6 +2545,8 @@ cd backend && uv run pytest tests/test_member_revoke.py tests/test_access_matrix
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Note (from t-am-write-gate-legacy tests).** A write already past the gate when a revoke commits can still land just after it (observed even with the revoke locking the trip row first, default 26): the contract binds only the next request, which is 403. Keep that the tested guarantee; don't promise in-flight cancellation.
 
 ## t-am-legacy-claim
 **Goal.** Someone holding an old rider link can ask to join the trip it points at. The link turns into a pending join request, never into access.
@@ -2881,3 +2887,7 @@ ORDINARY DEBT (test-writer + QA on t-am-auth-sessions). (1) Contract Me note say
 ## t-am-auth-account-gaps
 
 ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stolen session and no password, 10 wrong password-change/rotation attempts lock the owner out of signin and recover for 15 min, repeatable; contract-conformant (the contract counts these failures). Should session-authenticated failures count toward the signin/recover lock? (2) The contract's per-account lockout text names only signin/recover for the 429 and the reset; record that password change and rotation also 429 while locked and reset on success. (3) Recover/signin timing: unknown/disabled ~35 ms vs wrong code ~40 ms (extra lockout round-trips); bodies/headers identical, and the lockout already reveals existence. Fix both together if enumeration resistance is tightened. Also: `AccountRecover.username` has no `max_length` (see t-am-auth-sessions-gaps 3).
+
+## t-am-write-gate-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-write-gate-legacy). (1) A photo upload whose body isn't valid multipart gets FastAPI's 400 → `INTERNAL_ERROR` before the gate — the code the queue retries forever; no current client sends one. (2) The membership lookup scans `ix_trip_members_user_id` then filters `trip_id`; a `(trip_id, user_id)` index would serve it (cost bounded by one user's rows). (3) Pre-existing: two concurrent first uploads of the same photo id by two active members can both pass `find_existing`, write the same S3 key, and one INSERT hits the PK. (4) Stale text: stops/bikes/trips repository docstrings describe the slug as the access model; `responses.py` fallback 403 says "viewer slug — read-only"; `api-contract.md` envelope example still shows "This link is read-only.". (5) Legacy GETs with a cookie do a session+membership lookup even where `access` isn't returned.
