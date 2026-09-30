@@ -2391,6 +2391,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-09-30. `require_trip_reader` (optional session read first, trip by id, membership looked up for every signed-in caller so a private trip and a missing id cost the same statements; private + non-member → the unknown-id 404, byte-identical incl. headers). v2 GET/HEAD trip, bikes, stops, `stops/{id}/photos`, map; non-members filtered by `arrived_at <= now() - delay` (DB clock), trail only with ≥ 2 visible stops, hidden stop's photos = unknown-stop 404; members unfiltered; bikes not delayed. `viewer.role` (anonymous/none/pending/rider/leader) with `join_requests.has_pending` (new read-only repo). `TripOut` extended; legacy GET fills it, legacy reads stay undelayed (contract). NUL guard on the shared stop lookup also fixed a legacy 500. Approved churn: 7 frontend fixtures, audit path-based trip-read rule, test_slug_access, test_trip_metadata_endpoint. QA PASS after two fixes (NUL stop id 500; +0.65 ms private-vs-missing timing oracle, now equal statements and < 0.1 ms noise). Tests: test_v2_public_reads 207 + matrix/leak sections; suite 2271; frontend 385 + build. Debt: t-am-trip-reads-gaps.
+
 ## t-am-photo-exif-strip
 **Goal.** The server never stores photo metadata, and it accepts JPEG only.
 **Why it's blocked by `t-am-write-gate-legacy`.** It only needs `t-am-contract-doc`. The write-gate blocker exists only to stop concurrent edits to `routes/photos.py`, which both tasks change. In a serial, single-PR milestone that costs nothing. Drop it if the two tasks are ever run in parallel on separate branches.
@@ -2431,6 +2433,8 @@ cd backend && uv run pytest tests/test_v2_rider_writes.py tests/test_access_matr
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Added AC (from t-am-v2-trip-reads).** Client-supplied ids on write paths may still reach Postgres with a NUL byte (stop/bike/photo create bodies, the upload form's id, `PATCH …/bikes/{id}`), giving a 500 instead of a 4xx. Check each write path this task adds or reuses and guard like `trips.get_by_id` / `photos.stop_belongs_to_trip`; test a NUL id on each.
 
 ## t-am-trip-create
 **Goal.** Create trips, list your trips, and edit a trip as a leader. This is part (a) of the scrum change 10 split.
@@ -2726,6 +2730,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - No write UI unless `viewer.role` is `rider` or `leader`.
 **Validation.** `cd frontend && npm test && npm run build`
 
+**Added AC (from t-am-v2-trip-reads, triggered debt).** `frontend/src/localStore.ts` may hold a `TripOut` cached before the extension, with no `viewer`/`visibility`. The first screen that reads `trip.viewer` must treat it as absent (fall back to `access`, or refetch) rather than crash; test with a pre-extension cached trip.
+
 ## t-am-fe-create-trip
 **AC.**
 - `/trips/new` is signed-in only and generates a UUID at submit time.
@@ -2907,3 +2913,7 @@ TRIGGERED DEBT (QA on t-am-rate-limits). Keys are exact addresses, so a client r
 ## t-am-trip-list-gaps
 
 ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-list). (1) The sort key depends on `now()`, so a trip whose stop leaves the delay window between page requests can move, and be skipped or repeated across pages. (2) Each page computes the stop subquery for every public trip (planner inlines it into the keyset predicate, up to 4× per trip) — TRIGGERED on setting a Discover latency budget or a public-trip count threshold. (3) The AC says OpenAPI declares 429 on GET and HEAD; Entry 11 keeps HEAD out of the schema — reword the AC pattern for later v2 reads. (4) `TripRecord.rider_slug`/`viewer_slug` are typed `str` but nullable since 0003.
+
+## t-am-trip-reads-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-reads). (1) The five v2 reads declare 422 in OpenAPI (the legacy convention, keeping FastAPI's validation schema out of the client) but the contract rows list 200/404/429 — align one or the other. (2) No test reaches the NUL guard in `memberships.get_for_user` with a signed-in caller (the malformed-id test is anonymous). (3) `data/repositories/trips.py` module docstring still describes the two-slug model.
