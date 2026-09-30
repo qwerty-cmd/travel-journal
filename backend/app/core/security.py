@@ -40,6 +40,14 @@ Nothing in this module ever puts a slug into a message or a response body. A
 slug is the credential; echoing it back is the same class of mistake as echoing
 a password, and error messages are the part of a response most likely to end up
 in a log, a screenshot or a bug report.
+
+**The session gate (decision-log Entry 29).** ``require_session`` is the first
+of the Entry 29 gates (``docs/api-contract.md``, "Access: public trips, members
+and leaders" → The gates). It answers "who is asking?" from the
+``__Host-btj_session`` cookie and returns a ``SessionUser``, or raises
+``401 UNAUTHENTICATED``. No route declares it yet: the auth routes arrive with
+``t-am-auth-sessions``, and the membership gates are built on top of it later.
+The slug dependencies above are unchanged until ``t-am-write-gate-legacy``.
 """
 
 from __future__ import annotations
@@ -47,10 +55,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Path
+from fastapi import Path, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ApiError
+from app.core.sessions import (
+    SESSION_COOKIE_NAME,
+    SessionUser,
+    cleared_session_cookie_header,
+    resolve_session,
+    set_session_cookie,
+)
 from app.data.db import SessionDep
 from app.data.repositories.trips import TripRecord, get_by_slug
 from app.models.trip import Access
@@ -70,6 +85,11 @@ UNKNOWN_TRIP_MESSAGE = (
 READ_ONLY_LINK_MESSAGE = (
     "This link is read-only. Ask the rider for their editing link if you need to make changes."
 )
+
+# The one message for every 401 from the session gate: no cookie, garbage,
+# expired, over the 365-day cap, deleted, or a disabled account. One string so
+# the answers can't be told apart.
+SIGN_IN_REQUIRED_MESSAGE = "You need to sign in to do this."
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,3 +222,46 @@ async def require_rider_access(
         raise ApiError.forbidden(READ_ONLY_LINK_MESSAGE)
 
     return context
+
+
+async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:
+    """
+    Session gate: the signed-in account behind the ``__Host-btj_session`` cookie.
+
+    Returns a ``SessionUser``. Raises ``401 UNAUTHENTICATED`` (with
+    ``WWW-Authenticate``) for a missing, garbage, idle-expired, over-cap or
+    deleted token, and for a disabled account, all with the same message.
+
+    **Two cookie side effects, delivered two ways:**
+
+    - **Refresh.** When resolving the session bumped ``last_used_at`` (at most
+      once every 24 h), the cookie is re-issued with a fresh ``Max-Age`` on
+      ``response``, FastAPI's per-request ``Response`` parameter. FastAPI copies
+      its headers onto the response the route returns. It does **not** copy them
+      when a route returns a ``Response`` object itself, or when the request ends
+      in an error: then the refresh is skipped, and the next request after 24 h
+      re-issues it.
+    - **Clear.** On a 401 from a request that sent the cookie, the clearing
+      ``Set-Cookie`` (``Max-Age=0``) travels on the ``ApiError``, because the
+      exception handler builds a new response and ``response`` is discarded. A
+      request with no cookie gets no ``Set-Cookie``.
+
+    The cookie is read from ``request.cookies`` rather than declared as a
+    ``Cookie()`` parameter, so it is not listed as an operation parameter in the
+    OpenAPI document and Kubb generates no client field for a value JavaScript
+    can't read.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    resolved = await resolve_session(db, token) if token else None
+    if resolved is None:
+        # `is not None`, not truthiness: an empty cookie value was still sent,
+        # and is still cleared.
+        raise ApiError.unauthenticated(
+            SIGN_IN_REQUIRED_MESSAGE,
+            set_cookie=cleared_session_cookie_header() if token is not None else None,
+        )
+
+    if resolved.refreshed:
+        set_session_cookie(response, token)
+
+    return resolved.user

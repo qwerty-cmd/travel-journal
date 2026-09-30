@@ -9,7 +9,10 @@ password rule rather than each restating it. See docs/api-contract.md,
 
 Credentials a caller merely *presents* (signin, current password, recovery code)
 are deliberately **not** format-checked: a wrong one is a 401/403 from the route,
-and a 422 there would answer "is this a plausible credential?" for free.
+and a 422 there would answer "is this a plausible credential?" for free. Their one
+constraint is a generous length cap (`PRESENTED_CREDENTIAL_MAX_LENGTH`, 1024).
+Presented passwords are NFKC-normalised by `app.core.passwords` before they are
+verified, the same as new passwords are before they are hashed.
 """
 
 import re
@@ -25,6 +28,13 @@ USERNAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,31}$")
 
 PASSWORD_MIN_LENGTH = 15  # NIST SP 800-63B-4: single-factor passwords need at least 15
 PASSWORD_MAX_LENGTH = 128  # the NIST floor for the maximum is 64; 128 leaves headroom
+
+# The one rule on a credential a caller *presents* (signin, current and rotation
+# password, recovery code): a bound on how much input reaches argon2 or a hash. It
+# is far above any real value (a new password is at most 128 code points), so a
+# 422 here says nothing about whether a value is plausible. It applies to the raw
+# input, before NFKC, which can shorten a value but never lengthen it past this.
+PRESENTED_CREDENTIAL_MAX_LENGTH = 1024
 
 
 def _has_control_character(value: str) -> bool:
@@ -86,6 +96,11 @@ _NEW_PASSWORD_RULE = (
     "control characters (Unicode category Cc). Not trimmed — leading and trailing spaces "
     "count. Anything else is rejected with 422 / VALIDATION_ERROR."
 )
+_PRESENTED_PASSWORD_RULE = (
+    " NFKC-normalised before it is checked, the same as a new password. At most "
+    f"{PRESENTED_CREDENTIAL_MAX_LENGTH} characters, or the request is rejected with 422 / "
+    "VALIDATION_ERROR."
+)
 _DISPLAY_NAME_RULE = (
     "Trimmed, then 1-40 characters with no control characters, or the request is "
     "rejected with 422 / VALIDATION_ERROR."
@@ -115,8 +130,9 @@ class SessionCreate(BaseModel):
         "password."
     )
     password: str = Field(
+        max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
         description="The account's password. Not format-checked: a wrong password is a 401 "
-        "with the same message as an unknown username."
+        "with the same message as an unknown username." + _PRESENTED_PASSWORD_RULE,
     )
 
 
@@ -131,7 +147,9 @@ class AccountRecover(BaseModel):
         description="The one-time recovery code shown at signup, after the last recovery or "
         "rotation, or handed over by the operator. Case-insensitive; hyphens and spaces are "
         "ignored, and O, I and L are read as 0, 1 and 1. A wrong code is a 401 and counts "
-        "against the account lockout."
+        f"against the account lockout. At most {PRESENTED_CREDENTIAL_MAX_LENGTH} characters, "
+        "or the request is rejected with 422 / VALIDATION_ERROR.",
+        max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
     )
     newPassword: NewPassword = Field(
         description="The password to set on success. " + _NEW_PASSWORD_RULE
@@ -142,8 +160,9 @@ class PasswordChange(BaseModel):
     """POST /api/v2/auth/password body."""
 
     currentPassword: str = Field(
+        max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
         description="The account's current password. Not format-checked: a wrong one is a "
-        "403 and counts against the account lockout."
+        "403 and counts against the account lockout." + _PRESENTED_PASSWORD_RULE,
     )
     newPassword: NewPassword = Field(
         description="The password to set. Equal to the current one is a 422. " + _NEW_PASSWORD_RULE
@@ -156,7 +175,8 @@ class RecoveryCodeCreate(BaseModel):
     password: str = Field(
         description="The account's current password, re-confirmed before a new recovery code "
         "is issued. Not format-checked: a wrong one is a 403 and counts against the account "
-        "lockout."
+        "lockout." + _PRESENTED_PASSWORD_RULE,
+        max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
     )
 
 

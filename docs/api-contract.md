@@ -91,6 +91,7 @@ Membership is read from Postgres on every request, with no cache. A revocation t
   - a `username`: unique, private, stored in lowercase;
   - a `displayName`: public;
   - a password: argon2id at the OWASP minimum (m=19 MiB, t=2, p=1), hashed in a worker thread behind `asyncio.Semaphore(2)`.
+- **Presented passwords are NFKC-normalised too.** The signin `password`, the password-change `currentPassword` and the rotation `password` are NFKC-normalised before they are verified, exactly as a new password is before it is hashed. Without that, a password typed in a decomposed or fullwidth form could never sign in. Presented credentials (those three and the recovery `recoveryCode`) are not format-checked. Their only rule is a generous `max_length` of 1024 characters on the raw input, far above any real value, so the `422` says nothing about whether a value is plausible.
 - **Cookie.** `__Host-btj_session=<token>; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=7776000`.
   - The token is 32 random bytes, base64url-encoded.
   - Only its SHA-256 is stored, as `sessions.token_hash`.

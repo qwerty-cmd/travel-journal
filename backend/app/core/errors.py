@@ -26,7 +26,8 @@ arguments. The contract's top-priority distinction is 403-vs-404 (spec Section
 pair `(404, FORBIDDEN)` representable: a body that violates the contract,
 produced by a typo, that no status-only or code-only assertion would catch. The
 classmethods make it unrepresentable; `__init__` rejects it as a backstop for
-anything that still constructs `ApiError` directly.
+anything that still constructs `ApiError` directly. The same backstop refuses a
+401 without `WWW-Authenticate` and a 429 without `Retry-After`.
 """
 
 from __future__ import annotations
@@ -99,6 +100,13 @@ _STATUS_TO_CODE: dict[int, ErrorCode] = {
 # browser's own login dialog.
 WWW_AUTHENTICATE = 'Cookie realm="bike-trip-journal"'
 
+# The header each of these statuses cannot go out without. `ApiError.__init__`
+# refuses to build either status without it.
+_REQUIRED_HEADER: dict[int, str] = {
+    HTTPStatus.UNAUTHORIZED: "WWW-Authenticate",
+    HTTPStatus.TOO_MANY_REQUESTS: "Retry-After",
+}
+
 
 def code_for_status(status_code: int) -> ErrorCode:
     """The `ErrorCode` the contract pairs with an HTTP status."""
@@ -138,6 +146,19 @@ class ApiError(Exception):
                 f"ApiError.unauthenticated/.forbidden/.not_found/.conflict/.validation/"
                 f".rate_limited/.internal instead."
             )
+        # Same backstop for the two statuses that are not actionable without a
+        # header: RFC 9110 makes `WWW-Authenticate` a MUST on a 401, and the
+        # offline queue waits out `Retry-After` on a 429 (contract, "Offline-queue
+        # classification"). A direct `ApiError(401, ...)` would otherwise render a
+        # well-formed envelope with neither.
+        required_header = _REQUIRED_HEADER.get(status_code)
+        if required_header is not None and required_header.lower() not in {
+            name.lower() for name in (headers or {})
+        }:
+            raise ValueError(
+                f"ApiError status {status_code} must carry a {required_header} header. "
+                f"Use ApiError.unauthenticated/.rate_limited, which attach it."
+            )
         super().__init__(message)
         self.status_code = status_code
         self.code = code
@@ -147,19 +168,23 @@ class ApiError(Exception):
         self.headers = headers
 
     @classmethod
-    def unauthenticated(cls, message: str) -> ApiError:
+    def unauthenticated(cls, message: str, *, set_cookie: str | None = None) -> ApiError:
         """
         401 — no valid session where one is required, or wrong signin/recover credentials.
 
         Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`, which RFC 9110
         requires on every 401. `message` is shown to the rider.
+
+        `set_cookie` is an optional `Set-Cookie` value sent with the 401. The
+        session gate passes the one that clears the session cookie when a request
+        sent one (contract, "Sessions"). It belongs on the exception because the
+        handler builds a fresh response, and a cookie set on the route's
+        `Response` parameter would be lost.
         """
-        return cls(
-            HTTPStatus.UNAUTHORIZED,
-            ErrorCode.UNAUTHENTICATED,
-            message,
-            headers={"WWW-Authenticate": WWW_AUTHENTICATE},
-        )
+        headers = {"WWW-Authenticate": WWW_AUTHENTICATE}
+        if set_cookie is not None:
+            headers["Set-Cookie"] = set_cookie
+        return cls(HTTPStatus.UNAUTHORIZED, ErrorCode.UNAUTHENTICATED, message, headers=headers)
 
     @classmethod
     def forbidden(cls, message: str) -> ApiError:
