@@ -58,6 +58,12 @@ export type CreateBikeApiTripsSlugBikesPost409 = ErrorEnvelope;
 export type CreateBikeApiTripsSlugBikesPost422 = ErrorEnvelope;
 
 /**
+ * ErrorEnvelope
+ * @description The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.
+*/
+export type CreateBikeApiTripsSlugBikesPost429 = ErrorEnvelope;
+
+/**
  * BikeCreate
 */
 export type CreateBikeApiTripsSlugBikesPostMutationRequest = BikeCreate;
@@ -68,5 +74,5 @@ export type CreateBikeApiTripsSlugBikesPostMutation = {
     Response: CreateBikeApiTripsSlugBikesPost200 | CreateBikeApiTripsSlugBikesPost201;
     Request: CreateBikeApiTripsSlugBikesPostMutationRequest;
     PathParams: CreateBikeApiTripsSlugBikesPostPathParams;
-    Errors: CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422;
+    Errors: CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422 | CreateBikeApiTripsSlugBikesPost429;
 };

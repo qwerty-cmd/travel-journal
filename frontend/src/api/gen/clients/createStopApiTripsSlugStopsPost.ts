@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422 } from "../types/CreateStopApiTripsSlugStopsPost";
+import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422, CreateStopApiTripsSlugStopsPost429 } from "../types/CreateStopApiTripsSlugStopsPost";
 
 function getCreateStopApiTripsSlugStopsPostUrl({ slug }: { slug: CreateStopApiTripsSlugStopsPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/stops` as const }
@@ -55,6 +55,6 @@ export async function createStopApiTripsSlugStopsPost({ slug, data }: { slug: Cr
 
   const requestData = data
 
-  const res = await request<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, CreateStopApiTripsSlugStopsPostMutationRequest>({ method : "POST", url : getCreateStopApiTripsSlugStopsPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
+  const res = await request<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, CreateStopApiTripsSlugStopsPostMutationRequest>({ method : "POST", url : getCreateStopApiTripsSlugStopsPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
   return res.data
 }

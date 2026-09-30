@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch401, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
+import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch401, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422, PatchBikeApiTripsSlugBikesIdPatch429 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
 
 function getPatchBikeApiTripsSlugBikesIdPatchUrl({ id, slug }: { id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"]; slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"] }) {
   const res = { method: 'PATCH', url: `/api/trips/${slug}/bikes/${id}` as const }
@@ -30,6 +30,6 @@ export async function patchBikeApiTripsSlugBikesIdPatch({ id, slug, data }: { id
 
   const requestData = data
 
-  const res = await request<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, PatchBikeApiTripsSlugBikesIdPatchMutationRequest>({ method : "PATCH", url : getPatchBikeApiTripsSlugBikesIdPatchUrl({ id, slug }).url.toString(), data : requestData, ... requestConfig })
+  const res = await request<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, PatchBikeApiTripsSlugBikesIdPatchMutationRequest>({ method : "PATCH", url : getPatchBikeApiTripsSlugBikesIdPatchUrl({ id, slug }).url.toString(), data : requestData, ... requestConfig })
   return res.data
 }

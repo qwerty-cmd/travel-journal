@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
+import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422, ListPhotosApiTripsSlugStopsStopIdPhotosGet429 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
 
 function getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"]; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/stops/${stop_id}/photos` as const }
@@ -30,6 +30,6 @@ export async function listPhotosApiTripsSlugStopsStopIdPhotosGet({ stop_id, slug
 
 
 
-  const res = await request<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422>, unknown>({ method : "GET", url : getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }).url.toString(), ... requestConfig })
+  const res = await request<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422 | ListPhotosApiTripsSlugStopsStopIdPhotosGet429>, unknown>({ method : "GET", url : getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }).url.toString(), ... requestConfig })
   return res.data
 }

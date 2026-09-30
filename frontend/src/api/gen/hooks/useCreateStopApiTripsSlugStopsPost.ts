@@ -4,7 +4,7 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422 } from "../types/CreateStopApiTripsSlugStopsPost";
+import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422, CreateStopApiTripsSlugStopsPost429 } from "../types/CreateStopApiTripsSlugStopsPost";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
 import { createStopApiTripsSlugStopsPost } from "../clients/createStopApiTripsSlugStopsPost";
 import { mutationOptions, useMutation } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ export type CreateStopApiTripsSlugStopsPostMutationKey = ReturnType<typeof creat
 export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknown>(config: Partial<RequestConfig<CreateStopApiTripsSlugStopsPostMutationRequest>> & { client?: Client } = {}) {
 
         const mutationKey = createStopApiTripsSlugStopsPostMutationKey()
-        return mutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
+        return mutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
           mutationKey,
           mutationFn: async({ slug, data }) => {
             return createStopApiTripsSlugStopsPost({ slug, data }, config)
@@ -65,7 +65,7 @@ export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknow
  */
 export function useCreateStopApiTripsSlugStopsPost<TContext>(options: 
 {
-  mutation?: UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext> & { client?: QueryClient },
+  mutation?: UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext> & { client?: QueryClient },
   client?: Partial<RequestConfig<CreateStopApiTripsSlugStopsPostMutationRequest>> & { client?: Client },
 }
  = {}) {
@@ -74,13 +74,13 @@ export function useCreateStopApiTripsSlugStopsPost<TContext>(options:
           const { client: queryClient, ...mutationOptions } = mutation;
           const mutationKey = mutationOptions.mutationKey ?? createStopApiTripsSlugStopsPostMutationKey()
 
-          const baseOptions = createStopApiTripsSlugStopsPostMutationOptions(config) as UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
+          const baseOptions = createStopApiTripsSlugStopsPostMutationOptions(config) as UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
           
 
-          return useMutation<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
+          return useMutation<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
             ...baseOptions,
             mutationKey,
             ...mutationOptions,
-          }, queryClient) as UseMutationResult<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
+          }, queryClient) as UseMutationResult<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
       
 }

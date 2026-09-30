@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422 } from "../types/GetTripApiTripsSlugGet";
+import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429 } from "../types/GetTripApiTripsSlugGet";
 
 function getGetTripApiTripsSlugGetUrl({ slug }: { slug: GetTripApiTripsSlugGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}` as const }
@@ -47,6 +47,6 @@ export async function getTripApiTripsSlugGet({ slug }: { slug: GetTripApiTripsSl
 
 
 
-  const res = await request<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422>, unknown>({ method : "GET", url : getGetTripApiTripsSlugGetUrl({ slug }).url.toString(), ... requestConfig })
+  const res = await request<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429>, unknown>({ method : "GET", url : getGetTripApiTripsSlugGetUrl({ slug }).url.toString(), ... requestConfig })
   return res.data
 }

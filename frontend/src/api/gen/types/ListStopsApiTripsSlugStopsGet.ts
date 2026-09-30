@@ -32,10 +32,16 @@ export type ListStopsApiTripsSlugStopsGet404 = ErrorEnvelope;
 */
 export type ListStopsApiTripsSlugStopsGet422 = ErrorEnvelope;
 
+/**
+ * ErrorEnvelope
+ * @description The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.
+*/
+export type ListStopsApiTripsSlugStopsGet429 = ErrorEnvelope;
+
 export type ListStopsApiTripsSlugStopsGetQueryResponse = ListStopsApiTripsSlugStopsGet200;
 
 export type ListStopsApiTripsSlugStopsGetQuery = {
     Response: ListStopsApiTripsSlugStopsGet200;
     PathParams: ListStopsApiTripsSlugStopsGetPathParams;
-    Errors: ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422;
+    Errors: ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429;
 };

@@ -4,7 +4,7 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { ListStopsApiTripsSlugStopsGetQueryResponse, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422 } from "../types/ListStopsApiTripsSlugStopsGet";
+import type { ListStopsApiTripsSlugStopsGetQueryResponse, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422, ListStopsApiTripsSlugStopsGet429 } from "../types/ListStopsApiTripsSlugStopsGet";
 import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import { listStopsApiTripsSlugStopsGet } from "../clients/listStopsApiTripsSlugStopsGet";
 import { queryOptions, useQuery } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ export type ListStopsApiTripsSlugStopsGetQueryKey = ReturnType<typeof listStopsA
 export function listStopsApiTripsSlugStopsGetQueryOptions({ slug }: { slug: ListStopsApiTripsSlugStopsGetPathParams["slug"] | undefined }, config: Partial<RequestConfig> & { client?: Client } = {}) {
 
         const queryKey = listStopsApiTripsSlugStopsGetQueryKey({ slug })
-        return queryOptions<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422>, ListStopsApiTripsSlugStopsGetQueryResponse, typeof queryKey>({
+        return queryOptions<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429>, ListStopsApiTripsSlugStopsGetQueryResponse, typeof queryKey>({
          enabled: !!(slug),
          queryKey,
          queryFn: async ({ signal }) => {
@@ -55,7 +55,7 @@ export function listStopsApiTripsSlugStopsGetQueryOptions({ slug }: { slug: List
  */
 export function useListStopsApiTripsSlugStopsGet<TData = ListStopsApiTripsSlugStopsGetQueryResponse, TQueryData = ListStopsApiTripsSlugStopsGetQueryResponse, TQueryKey extends QueryKey = ListStopsApiTripsSlugStopsGetQueryKey>({ slug }: { slug: ListStopsApiTripsSlugStopsGetPathParams["slug"] | undefined }, options: 
 {
-  query?: Partial<QueryObserverOptions<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
+  query?: Partial<QueryObserverOptions<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
   client?: Partial<RequestConfig> & { client?: Client }
 }
  = {}) {
@@ -69,7 +69,7 @@ export function useListStopsApiTripsSlugStopsGet<TData = ListStopsApiTripsSlugSt
           ...listStopsApiTripsSlugStopsGetQueryOptions({ slug }, config),
           ...resolvedOptions,
           queryKey,
-         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422>> & { queryKey: TQueryKey }
+         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429>> & { queryKey: TQueryKey }
 
          query.queryKey = queryKey as TQueryKey
 

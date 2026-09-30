@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost401, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422 } from "../types/CreateBikeApiTripsSlugBikesPost";
+import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost401, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422, CreateBikeApiTripsSlugBikesPost429 } from "../types/CreateBikeApiTripsSlugBikesPost";
 
 function getCreateBikeApiTripsSlugBikesPostUrl({ slug }: { slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/bikes` as const }
@@ -33,6 +33,6 @@ export async function createBikeApiTripsSlugBikesPost({ slug, data }: { slug: Cr
 
   const requestData = data
 
-  const res = await request<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, CreateBikeApiTripsSlugBikesPostMutationRequest>({ method : "POST", url : getCreateBikeApiTripsSlugBikesPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
+  const res = await request<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422 | CreateBikeApiTripsSlugBikesPost429>, CreateBikeApiTripsSlugBikesPostMutationRequest>({ method : "POST", url : getCreateBikeApiTripsSlugBikesPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
   return res.data
 }

@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost401, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
+import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost401, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422, UploadPhotoApiTripsSlugStopsStopIdPhotosPost429 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 import { buildFormData } from "../.kubb/config";
 
 function getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }: { stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"]; slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"] }) {
@@ -39,6 +39,6 @@ export async function uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ stop_id, sl
 
   const requestData = data
   const formData = buildFormData(requestData)
-  const res = await request<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>({ method : "POST", url : getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }).url.toString(), data : formData as FormData, ... requestConfig })
+  const res = await request<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>({ method : "POST", url : getUploadPhotoApiTripsSlugStopsStopIdPhotosPostUrl({ stop_id, slug }).url.toString(), data : formData as FormData, ... requestConfig })
   return res.data
 }

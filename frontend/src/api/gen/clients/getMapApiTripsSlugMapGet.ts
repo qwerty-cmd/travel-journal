@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422 } from "../types/GetMapApiTripsSlugMapGet";
+import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422, GetMapApiTripsSlugMapGet429 } from "../types/GetMapApiTripsSlugMapGet";
 
 function getGetMapApiTripsSlugMapGetUrl({ slug }: { slug: GetMapApiTripsSlugMapGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/map` as const }
@@ -33,6 +33,6 @@ export async function getMapApiTripsSlugMapGet({ slug }: { slug: GetMapApiTripsS
 
 
 
-  const res = await request<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422>, unknown>({ method : "GET", url : getGetMapApiTripsSlugMapGetUrl({ slug }).url.toString(), ... requestConfig })
+  const res = await request<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422 | GetMapApiTripsSlugMapGet429>, unknown>({ method : "GET", url : getGetMapApiTripsSlugMapGetUrl({ slug }).url.toString(), ... requestConfig })
   return res.data
 }

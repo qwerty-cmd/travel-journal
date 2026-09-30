@@ -4,7 +4,7 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
+import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422, ListPhotosApiTripsSlugStopsStopIdPhotosGet429 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
 import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "../clients/listPhotosApiTripsSlugStopsStopIdPhotosGet";
 import { queryOptions, useQuery } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ export type ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey = ReturnType<type
 export function listPhotosApiTripsSlugStopsStopIdPhotosGetQueryOptions({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"] | undefined; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] | undefined }, config: Partial<RequestConfig> & { client?: Client } = {}) {
 
         const queryKey = listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ stop_id, slug })
-        return queryOptions<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422>, ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, typeof queryKey>({
+        return queryOptions<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422 | ListPhotosApiTripsSlugStopsStopIdPhotosGet429>, ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, typeof queryKey>({
          enabled: !!(stop_id && slug),
          queryKey,
          queryFn: async ({ signal }) => {
@@ -41,7 +41,7 @@ export function listPhotosApiTripsSlugStopsStopIdPhotosGetQueryOptions({ stop_id
  */
 export function useListPhotosApiTripsSlugStopsStopIdPhotosGet<TData = ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, TQueryData = ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, TQueryKey extends QueryKey = ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey>({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"] | undefined; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] | undefined }, options: 
 {
-  query?: Partial<QueryObserverOptions<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
+  query?: Partial<QueryObserverOptions<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422 | ListPhotosApiTripsSlugStopsStopIdPhotosGet429>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
   client?: Partial<RequestConfig> & { client?: Client }
 }
  = {}) {
@@ -55,7 +55,7 @@ export function useListPhotosApiTripsSlugStopsStopIdPhotosGet<TData = ListPhotos
           ...listPhotosApiTripsSlugStopsStopIdPhotosGetQueryOptions({ stop_id, slug }, config),
           ...resolvedOptions,
           queryKey,
-         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422>> & { queryKey: TQueryKey }
+         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422 | ListPhotosApiTripsSlugStopsStopIdPhotosGet429>> & { queryKey: TQueryKey }
 
          query.queryKey = queryKey as TQueryKey
 

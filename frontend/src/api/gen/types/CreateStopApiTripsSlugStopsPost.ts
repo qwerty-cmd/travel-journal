@@ -58,6 +58,12 @@ export type CreateStopApiTripsSlugStopsPost409 = ErrorEnvelope;
 export type CreateStopApiTripsSlugStopsPost422 = ErrorEnvelope;
 
 /**
+ * ErrorEnvelope
+ * @description The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.
+*/
+export type CreateStopApiTripsSlugStopsPost429 = ErrorEnvelope;
+
+/**
  * StopCreate
 */
 export type CreateStopApiTripsSlugStopsPostMutationRequest = StopCreate;
@@ -68,5 +74,5 @@ export type CreateStopApiTripsSlugStopsPostMutation = {
     Response: CreateStopApiTripsSlugStopsPost200 | CreateStopApiTripsSlugStopsPost201;
     Request: CreateStopApiTripsSlugStopsPostMutationRequest;
     PathParams: CreateStopApiTripsSlugStopsPostPathParams;
-    Errors: CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422;
+    Errors: CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429;
 };

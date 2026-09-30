@@ -4,7 +4,7 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422 } from "../types/GetTripApiTripsSlugGet";
+import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429 } from "../types/GetTripApiTripsSlugGet";
 import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
 import { getTripApiTripsSlugGet } from "../clients/getTripApiTripsSlugGet";
 import { queryOptions, useQuery } from "@tanstack/react-query";
@@ -16,7 +16,7 @@ export type GetTripApiTripsSlugGetQueryKey = ReturnType<typeof getTripApiTripsSl
 export function getTripApiTripsSlugGetQueryOptions({ slug }: { slug: GetTripApiTripsSlugGetPathParams["slug"] | undefined }, config: Partial<RequestConfig> & { client?: Client } = {}) {
 
         const queryKey = getTripApiTripsSlugGetQueryKey({ slug })
-        return queryOptions<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422>, GetTripApiTripsSlugGetQueryResponse, typeof queryKey>({
+        return queryOptions<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429>, GetTripApiTripsSlugGetQueryResponse, typeof queryKey>({
          enabled: !!(slug),
          queryKey,
          queryFn: async ({ signal }) => {
@@ -58,7 +58,7 @@ export function getTripApiTripsSlugGetQueryOptions({ slug }: { slug: GetTripApiT
  */
 export function useGetTripApiTripsSlugGet<TData = GetTripApiTripsSlugGetQueryResponse, TQueryData = GetTripApiTripsSlugGetQueryResponse, TQueryKey extends QueryKey = GetTripApiTripsSlugGetQueryKey>({ slug }: { slug: GetTripApiTripsSlugGetPathParams["slug"] | undefined }, options: 
 {
-  query?: Partial<QueryObserverOptions<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
+  query?: Partial<QueryObserverOptions<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
   client?: Partial<RequestConfig> & { client?: Client }
 }
  = {}) {
@@ -72,7 +72,7 @@ export function useGetTripApiTripsSlugGet<TData = GetTripApiTripsSlugGetQueryRes
           ...getTripApiTripsSlugGetQueryOptions({ slug }, config),
           ...resolvedOptions,
           queryKey,
-         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422>> & { queryKey: TQueryKey }
+         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429>> & { queryKey: TQueryKey }
 
          query.queryKey = queryKey as TQueryKey
 

@@ -62,6 +62,12 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 = ErrorEnvelope;
 export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 = ErrorEnvelope;
 
 /**
+ * ErrorEnvelope
+ * @description The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.
+*/
+export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost429 = ErrorEnvelope;
+
+/**
  * Body_upload_photo_api_trips__slug__stops__stop_id__photos_post
 */
 export type UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest = BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost;
@@ -72,5 +78,5 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutation = {
     Response: UploadPhotoApiTripsSlugStopsStopIdPhotosPost200 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost201;
     Request: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest;
     PathParams: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams;
-    Errors: UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422;
+    Errors: UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429;
 };

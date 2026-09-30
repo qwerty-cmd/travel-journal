@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { ListStopsApiTripsSlugStopsGetQueryResponse, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422 } from "../types/ListStopsApiTripsSlugStopsGet";
+import type { ListStopsApiTripsSlugStopsGetQueryResponse, ListStopsApiTripsSlugStopsGetPathParams, ListStopsApiTripsSlugStopsGet404, ListStopsApiTripsSlugStopsGet422, ListStopsApiTripsSlugStopsGet429 } from "../types/ListStopsApiTripsSlugStopsGet";
 
 function getListStopsApiTripsSlugStopsGetUrl({ slug }: { slug: ListStopsApiTripsSlugStopsGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/stops` as const }
@@ -44,6 +44,6 @@ export async function listStopsApiTripsSlugStopsGet({ slug }: { slug: ListStopsA
 
 
 
-  const res = await request<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422>, unknown>({ method : "GET", url : getListStopsApiTripsSlugStopsGetUrl({ slug }).url.toString(), ... requestConfig })
+  const res = await request<ListStopsApiTripsSlugStopsGetQueryResponse, ResponseErrorConfig<ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429>, unknown>({ method : "GET", url : getListStopsApiTripsSlugStopsGetUrl({ slug }).url.toString(), ... requestConfig })
   return res.data
 }

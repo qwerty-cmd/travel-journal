@@ -50,6 +50,12 @@ export type PatchBikeApiTripsSlugBikesIdPatch404 = ErrorEnvelope;
 export type PatchBikeApiTripsSlugBikesIdPatch422 = ErrorEnvelope;
 
 /**
+ * ErrorEnvelope
+ * @description The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.
+*/
+export type PatchBikeApiTripsSlugBikesIdPatch429 = ErrorEnvelope;
+
+/**
  * BikePatch
 */
 export type PatchBikeApiTripsSlugBikesIdPatchMutationRequest = BikePatch;
@@ -60,5 +66,5 @@ export type PatchBikeApiTripsSlugBikesIdPatchMutation = {
     Response: PatchBikeApiTripsSlugBikesIdPatch200;
     Request: PatchBikeApiTripsSlugBikesIdPatchMutationRequest;
     PathParams: PatchBikeApiTripsSlugBikesIdPatchPathParams;
-    Errors: PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422;
+    Errors: PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429;
 };
