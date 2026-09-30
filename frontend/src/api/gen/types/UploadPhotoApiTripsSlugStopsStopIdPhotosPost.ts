@@ -57,7 +57,7 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description A required form field is missing or invalid; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request\'s `Content-Length` is over 16 MiB, refused before the body is read. Never retried. Nothing was stored.
+ * @description A required form field is missing or invalid; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request\'s `Content-Length` is over 16 MiB, refused before the body is read; or the `id` contains a NUL character, which no stored id can hold. Never retried. Nothing was stored.
 */
 export type UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 = ErrorEnvelope;
 

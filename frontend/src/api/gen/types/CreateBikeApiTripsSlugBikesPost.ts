@@ -53,7 +53,7 @@ export type CreateBikeApiTripsSlugBikesPost409 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description The body failed schema validation.
+ * @description The body failed schema validation, or its `id` contains a NUL character, which no stored id can hold.
 */
 export type CreateBikeApiTripsSlugBikesPost422 = ErrorEnvelope;
 

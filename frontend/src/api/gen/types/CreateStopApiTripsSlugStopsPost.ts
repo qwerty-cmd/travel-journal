@@ -53,7 +53,7 @@ export type CreateStopApiTripsSlugStopsPost409 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description The body failed schema validation — a missing or mistyped field, a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC offset**. That last one is server-enforced only; the generated client types it as a plain string and cannot catch it.
+ * @description The body failed schema validation — a missing or mistyped field, a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC offset**. That last one is server-enforced only; the generated client types it as a plain string and cannot catch it. Also an `id` containing a NUL character, which no stored id can hold.
 */
 export type CreateStopApiTripsSlugStopsPost422 = ErrorEnvelope;
 
