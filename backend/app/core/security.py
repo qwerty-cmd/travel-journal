@@ -28,9 +28,11 @@ The gates built here:
   public, or the caller is an active member, else the byte-identical ``404``.
   Never ``401``.
 - ``require_trip_writer`` — legacy writes, with a slug locator. Slug (``404``) →
-  session (``401``) → active membership (``403``). A ``tripId`` locator for the
-  v2 routes arrives with ``t-am-v2-rider-writes``, and ``require_trip_leader``
-  with its first consumer, ``t-am-trip-create``.
+  session (``401``) → active membership (``403``).
+- ``require_trip_writer_by_id`` — v2 rider writes, by ``{tripId}``. Session
+  (``401``) → trip located (public, or any membership row; else the reader's
+  byte-identical ``404``) → active membership (``403``). ``require_trip_leader``
+  arrives with its first consumer, ``t-am-trip-create``.
 
 **Why the legacy write order is slug → session → membership.** This is the ADR's
 order unchanged (Entry 29; contract, "Where the session check sits"). A trip
@@ -419,7 +421,20 @@ async def require_trip_writer(
     trip = await _locate_trip(slug, session)
     user = await _signed_in_user(request, response, session)
     membership = await get_for_user(session, trip.id, user.user_id)
+    return _writer_context(trip, user, membership)
 
+
+def _writer_context(
+    trip: TripRecord, user: SessionUser, membership: MembershipRecord | None
+) -> TripWriterContext:
+    """
+    The membership half of both writer gates: an active membership, else ``403``.
+
+    Runs once the trip is located, however it was located. A revoked member
+    gets ``NO_LONGER_A_RIDER_MESSAGE``; anyone with no row at all gets
+    ``NOT_A_RIDER_MESSAGE``. One function, so the slug and trip-id gates cannot
+    drift apart on the 403s the offline queue branches on.
+    """
     if membership is None:
         raise ApiError.forbidden(NOT_A_RIDER_MESSAGE)
     if not membership.active:
@@ -432,6 +447,63 @@ async def require_trip_writer(
         user=user,
         role=membership.role,
     )
+
+
+async def require_trip_writer_by_id(
+    trip_id: Annotated[
+        str,
+        Path(
+            alias="tripId",
+            description="The trip's id. Not a secret: it only names the trip. A write needs a "
+            "signed-in account with an active membership on it. No session is a 401 for every "
+            "trip id, existing or not; a private trip the caller has no membership row on is a "
+            "404 identical to a trip id that doesn't exist; a non-member of a public trip, or a "
+            "revoked member, is a 403.",
+        ),
+    ],
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> TripWriterContext:
+    """
+    v2 write gate: session (``401``) → trip located (``404``) → active membership (``403``).
+
+    The ``{tripId}`` counterpart of ``require_trip_writer``, for the v2 rider
+    writes (contract, "The gates" and "Where the session check sits").
+
+    **Session first.** A trip id is public, so the ``401`` is decided before any
+    trip is looked up: an anonymous or expired caller gets the same ``401`` for
+    a public trip, a private trip and a random id, and learns nothing. It also
+    means a queued write whose only problem is an expired session *pauses* on
+    the ``401`` instead of failing for good on a never-retry ``404``.
+
+    **Located** means the trip exists and is either public or the caller has
+    *any* membership row on it, active or revoked. Anything else is the
+    reader's ``404`` (``TRIP_NOT_FOUND_MESSAGE``), so a private trip is
+    invisible to a stranger or a pending requester on the write path as well.
+    A revoked member *is* told: the ``403`` "no longer a rider" message, on a
+    private trip too, because they have already seen it.
+
+    **The private-trip 404 and the nonexistent-id 404 stay indistinguishable**
+    the way ``require_trip_reader`` keeps them (see its docstring): one raise
+    for both, no cookie on either (a refresh goes on ``response``, which an
+    error discards), and the same statements, because the membership is read
+    keyed on the *requested* id whether or not a trip has it.
+
+    Then the same ``403`` decision as the slug gate (``_writer_context``). The
+    gate runs before any replay lookup, so a revoked member's replay of a stored
+    id is refused here with nothing written.
+    """
+    user = await _signed_in_user(request, response, session)
+    trip = await get_by_id(session, trip_id)
+    # Keyed on the requested id, not on `trip`: one statement whether or not the
+    # trip exists, so a private trip's 404 costs what a nonexistent id's does.
+    membership = await get_for_user(session, trip_id, user.user_id)
+
+    if trip is None or (trip.visibility != Visibility.PUBLIC and membership is None):
+        raise ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)
+
+    return _writer_context(trip, user, membership)
 
 
 async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:

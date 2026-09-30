@@ -248,7 +248,7 @@
             }
           },
           "422": {
-            "description": "The body failed schema validation \u2014 a missing or mistyped field, a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC offset**. That last one is server-enforced only; the generated client types it as a plain string and cannot catch it.",
+            "description": "The body failed schema validation \u2014 a missing or mistyped field, a `locationSource` outside `gps`/`manual`, or an `arrivedAt` with **no UTC offset**. That last one is server-enforced only; the generated client types it as a plain string and cannot catch it. Also an `id` containing a NUL character, which no stored id can hold.",
             "content": {
               "application/json": {
                 "schema": {
@@ -466,7 +466,7 @@
             }
           },
           "422": {
-            "description": "A required form field is missing or invalid; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request's `Content-Length` is over 16 MiB, refused before the body is read. Never retried. Nothing was stored.",
+            "description": "A required form field is missing or invalid; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request's `Content-Length` is over 16 MiB, refused before the body is read; or the `id` contains a NUL character, which no stored id can hold. Never retried. Nothing was stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -590,7 +590,7 @@
             }
           },
           "422": {
-            "description": "The body failed schema validation.",
+            "description": "The body failed schema validation, or its `id` contains a NUL character, which no stored id can hold.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1528,6 +1528,128 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Add a bike to a trip",
+        "description": "**Context.** Registers a bike on a trip, located by trip id. The same write as\n`POST /api/trips/{slug}/bikes`; only the locator and the gate differ. Task\n`t-am-v2-rider-writes`.\n\n**How it works.** `limit_writes` runs first, then `require_trip_writer_by_id`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it -- the same 404\nthe v2 reads give), then an active membership as rider or leader (403). The gate\nruns before any replay lookup. `BikeCreate.id` then decides the three-way branch,\nmatched on `(trip, id)`: unseen -> 201; already on this trip -> 200 with the\nstored record; on a different trip -> 409, nothing disclosed. `created_by` is\nthe signed-in account.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/bikes` lists bikes;\n`PATCH /api/v2/trips/{tripId}/bikes/{bikeId}` edits one.",
+        "operationId": "create_bike_api_v2_trips__tripId__bikes_post",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BikeCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The bike as stored -- the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second bike.** This id is already a bike on this trip, so nothing was created and the **stored** record is returned unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they have no active membership: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member. Nothing was written, and a replay of an already-stored id is refused the same way.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` in the body already belongs to a bike on a **different** trip. Nothing was created, nothing about the conflicting record is disclosed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation, or its `id` contains a NUL character, which no stored id can hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v2/trips/{tripId}/stops": {
@@ -1588,6 +1710,128 @@
           },
           "429": {
             "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Add a stop to a trip",
+        "description": "**Context.** How a stop gets into the journal on the v2 surface, located by trip\nid (decision-log Entry 29). The same write as `POST /api/trips/{slug}/stops`;\nonly the locator and the gate differ. Task `t-am-v2-rider-writes`.\n\n**How it works.** `limit_writes` runs first, then `require_trip_writer_by_id`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it -- the same 404\nthe v2 reads give), then an active membership as rider or leader (403). The gate\nruns before any replay lookup. `StopCreate.id` (client-generated at capture time)\nthen decides one of three branches, matched on `(trip, id)`: unseen -> `201`;\nalready on this trip -> `200` with the stored record (a replay changes nothing);\non a different trip -> `409`, nothing disclosed. `created_by` is the signed-in\naccount. `arrivedAt` must carry a UTC offset.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/stops` lists what this writes;\n`POST /api/v2/trips/{tripId}/stops/{stopId}/photos` attaches photos to it.",
+        "operationId": "create_stop_api_v2_trips__tripId__stops_post",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stop as stored -- the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second stop.** This id is already a stop on this trip, so nothing was created and the **stored** record is returned unchanged, even where this request's body differs from it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they have no active membership: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member. Nothing was written, and a replay of an already-stored id is refused the same way.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` in the body already belongs to a stop on a **different** trip. Nothing was created, and nothing about the conflicting record is disclosed. Never-retry: the stop needs a new id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation -- a missing or mistyped field, a `locationSource` outside `gps`/`manual`, coordinates out of range, or an `arrivedAt` with **no UTC offset** -- or its `id` contains a NUL character, which no stored id can hold.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
             "headers": {
               "Retry-After": {
                 "description": "Whole seconds to wait before retrying; always at least 1.",
@@ -1695,6 +1939,139 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Upload a photo to a stop",
+        "description": "**Context.** How a photo gets into the journal on the v2 surface. Multipart: the\nform fields `id` and `takenAt` alongside the binary `file` part, and nothing\nelse -- the uploader's name comes from the account. The same write as\n`POST /api/trips/{slug}/stops/{stop_id}/photos`; only the locator and the\ngate differ. Task `t-am-v2-rider-writes`.\n\n**How it works.** The one check ahead of everything is the request-size cap: a\n`Content-Length` over 16 MiB (or a body that streams past it) is a 422 before\nthe body is read. Then `limit_writes` runs first, then `require_trip_writer_by_id`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it -- the same 404\nthe v2 reads give), then an active membership as rider or leader (403). The gate\nruns before any replay lookup. `{stopId}` must be a stop on this trip (404).\nThe `id` form field decides the three-way branch, matched on `(stop, id)`:\nunseen -> 201; same stop -> 200 replay, answered before the file is looked at;\ndifferent stop -> 409. Otherwise the file must be a JPEG of at most 15 MiB (422\nif not); its APP1-APP15 (EXIF, GPS, XMP, ICC) and COM segments are removed and\nthe stripped bytes are stored under `{tripId}/{stopId}/{id}`. `uploadedBy`\non the result is the account's display name at upload time.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/stops/{stopId}/photos` lists\nwhat this writes; `POST /api/v2/trips/{tripId}/stops` creates the stop.",
+        "operationId": "upload_photo_api_v2_trips__tripId__stops__stopId__photos_post",
+        "parameters": [
+          {
+            "name": "stopId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The id of the stop the photo attaches to. A stop on another trip is answered exactly as a stop that doesn't exist: 404.",
+              "title": "Stopid"
+            },
+            "description": "The id of the stop the photo attaches to. A stop on another trip is answered exactly as a stop that doesn't exist: 404."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_photo_api_v2_trips__tripId__stops__stopId__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The photo as stored -- the one just created (201), or the one already stored under this id (200).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second upload.** This id is already a photo on this stop, so nothing was created or stored and the **stored** record is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they have no active membership: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member. Nothing was written, and a replay of an already-stored id is refused the same way.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists. Also: the stop does not exist on this trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The `id` field already belongs to a photo on a **different** stop. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A required form field is missing or invalid (`takenAt` with no UTC offset included); or the `id` contains a NUL character; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request's `Content-Length` is over 16 MiB, refused before the body is read. Never retried. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v2/trips/{tripId}/map": {
@@ -1751,6 +2128,121 @@
           },
           "429": {
             "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/bikes/{bikeId}": {
+      "patch": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Update a bike on a trip",
+        "description": "**Context.** Partial update of a bike on a trip, located by trip id. The same\nwrite as `PATCH /api/trips/{slug}/bikes/{id}`; only the locator and the gate\ndiffer. Task `t-am-v2-rider-writes`.\n\n**How it works.** `limit_writes` runs first, then `require_trip_writer_by_id`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it -- the same 404\nthe v2 reads give), then an active membership as rider or leader (403). The gate\nruns before any replay lookup. Only the fields present in the body change; an\nexplicit `null` is a 422, and omitting a field is how \"no change\" is spelled.\nLast-write-wins: no conflict detection.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/bikes` creates the bike;\n`GET /api/v2/trips/{tripId}/bikes` returns the current state.",
+        "operationId": "patch_bike_api_v2_trips__tripId__bikes__bikeId__patch",
+        "parameters": [
+          {
+            "name": "bikeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The bike's id. A bike on another trip is answered exactly as a bike that doesn't exist: 404.",
+              "title": "Bikeid"
+            },
+            "description": "The bike's id. A bike on another trip is answered exactly as a bike that doesn't exist: 404."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BikePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The bike after applying the patch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BikeOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they have no active membership: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member. Nothing was written, and a replay of an already-stored id is refused the same way.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists. Also: no bike with this id exists on the trip.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed schema validation, an explicit `null` included.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
             "headers": {
               "Retry-After": {
                 "description": "Whole seconds to wait before retrying; always at least 1.",
@@ -2023,6 +2515,34 @@
           "file"
         ],
         "title": "Body_upload_photo_api_trips__slug__stops__stop_id__photos_post"
+      },
+      "Body_upload_photo_api_v2_trips__tripId__stops__stopId__photos_post": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Client-generated UUID4, assigned when the photo is captured (possibly offline, before upload succeeds). Replaying the same id on the same stop returns the existing photo (200) instead of storing a duplicate. See docs/api-contract.md 'Idempotency'."
+          },
+          "takenAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Takenat",
+            "description": "When the photo was taken, as a timezone-aware ISO 8601 instant: the capture time on the device, not the time the upload reached the server. The UTC offset is **required** -- a naive value is rejected with 422 / VALIDATION_ERROR. The generated client cannot catch this; only the server rejects it."
+          },
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "The photo: a JPEG of at most 15 MiB. Its EXIF, XMP, ICC and comment segments are removed before it is stored."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "takenAt",
+          "file"
+        ],
+        "title": "Body_upload_photo_api_v2_trips__tripId__stops__stopId__photos_post"
       },
       "ErrorCode": {
         "type": "string",

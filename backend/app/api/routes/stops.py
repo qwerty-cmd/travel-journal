@@ -52,6 +52,12 @@ ID_ALREADY_USED_MESSAGE = (
     "changed here. Sending it again unchanged will keep failing — it needs a new id."
 )
 
+# A NUL byte in the body's `id`: no stored id can contain one.
+ID_HAS_NUL_MESSAGE = (
+    "This stop couldn't be saved: its id contains a NUL character, which no id can hold. "
+    "Nothing was stored. Sending it again unchanged will keep failing — it needs a new id."
+)
+
 
 @router.get(
     "",
@@ -175,7 +181,8 @@ router.add_api_route(
                 HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation — a missing "
                 "or mistyped field, a `locationSource` outside `gps`/`manual`, or an "
                 "`arrivedAt` with **no UTC offset**. That last one is server-enforced only; the "
-                "generated client types it as a plain string and cannot catch it.",
+                "generated client types it as a plain string and cannot catch it. Also an `id` "
+                "containing a NUL character, which no stored id can hold.",
                 HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
@@ -240,6 +247,22 @@ async def create_stop(
     a status. `StopIdOnAnotherTrip` carries no data, and the message below takes
     nothing from the conflicting record.
     """
+    return await store_stop(session, context, stop, response)
+
+
+async def store_stop(
+    session: SessionDep, context: TripWriterContext, stop: StopCreate, response: Response
+) -> StopOut:
+    """
+    The create after the gate, shared by the legacy and v2 routes.
+
+    The three-way branch lives here once, so the two surfaces cannot answer the
+    same id differently. A NUL byte in the client id is a ``422`` before any
+    query: Postgres ``text`` cannot hold one, so the lookup would fail in the
+    driver as a ``500``, which the offline queue retries forever.
+    """
+    if "\x00" in stop.id:
+        raise ApiError.validation(ID_HAS_NUL_MESSAGE)
     try:
         created_stop, created = await create(
             session, context.trip.id, stop, created_by=context.user.user_id

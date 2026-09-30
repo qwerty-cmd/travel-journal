@@ -21,8 +21,11 @@ default 21), so every row is asserted through the rider slug *and* the viewer
 slug. Legacy reads stay full for everyone, and ``TripOut.access`` is ``rider``
 iff the caller is an active member.
 
-This file is where later tasks add the v2 rows (``t-am-v2-rider-writes``) and
-the leader column (``t-am-trip-create``). ``t-am-write-gate-legacy`` owns the
+``t-am-v2-rider-writes`` added the v2 write columns (section 13): anonymous
+``401`` for a public trip, a private trip and a random id alike; a non-member
+or pending caller ``403`` on a public trip and, on a private one, the ``404`` a
+nonexistent trip id gets; revoked ``403``; rider and leader ``2xx``. The leader
+column arrives with ``t-am-trip-create``. ``t-am-write-gate-legacy`` owns the
 legacy rows below; ``t-am-v2-trip-reads`` added the v2 read columns (section
 12): public read ``200`` for everyone, delayed for non-members and full for
 members; private read ``200`` full for members and, for everyone else, the
@@ -1665,3 +1668,232 @@ async def test_a_private_trip_costs_the_same_statements_as_a_nonexistent_id(
     assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
     assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
     assert private_count == missing_count
+
+
+# --------------------------------------------------------------------------
+# 13. The v2 write columns: "Public write" and "Private write" (t-am-v2-rider-writes)
+# --------------------------------------------------------------------------
+
+# Contract matrix, write columns. None = 2xx (the write's own success status).
+# Anything else is (status, code, message).
+_NOT_FOUND = (HTTPStatus.NOT_FOUND, ErrorCode.NOT_FOUND, "We couldn't find this trip.")
+EXPECTED_V2_WRITE = {
+    ("anonymous", "public"): EXPECTED_WRITE["anonymous"],
+    ("anonymous", "private"): EXPECTED_WRITE["anonymous"],
+    ("non_member", "public"): EXPECTED_WRITE["non_member"],
+    ("non_member", "private"): _NOT_FOUND,
+    ("pending", "public"): EXPECTED_WRITE["pending"],
+    ("pending", "private"): _NOT_FOUND,
+    ("rider", "public"): None,
+    ("rider", "private"): None,
+    ("revoked", "public"): EXPECTED_WRITE["revoked"],
+    ("revoked", "private"): EXPECTED_WRITE["revoked"],
+    ("leader", "public"): None,
+    ("leader", "private"): None,
+}
+
+
+async def send_v2(
+    client: AsyncClient,
+    write: str,
+    trip_id: str,
+    cast: Cast,
+    headers: dict[str, str],
+    *,
+    record_id: str | None = None,
+) -> Response:
+    """One v2 write against ``trip_id``, with a fresh client-generated id unless one is given."""
+    record_id = record_id or str(uuid4())
+    base = f"/api/v2/trips/{trip_id}"
+    if write == "create_stop":
+        return await client.post(
+            f"{base}/stops",
+            json={
+                "id": record_id,
+                "name": "Matrix v2 write",
+                "lat": -14.5,
+                "lng": 132.3,
+                "locationSource": "gps",
+                "arrivedAt": "2026-06-14T15:15:00+09:30",
+            },
+            headers=headers,
+        )
+    if write == "upload_photo":
+        return await client.post(
+            f"{base}/stops/{cast.stop_id}/photos",
+            data={"id": record_id, "takenAt": "2026-06-14T10:00:00+09:30"},
+            files={"file": ("photo.jpg", minimal_jpeg(), "image/jpeg")},
+            headers=headers,
+        )
+    if write == "create_bike":
+        return await client.post(
+            f"{base}/bikes",
+            json={"id": record_id, "riderName": "Kim", "make": "BMW", "model": "R80", "year": 1985},
+            headers=headers,
+        )
+    if write == "patch_bike":
+        return await client.patch(
+            f"{base}/bikes/{cast.bike_id}", json={"specs": f"patched {record_id}"}, headers=headers
+        )
+    raise AssertionError(write)
+
+
+@pytest.mark.parametrize("write", WRITES)
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_write_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    swept_bucket: None,
+    visibility: str,
+    identity: str,
+    write: str,
+) -> None:
+    """
+    The matrix cell for every v2 write, on both visibilities: status, whole body, tables.
+
+    A private trip's 404 is compared byte for byte with the same write to a
+    random trip id, and a refusal must leave the tables unchanged.
+    """
+    before = await snapshot(migrated_engine, cast.trip.id)
+    record_id = str(uuid4())
+
+    response = await send_v2(
+        client, write, cast.trip.id, cast, cast.headers(identity), record_id=record_id
+    )
+
+    expected = EXPECTED_V2_WRITE[(identity, visibility)]
+    after = await snapshot(migrated_engine, cast.trip.id)
+    if expected is None:
+        assert response.status_code == SUCCESS[write], response.text
+        if write == "create_stop":
+            assert after["stops"] == before["stops"] | {record_id}
+        elif write == "upload_photo":
+            assert after["photos"] == before["photos"] | {record_id}
+        elif write == "create_bike":
+            assert {b for b, _ in after["bikes"]} == {b for b, _ in before["bikes"]} | {record_id}
+        else:
+            assert (cast.bike_id, f"patched {record_id}") in after["bikes"]
+        return
+
+    status, code, message = expected
+    assert response.status_code == status, response.text
+    assert response.json() == {"error": {"code": code.value, "message": message}}
+    assert session_cookies(response) == []
+    if identity == "anonymous":
+        assert response.headers.get("www-authenticate") == WWW_AUTHENTICATE
+    if status == HTTPStatus.NOT_FOUND:
+        nonexistent = await send_v2(client, write, str(uuid4()), cast, cast.headers(identity))
+        assert nonexistent.status_code == HTTPStatus.NOT_FOUND
+        assert response.content == nonexistent.content
+        assert {k: v for k, v in response.headers.items() if k != "date"} == {
+            k: v for k, v in nonexistent.headers.items() if k != "date"
+        }
+    assert after == before
+
+
+@pytest.mark.parametrize("write", WRITES)
+async def test_v2_anonymous_write_is_the_same_401_for_every_trip_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    swept_bucket: None,
+    visibility: str,
+    write: str,
+) -> None:
+    """
+    Session first: an anonymous write to this trip, whichever visibility, and to a
+    random id get byte-identical 401s (headers too, all but ``date``).
+    """
+    existing = await send_v2(client, write, cast.trip.id, cast, {})
+    random_id = await send_v2(client, write, str(uuid4()), cast, {})
+
+    assert_unauthenticated(existing)
+    assert existing.content == random_id.content
+    assert {k: v for k, v in existing.headers.items() if k != "date"} == {
+        k: v for k, v in random_id.headers.items() if k != "date"
+    }
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("write", WRITES)
+@pytest.mark.parametrize("identity", ["non_member", "pending"])
+async def test_a_private_trip_write_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+    write: str,
+) -> None:
+    """No timing oracle on the write path: the private-trip 404 runs as many statements."""
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await send_v2(client, write, trip_id, cast, cast.headers(identity))
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count
+
+
+@pytest.mark.parametrize("write", WRITES)
+async def test_a_member_of_one_trip_cannot_write_to_another_by_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    swept_bucket: None,
+    visibility: str,
+    write: str,
+) -> None:
+    """A rider on ``trip`` has no row on ``other_trip`` (private, seeded): the 404, nothing written."""
+    before = await snapshot(migrated_engine, cast.other_trip.id)
+    response = await send_v2(client, write, cast.other_trip.id, cast, cast.headers("rider"))
+    assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+    assert await snapshot(migrated_engine, cast.other_trip.id) == before
+
+
+@pytest.mark.parametrize("write", ("create_stop", "upload_photo", "create_bike"))
+async def test_a_revoked_riders_v2_replay_of_a_stored_id_is_refused(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    swept_bucket: None,
+    visibility: str,
+    write: str,
+) -> None:
+    """The gate runs before the replay lookup: a stored id from a now-revoked rider is a 403."""
+    record_id = str(uuid4())
+    first = await send_v2(
+        client, write, cast.trip.id, cast, cast.headers("rider"), record_id=record_id
+    )
+    assert first.status_code == HTTPStatus.CREATED, first.text
+
+    async with migrated_engine.begin() as conn:
+        await conn.execute(
+            update(tables.trip_members)
+            .where(
+                tables.trip_members.c.trip_id == cast.trip.id,
+                tables.trip_members.c.user_id == cast.accounts["rider"].user_id,
+            )
+            .values(revoked_at=datetime.now(UTC))
+        )
+    before = await snapshot(migrated_engine, cast.trip.id)
+
+    replay = await send_v2(
+        client, write, cast.trip.id, cast, cast.headers("rider"), record_id=record_id
+    )
+    assert replay.status_code == HTTPStatus.FORBIDDEN, replay.text
+    assert replay.json() == {"error": {"code": "FORBIDDEN", "message": AC_NO_LONGER_A_RIDER}}
+    assert await snapshot(migrated_engine, cast.trip.id) == before

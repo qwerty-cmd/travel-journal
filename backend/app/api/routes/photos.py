@@ -11,6 +11,7 @@ not, preventing cross-trip data access.
 import asyncio
 import io
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from functools import partial
 from http import HTTPStatus
 from typing import Annotated, Any
@@ -135,6 +136,12 @@ PHOTO_ID_CONFLICT_MESSAGE = (
     "changed here. Sending it again unchanged will keep failing -- it needs a new id."
 )
 
+# A NUL byte in the form's `id`: no stored id can contain one.
+PHOTO_ID_HAS_NUL_MESSAGE = (
+    "This photo couldn't be saved: its id contains a NUL character, which no id can hold. "
+    "Nothing was stored. Sending it again unchanged will keep failing -- it needs a new id."
+)
+
 
 async def _verified_stop(context: TripContext, stop_id: str, session) -> None:
     """Raise 404 if stop_id is not on this trip."""
@@ -230,7 +237,8 @@ router.add_api_route(
                 HTTPStatus.UNPROCESSABLE_ENTITY: "A required form field is missing or invalid; "
                 "or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk "
                 "cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the "
-                "request's `Content-Length` is over 16 MiB, refused before the body is read. "
+                "request's `Content-Length` is over 16 MiB, refused before the body is read; "
+                "or the `id` contains a NUL character, which no stored id can hold. "
                 "Never retried. Nothing was stored.",
                 HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
@@ -323,10 +331,33 @@ async def upload_photo(
         ),
     ] = None,
 ) -> PhotoOut:
+    return await store_photo(session, context, stop_id, id, takenAt, file, response)
+
+
+async def store_photo(
+    session: SessionDep,
+    context: TripWriterContext,
+    stop_id: str,
+    photo_id: str,
+    taken_at: datetime,
+    file: UploadFile,
+    response: Response,
+) -> PhotoOut:
+    """
+    The upload after the gate, shared by the legacy and v2 routes.
+
+    Stop check (404), then the client id: a NUL byte is a 422 before any query
+    (Postgres ``text`` cannot hold one; the lookup would be a 500). Then the
+    three-way branch, the JPEG strip and the storage write, in that order, once
+    for both surfaces. The request-size cap is not here: it has to run before
+    the body is read, so it is the route class (``CappedBodyRoute``).
+    """
     await _verified_stop(context, stop_id, session)
+    if "\x00" in photo_id:
+        raise ApiError.validation(PHOTO_ID_HAS_NUL_MESSAGE)
 
     # Three-way idempotency: check replay first (avoids uploading bytes twice)
-    existing = await find_existing(session, stop_id, id)
+    existing = await find_existing(session, stop_id, photo_id)
     if existing is not None:
         response.status_code = HTTPStatus.OK
         return existing
@@ -336,11 +367,11 @@ async def upload_photo(
     stripped = await _stripped_jpeg(file)
 
     # Cross-stop conflict check
-    if await check_id_conflict(session, id):
+    if await check_id_conflict(session, photo_id):
         raise ApiError.conflict(PHOTO_ID_CONFLICT_MESSAGE)
 
     # Upload to S3, then persist the DB row
-    object_key = f"{context.trip.id}/{stop_id}/{id}"
+    object_key = f"{context.trip.id}/{stop_id}/{photo_id}"
 
     # The stripped bytes, never the upload as received. boto3 switches to
     # multipart on its own above its size threshold. That is a memory choice,
@@ -358,10 +389,10 @@ async def upload_photo(
     photo = await insert(
         session,
         stop_id,
-        id,
+        photo_id,
         # The account's name, never the form's `uploadedBy` (contract default 23).
         context.user.display_name,
-        takenAt,
+        taken_at,
         object_key,
         created_by=context.user.user_id,
     )

@@ -29,10 +29,14 @@ class, decided by name first and path second:
   ``require_trip_reader`` (by trip id, private trips hidden) under
   ``/api/v2/trips`` (``t-am-v2-trip-reads``). Swapping them is a failure too:
   the legacy gate on a v2 path would serve private trips to anyone. An unsafe
-  method declares exactly one membership gate from ``TRIP_UNSAFE_GUARDS`` —
-  ``require_trip_writer``, and ``require_trip_leader`` once it is built
-  (``t-am-trip-create``) — and nothing else (``t-am-write-gate-legacy``, Entry
-  29 obligation 4). ``require_session`` alone is not enough on a trip write: it
+  method declares exactly one membership gate for its surface —
+  ``require_trip_writer`` (by slug) under ``/api/trips``,
+  ``require_trip_writer_by_id`` (by trip id, session first) under
+  ``/api/v2/trips`` (``t-am-v2-rider-writes``), and ``require_trip_leader`` once
+  it is built (``t-am-trip-create``) — and nothing else
+  (``t-am-write-gate-legacy``, Entry 29 obligation 4). Swapping the two writer
+  gates fails too: the slug gate cannot even resolve a ``{tripId}``, and the
+  trip-id gate on a slug path would look a slug up as an id. ``require_session`` alone is not enough on a trip write: it
   says who is asking, not whether they may write to this trip.
 
 Both allowlists are by *name*, so renaming a path cannot quietly widen an
@@ -95,12 +99,19 @@ from app.core.security import (
     require_trip_access,
     require_trip_reader,
     require_trip_writer,
+    require_trip_writer_by_id,
 )
 from app.main import app
 
 # Every guard the audit recognises. `_declared_guards` reports any of these found
 # at any depth of a route's dependency tree.
-GUARDS = (require_trip_access, require_trip_reader, require_trip_writer, require_session)
+GUARDS = (
+    require_trip_access,
+    require_trip_reader,
+    require_trip_writer,
+    require_trip_writer_by_id,
+    require_session,
+)
 
 # Methods that only read, and methods that change something. A method in
 # neither set — a DELETE endpoint, say — is a hard failure rather than a skip:
@@ -114,10 +125,11 @@ UNSAFE_METHODS = frozenset({"POST", "PATCH"})
 LEGACY_TRIP_READ_GUARD = require_trip_access
 V2_TRIP_READ_GUARD = require_trip_reader
 
-# The membership gates an unsafe trip-scoped route may declare, exactly one of.
-# `require_trip_leader` joins this set (and GUARDS) when `t-am-trip-create`
-# builds it; until then no route can declare it.
-TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer})
+# The membership gates an unsafe trip-scoped route may declare, exactly one of,
+# by surface. `require_trip_leader` joins the v2 set (and GUARDS) when
+# `t-am-trip-create` builds it; until then no route can declare it.
+LEGACY_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer})
+V2_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer_by_id})
 
 # Trip-scoped routes live under one of these (legacy slug routes, v2 trip-id routes).
 TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
@@ -277,10 +289,13 @@ def _violation(method: str, route: Any) -> str | None:
             )
         return None
 
-    if len(guards) != 1 or not guards <= TRIP_UNSAFE_GUARDS:
+    unsafe_guards = (
+        V2_TRIP_UNSAFE_GUARDS if route.path.startswith("/api/v2/") else LEGACY_TRIP_UNSAFE_GUARDS
+    )
+    if len(guards) != 1 or not guards <= unsafe_guards:
         return (
             f"{label} is a trip-scoped write and must declare exactly one of "
-            f"{_names(set(TRIP_UNSAFE_GUARDS))}; it declares {_names(guards) or 'no trip guard'}"
+            f"{_names(set(unsafe_guards))}; it declares {_names(guards) or 'no trip guard'}"
         )
     return None
 
@@ -511,6 +526,14 @@ def test_the_rules_reject_miswired_routes() -> None:
     scratch.add_api_route("/api/v2/trips/{tripId}/things", read, methods=["GET"])
     scratch.add_api_route("/api/trips/{slug}/v2-guarded", v2_read, methods=["GET"])
     scratch.add_api_route("/api/v2/trips/{tripId}/fine", v2_read, methods=["GET"])
+
+    # Each surface's writer gate on the other surface's path (t-am-v2-rider-writes).
+    async def v2_write(guard: Annotated[Any, Depends(require_trip_writer_by_id)]) -> None:
+        return None
+
+    scratch.add_api_route("/api/v2/trips/{tripId}/slug-gated", stray, methods=["POST"])
+    scratch.add_api_route("/api/trips/{slug}/id-gated", v2_write, methods=["POST"])
+    scratch.add_api_route("/api/v2/trips/{tripId}/write-fine", v2_write, methods=["POST"])
     routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
 
     must_fail = [
@@ -523,6 +546,8 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("POST", "/api/trips/{slug}/doubled"),
         ("GET", "/api/v2/trips/{tripId}/things"),
         ("GET", "/api/trips/{slug}/v2-guarded"),
+        ("POST", "/api/v2/trips/{tripId}/slug-gated"),
+        ("POST", "/api/trips/{slug}/id-gated"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
@@ -531,6 +556,7 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("GET", "/api/trips/{slug}/things"),
         ("PATCH", "/api/trips/{slug}/things/{id}"),
         ("GET", "/api/v2/trips/{tripId}/fine"),
+        ("POST", "/api/v2/trips/{tripId}/write-fine"),
     ]:
         assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
 

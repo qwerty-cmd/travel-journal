@@ -30,6 +30,14 @@ ID_ALREADY_USED_MESSAGE = (
     "changed here. Sending it again unchanged will keep failing -- it needs a new id."
 )
 
+# A NUL byte in the body's `id`: no stored id can contain one.
+ID_HAS_NUL_MESSAGE = (
+    "This bike couldn't be saved: its id contains a NUL character, which no id can hold. "
+    "Nothing was stored. Sending it again unchanged will keep failing -- it needs a new id."
+)
+
+BIKE_NOT_FOUND_MESSAGE = "No bike with this id exists on this trip."
+
 
 @router.post(
     "",
@@ -59,7 +67,8 @@ ID_ALREADY_USED_MESSAGE = (
                 HTTPStatus.CONFLICT: "The `id` in the body already belongs to a bike on a "
                 "**different** trip. Nothing was created, nothing about the conflicting record "
                 "is disclosed.",
-                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation, or its "
+                "`id` contains a NUL character, which no stored id can hold.",
                 HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
@@ -88,6 +97,21 @@ async def create_bike(
     response: Response,
 ) -> BikeOut:
     """Create the bike, or hand back the one this id already named on this trip."""
+    return await store_bike(session, context, bike, response)
+
+
+async def store_bike(
+    session: SessionDep, context: TripWriterContext, bike: BikeCreate, response: Response
+) -> BikeOut:
+    """
+    The create after the gate, shared by the legacy and v2 routes.
+
+    The three-way branch lives here once, so the two surfaces cannot answer the
+    same id differently. A NUL byte in the client id is a ``422`` before any
+    query: Postgres ``text`` cannot hold one, so the lookup would be a ``500``.
+    """
+    if "\x00" in bike.id:
+        raise ApiError.validation(ID_HAS_NUL_MESSAGE)
     try:
         created_bike, created = await create(
             session, context.trip.id, bike, created_by=context.user.user_id
@@ -143,7 +167,20 @@ async def patch_bike(
     body: BikePatch,
 ) -> BikeOut:
     """Apply a partial update to a bike on this trip."""
-    updated = await patch(session, context.trip.id, id, body)
+    return await apply_bike_patch(session, context, id, body)
+
+
+async def apply_bike_patch(
+    session: SessionDep, context: TripWriterContext, bike_id: str, body: BikePatch
+) -> BikeOut:
+    """
+    The patch after the gate, shared by the legacy and v2 routes.
+
+    A bike id with a NUL byte is the unknown bike's ``404`` without a query (no
+    stored id can hold one; the driver would raise a ``500``), the same guard
+    as ``photos.stop_belongs_to_trip``.
+    """
+    updated = None if "\x00" in bike_id else await patch(session, context.trip.id, bike_id, body)
     if updated is None:
-        raise ApiError.not_found("No bike with this id exists on this trip.")
+        raise ApiError.not_found(BIKE_NOT_FOUND_MESSAGE)
     return updated

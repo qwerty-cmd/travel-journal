@@ -813,6 +813,8 @@ def test_openapi_declares_404_and_429_on_every_v2_read_and_never_401() -> None:
 
     for read_path in V2_READ_PATHS:
         operations = spec["paths"][read_path]
-        assert set(operations) == {"get"}, (read_path, set(operations))  # HEAD is schema-excluded
+        # HEAD is schema-excluded. Other verbs may share the path (the v2 rider
+        # writes, `t-am-v2-rider-writes`); only the GET is checked here.
+        assert "get" in operations and "head" not in operations, (read_path, set(operations))
         errors = {code for code in operations["get"]["responses"] if not code.startswith("2")}
         assert {"404", "429"} <= errors <= {"404", "422", "429"}, (read_path, errors)
