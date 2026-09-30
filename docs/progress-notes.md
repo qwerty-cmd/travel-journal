@@ -2233,6 +2233,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-identity-core QA, triggered debt promoted here).** `require_session` puts the refreshed cookie on FastAPI's injected `Response`, which is lost when a gated route returns its own `Response` (e.g. a 204 sign-out) or the request errors after `last_used_at` was bumped. Any gated route in this task that returns a `Response` directly must carry the refresh `Set-Cookie` too (or the mechanism moves to a request-state hook); add a test that a >24 h-old session hitting such a route receives the refreshed cookie.
 
+DONE 2026-09-30. `api/routes/v2/auth.py` (signup 201/409/422, signin 200/401/422/429, signout 204, me 200/401), `core/recovery_codes.py` (128-bit Crockford), per-route-class audit. Lockout: each verify reserves a slot with an atomic conditional UPDATE committed before argon2 (≤ 10 per window under any concurrency; saturation locks at once; success never clears another request's lock). QA first FAIL (parallel bypass: 20 guesses verified, correct password cleared a lock), fixed, re-QA PASS: 10 verifies in every parallel run, no connection held across argon2, sequential semantics unchanged. Tests: test_auth_endpoints 40; suite 1297; frontend 385 + build. Debt/routing below.
+
 ## t-am-auth-account
 **Goal.** Signout-all, password change, recover and recovery-code rotation, as in the contract.
 **Scope.** `api/routes/v2/auth.py`, the users and sessions repositories, the route-audit allowlists (for these routes only), tests, Kubb regen.
@@ -2258,6 +2260,8 @@ cd backend && uv run pytest tests/test_auth_endpoints.py tests/test_route_depend
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Added AC (from t-am-auth-sessions, triggered debt).** Signout-all (and any other `require_session` route here) must not return its own `Response`: set the status on the decorator and return `None`, so `require_session`'s refresh `Set-Cookie` survives; test a >24 h-old session on it.
 
 ## t-am-rate-limits
 
@@ -2289,6 +2293,8 @@ cd backend && uv run pytest tests/test_ratelimit.py tests/test_auth_endpoints.py
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Added AC (from t-am-auth-sessions).** `tests/test_auth_endpoints.py` makes > 10 signins from one client IP (lockout tests); the per-test limiter reset must cover it so those tests keep testing the lockout, not the IP bucket.
 
 ## t-am-write-gate-legacy
 **Goal.** One membership gate. Slugs locate trips but never authorise.
@@ -2585,6 +2591,8 @@ docker compose up -d postgres minio minio-init
 cd backend && uv run pytest tests/test_operator_clis.py tests/test_seed_trip.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
+**Added AC (from t-am-auth-sessions QA, triggered debt promoted here).** Signin checks the lock before the disabled flag, so an account locked before being disabled answers 429 + Retry-After instead of the identical 401. Once `--disable` exists, disabling must also clear `locked_until`/`failed_logins` (or signin checks disabled first while keeping equal timing); test that a disabled account always gets the identical 401.
+
 ## t-am-runbook-accounts
 **AC.** `docs/deploy-cutover-runbook.md` covers:
 - migration 0003;
@@ -2861,3 +2869,7 @@ ORDINARY DEBT (dev + QA on t-am-csrf). (1) No test for repeated `Sec-Fetch-Site`
 ## t-am-identity-core-doc-gaps
 
 ORDINARY DEBT (test-writer + QA on t-am-identity-core). (1) `models/account.py` comment says NFKC never lengthens past the cap — wrong (`ﬁ`→2 chars, U+FDFA→18); behaviour correct since the cap applies to raw input. (2) `ApiError.__init__` comment says only 401/429 constructors set headers; `unauthenticated()` now also sets `Set-Cookie`. (3) `sessions_repo.touch()` commits the request's shared `AsyncSession` inside a dependency, so an earlier dependency's pending writes would commit with it (none exist today). (4) Test env: the S3 bucket fixture can't create its bucket on a fresh mock under `S3_REGION=auto` (no location constraint); CI and compose are unaffected (bucket pre-created).
+
+## t-am-auth-sessions-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-auth-sessions). (1) Contract Me note says Me is the only response containing a username; signup/signin also return `MeOut` per the table — fix the note. (2) `core/security.py` docstring still says no route declares `require_session`. (3) `SessionCreate.username` / `AccountRecover.username` have no `max_length` (see t-am-json-body-limit). (4) Audit self-test never feeds an account route outside `/api/v2` or one declaring two guards (live rule enforces both). (5) With 10 verifies in flight a correct password gets 429 and the account locks — deliberate, keeps the ≤ 10 bound and self-heals stranded slots; QA agrees it's within the contract.
