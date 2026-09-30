@@ -96,12 +96,18 @@ Tick each box as you go.
   needs your approval. Section "Container Apps environment and app", in order: the environment, the
   Container App (the step 2 secrets marked "App + Job"; no `GRAPH_*`; `--max-replicas 1`), then the
   `/api/health` startup and liveness probes applied with the `az rest` script
-  (`t-infra-container-apps-probe`, see the table at the end). That script sends a plain
-  `application/json` PATCH; the call is long-running, so it answers `202` with no body and the script
-  proves the probes landed by re-reading the app until they appear (up to 3 minutes) rather than by
-  reading the response. Run it as a script file or inside `bash <<'EOF' ... EOF` — it exits non-zero on
-  failure, which would end a shell you pasted it into. Then check traffic and health on the revisions,
-  as that section says.
+  (`t-infra-container-apps-probe`, see the table at the end). **These probes have already been applied
+  to the live app once (2026-09-30) and verified by a raw ARM read**, so on that app this step is done;
+  the instructions below are what to do on a rebuilt app, or after any later template change. The script
+  sends a plain `application/json` PATCH; the call is long-running, so it answers `202` with no body and
+  the script proves the probes landed by re-reading the app until they appear (up to 3 minutes) rather
+  than by reading the response. It generates a **fresh revision suffix on every run** — a PATCH merges,
+  so reusing the stored suffix makes ARM refuse the whole update while still answering `202` — and it
+  polls a raw `az rest` GET for `properties.deploymentErrors`, because `az containerapp show` drops that
+  field and would hide exactly this refusal. Run it as a script file or inside `bash <<'EOF' ... EOF` —
+  it exits non-zero on failure, which would end a shell you pasted it into. Then check traffic and health
+  on the revisions, as that section says, and **deactivate the superseded revisions** (§8) — each one
+  left active keeps a replica and its own Neon connection pool.
 - [ ] **You (devops drafts it; needs your approval at deploy time). OneDrive sync job.** Create the
   Container Apps Job described in `infra/azure/README.md` ("OneDrive sync job"). The job has its **own
   secret store**, separate from the app's. Set the shared secrets with the same names and values as the
@@ -318,6 +324,16 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 - [ ] **devops, after your confirmation.** Send traffic back to the last known-good revision with
   `az containerapp ingress traffic set ... --revision-weight <good-revision>=100`, or reactivate that
   revision. Don't rebuild forward under pressure.
+- [ ] **After any template change, deactivate the revisions it superseded — but keep one.** In
+  multiple-revision mode a superseded revision **stays active until you deactivate it**; moving traffic
+  off it is not enough. Each active revision keeps a replica running, and each replica opens its own Neon
+  connection pool — the thing `--max-replicas 1` was chosen to avoid (`infra/azure/README.md`, beside that
+  flag). Keep the revision serving traffic **and one known-good rollback target** for the step above, then
+  deactivate the rest:
+  `az containerapp revision deactivate --name <app-name> --resource-group <resource-group> --revision <old-revision>`
+  This is a live write on the running app, so **you approve it**; devops can run it after that, never on
+  its own initiative. Applying the probes in step 1 left three active revisions this way
+  (`t-owner-deactivate-superseded-revisions`).
 - [ ] **Schema is forward-only.** An image rollback does not undo a migration, so check that the older
   image still works with the current schema before you rely on it.
 - [ ] **A leaked rider link is a different kind of incident.** Handle it by rotating `trips.rider_slug`
@@ -326,11 +342,12 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 ## Triggered debt to decide at cutover
 
-One item is waiting on you: it is drafted, and applying it is part of creating the Container App.
+One item is waiting on you. The probe item that used to sit here is done.
 
 | Task | Why it matters now | Options |
 |---|---|---|
-| `t-infra-container-apps-probe` | **Drafted, not applied.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so production has no probe until you apply the definition. The startup and liveness probes are drafted in `infra/azure/README.md` ("Container Apps environment and app"), applied with an `az rest` PATCH (plain `application/json`) that writes back the whole containers array. The call is long-running: `202`, no body, a new revision. The script checks `az`'s exit code, then polls the re-read until the probes appear. **The live round trip has not been run** (`t-probe-patch-script-defects`). | Run the probe script right after creating the app (step 1), then check the new revision's health and which revision has traffic. |
+| `t-infra-container-apps-probe` | **Applied and verified, 2026-09-30 — nothing to decide.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the startup and liveness probes on `/api/health`:8000 are set on the app itself, with the `az rest` PATCH in `infra/azure/README.md` ("Container Apps environment and app"). The live round trip **has** now been run, and the probes were confirmed by a raw ARM read rather than by the script's own assertion: `provisioningState: Succeeded`, `deploymentErrors: None`, app serving throughout. Taking three rounds to get the script right is written up under `t-probe-patch-script-defects`. | Nothing, on this app. On a rebuilt app, run the script after creating it (step 1), then check health and traffic — and deactivate the superseded revisions (§8). |
+| `t-owner-deactivate-superseded-revisions` | **Waiting on you.** Applying the probes left **three active revisions** — the pre-probe one plus two `probes-*` ones, because the script ran twice. A superseded revision stays active until it is deactivated, and each active revision keeps a replica holding its own Neon connection pool, which is what `--max-replicas 1` was chosen to avoid. | Deactivate the superseded ones (§8), keeping the revision serving traffic and one known-good rollback target. It is a live write, so it needs your approval; no agent does it unprompted. |
 
 Every other item this table used to list is done: `t-api-healthcheck-wiring` (`f0a1d99`, local half),
 `t-access-log-slug-exposure`, `t-dockerignore-route-tree` (`93a30bf`), `t-settings-error-hides-input`,

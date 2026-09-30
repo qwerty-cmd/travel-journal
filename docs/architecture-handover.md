@@ -133,7 +133,8 @@ Rebuilt from `progress.json` on 2026-09-29. Every row below is `not_started`. Th
 - `t-owner-handover-finish`: fill in this document's TODOs (URL, revision names, mint dates).
 
 **Triggered debt.** Waits for a specific event.
-- `t-infra-container-apps-probe`: Container Apps ignores the Dockerfile `HEALTHCHECK`, so the Container App needs its own liveness probe on `/api/health`. Blocked by `t-owner-container-app-definition`.
+- ~~`t-infra-container-apps-probe`~~: **done, applied to the live app on 2026-09-30.** Container Apps ignores the Dockerfile `HEALTHCHECK`, so the app carries its own startup and liveness probes on `/api/health`. Nothing left for you here.
+- `t-owner-deactivate-superseded-revisions`: applying those probes left **three active revisions**, each keeping a replica with its own Neon connection pool. Deactivate the superseded ones (runbook §8), keeping the one serving traffic and one rollback target. It is a live write, so it needs your approval.
 - `t-onedrive-graph-name-charset`: unverified how real Graph treats `%2F` and OneDrive-forbidden characters in a filename. Every id today is a UUID, so none reach it. Check during the preflight.
 - `t-stop-rider-offset`: store the rider's UTC offset so rider-local time can be shown (decision-log Entry 26). Trigger: the spec asks for rider-local time.
 - Neon password characters (notes of `t-neon-sslmode-url`, no row): a password containing a raw `?` or `#` would break `normalize_database_url`. Percent-encode those if you ever set a password by hand.
@@ -191,7 +192,7 @@ Send traffic back to the previous revision (runbook §8). Don't rebuild forward 
 
 ### Health
 
-`/api/health` answers `200` when the process is up. It does not check the database or storage. Locally, the Dockerfile `HEALTHCHECK` and compose use it. Container Apps ignores `HEALTHCHECK`, so production needs its own liveness probe in the app definition (`t-infra-container-apps-probe`).
+`/api/health` answers `200` when the process is up. It does not check the database or storage — which is why the app has a startup and a liveness probe but deliberately no readiness probe. Locally, the Dockerfile `HEALTHCHECK` and compose use it. Container Apps ignores `HEALTHCHECK`, so the probes are set on the Container App itself; they were applied and verified on 2026-09-30 (`t-infra-container-apps-probe`).
 
 ### Logs
 

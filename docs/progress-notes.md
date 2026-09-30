@@ -1943,6 +1943,16 @@ OWNER TASK, `gate: none`, story `s-deploy-cutover`. Run the built production ima
 
 ## t-owner-container-app-definition
 
+DONE 2026-09-30 (owner). The Container App **exists and is serving** — three healthy revisions today, and the startup and liveness probes were applied and verified on it on 2026-09-30 (`t-infra-container-apps-probe`, confirmed by a raw ARM read). The definition drafted below was approved and run by the owner; that is how the app came to exist. What was actually created:
+- the environment `bike-rides` and the app itself, by the owner running the `infra/azure/README.md` blocks;
+- external ingress, target port 8000, `allowInsecure: false`;
+- multiple-revision mode (runbook §8's rollback depends on it);
+- `--min-replicas 0` (free tier, scale to zero) and `--max-replicas 1` (one replica's worth of Neon pool — three active revisions currently break that intent, filed as `t-owner-deactivate-superseded-revisions`);
+- the five app secrets (database and R2, runbook §2) plus the GHCR registry credential, and **no `GRAPH_*`** on the app — decision-log **Entry 27**, least privilege; those three live on the sync Job only. The row's original "secrets incl. `GRAPH_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN`" is superseded, and the task title now says so;
+- the probes were **not** part of the create command — they were applied afterwards under `t-infra-container-apps-probe`, because the CLI has no probe flags.
+
+**Ordering worth recording: the image must be pushed before the app is created.** The first create attempt failed with `MANIFEST_UNKNOWN` — the image had not been pushed yet — and the retry after the push succeeded. The runbook's step order implies the app can be created before the image exists, and it cannot. Not fixed here (one task, one patch); the runbook edit is unfiled.
+
 DRAFTED 2026-09-29 (devops, owner-approved draft; nothing provisioned). The owner wrote a parallel version of `infra/azure/README.md` on main (`e0587bd`). On merge the owner chose option A: the owner's version is the base (environment and app create with `read -rsp` prompts, an `az rest` merge-patch probe script, the budget alert in runbook §1), plus three changes from the devops draft: no `GRAPH_*` on the app (Entry 27), a startup probe next to liveness, and `--max-replicas 1`. The devops-only sections (a README budget section, custom domain, the §6 verification list) were dropped. The existing sync Job section now passes `--secrets` at creation; before, its `secretref` env vars pointed at secrets that did not exist yet. Least privilege (decision-log Entry 27): no `GRAPH_*` on the app, the Job only. Still the owner's: running the commands and entering the values. Nothing was checked against `az --help` here.
 
 OWNER TASK, `gate: none`, story `s-deploy-cutover`. `infra/` is off-limits without explicit approval, so this is the owner's; **devops can draft it with approval.** Add the Container App definition to `infra/azure/README.md` beside the Job:
@@ -1981,9 +1991,15 @@ DONE 2026-09-29, from the final QA pass. On a fresh clone `npm test` failed 7 fi
 
 ORDINARY DEBT, from the final QA pass (2026-09-29). The retry backoff timer lives only in the tab that held the drain lock. If that tab closes mid-backoff, a hidden background tab doesn't retry until its next trigger: becoming visible, the `online` event, or an enqueue broadcast. Nothing is lost, only delayed, and showing any tab drains the queue. No current consumer; no promotion trigger.
 
+## t-infra-container-apps-probe
+
+DONE, and **applied to the live app 2026-09-30**. Story `s-deploy-cutover`, `gate: triggered`. Container Apps ignores the Dockerfile `HEALTHCHECK`, so the startup and liveness probes on `/api/health`:8000 have to be set on the Container App itself. The CLI has no probe flags, so they are applied by the `az rest` PATCH script in `infra/azure/README.md`. Getting that script to actually work took three rounds — the whole story is under `t-probe-patch-script-defects`, including the settings the live app now carries and how they were confirmed by a raw ARM read rather than by the script's own assertion. Readiness is deliberately not set: `/api/health` checks no dependencies.
+
+Follow-on: `t-owner-deactivate-superseded-revisions` (the run left three active revisions).
+
 ## t-probe-patch-script-defects
 
-DONE 2026-09-29 (devops, two rounds). Story `s-deploy-cutover`, `gate: broken`. One file, `infra/azure/README.md`, the `bash`+`python`+`az rest` block that applies the startup and liveness probes (the CLI has no probe flags). Uncommitted at the time of writing; left in the working tree for the owner.
+DONE 2026-09-30 (devops, three rounds; `e343e60`, `a42c85c`). Story `s-deploy-cutover`, `gate: broken`. One file, `infra/azure/README.md`, the `bash`+`python`+`az rest` block that applies the startup and liveness probes (the CLI has no probe flags). Round three is what finally made it work against the live app; the probes are now applied and verified (see the end of this section).
 
 **Why `broken`, not a hardening pass.** The orchestrator ran the *committed* version against the live app from Windows Git Bash and it failed three separate ways and applied no probes. The app was healthy throughout — these were broken committed instructions, not an outage.
 
@@ -2000,19 +2016,45 @@ DONE 2026-09-29 (devops, two rounds). Story `s-deploy-cutover`, `gate: broken`. 
 
 So round two **deleted the response check entirely**, replaced `|| true` with explicit `if ! az ...; then ...; exit 1; fi` on all three failure-relevant calls (**not** relying on `set -e`, whose behaviour was measured to differ between a script file and a pasted interactive session), and wrapped the probe assertion in a bounded retry — 18 attempts, 10 s apart — because re-reading immediately races the new revision's provisioning. The proof the patch took is the re-read, not the response.
 
-**Two things it deliberately does not poll**, both of which look like the obvious success signal:
-- `provisioningState` — the live app carries a stale `Failed` from the original create, so waiting for `Succeeded` would hang on a patch that worked.
-- `latestReadyRevisionName` — observed to lag.
+**Two things round two deliberately did not poll**, both of which look like the obvious success signal. One of these calls was later disproved — see round three:
+- `provisioningState` — believed at the time to be a **stale** `Failed` left by the original create, so waiting for `Succeeded` would hang on a patch that worked. **This was wrong.** The `Failed` was the *result* of the rejected PATCHes, and round three polls it deliberately.
+- `latestReadyRevisionName` — observed to lag. This still holds; nothing polls it.
 
 **Two qa findings fixed in the same round.** The stale-probe filter was case-**sensitive** while the verifier was case-**insensitive**: given lowercase input the script emitted four probes and still reported success. And the block was fenced ```sh over bash-only syntax (`$'\n'`, `<<<`), which under `dash` runs `az containerapp show` before dying — now ```bash.
 
-**Verification status — read this before trusting the script.** Everything above was proven offline against synthetic fixtures and local reproduction. **The live PATCH round trip is UNVERIFIED:** that ARM accepts the corrected body, and that the probes land on a new revision, needs the owner's approved run (`t-owner-container-app-definition`, runbook §1). Nothing here should be read as "the probes are applied" — the live app still has no probes at all.
+**Round three (`a42c85c`) — the real root cause, which rounds one and two never reached.** The round-two script was run against the live app and still applied nothing: `az rest` exited 0, all 18 polls reported `missing Startup, Liveness probe(s)`, and **no new revision was created at all**. Read straight off the live resource, ARM's reason was:
 
-Residual debt from the qa pass is filed as `t-probe-script-residual-nits` and `t-infra-readme-sh-fences`. The `az containerapp update --yaml` alternative was investigated and rejected — decision-log **Entry 28**.
+```
+Field 'template.revisionsuffix' is invalid with details:
+'Invalid value: "rel-1bbe81bcbec5": revision with suffix rel-1bbe81bcbec5 already exists.'
+```
+
+`az containerapp create` stores the `--revision-suffix` it was given in `properties.template.revisionSuffix`, and a revision is named `<app>--<revisionSuffix>`. A PATCH **merges**, so omitting the field reuses the stored value; the RP then tries to create a revision whose name is already taken, rejects the whole update — and **still answers 202**. Documented behaviour: microsoft/azure-container-apps#1278, and Learn states the suffix "must be unique as the runtime rejects any conflicts with existing revision name suffix values".
+
+**Why the script structurally could not see it.** ARM reports this in `properties.deploymentErrors`, which is **absent from the `2026-07-01` swagger** and **dropped by `az containerapp show`** on deserialization. Verified both ways on the same resource at the same time: `False` through the CLI, `True` through a raw `az rest` GET. Round two's poll was reading a view that could not contain the error, so a *refused* patch looked exactly like a *slow* one.
+
+Round three therefore does two things:
+- **A fresh unique suffix every run**, `probes-<UTC timestamp>-<4 hex>`, built independently of the stored value. The hex matters: a timestamp alone repeats inside the same second.
+- **Polls a raw `az rest` GET instead of `az containerapp show`**, and exits immediately on `provisioningState: Failed` plus a non-empty `deploymentErrors` that **differs from a baseline taken before the PATCH**. The baseline compare is not belt-and-braces: at the moment a new PATCH is accepted, both fields still describe the *previous* operation, so without it the script would abort on stale evidence.
+
+**Three earlier conclusions of mine were wrong. Recorded so they are not re-derived.**
+1. **"`provisioningState: Failed` is stale from the original failed create."** It was not. It was the *result* of the rejected PATCHes, and it flipped to `Succeeded` on the first successful write. There was never a state to "clear" and never an app that needed recreating.
+2. **"No terminal event in the activity log, so the PATCH did not fail at ARM level."** Wrong control. The `12:50` operation that **succeeded** is equally silent. Post-create template updates on this app log no terminal event either way; only the `12:47` *create* failure did, because it failed inside ARM's create flow.
+3. **"`resources.ephemeralStorage`, echoed back from the read, is the culprit."** It is genuinely `readOnly: true` in the swagger, but ARM **ignores** read-only fields on write rather than rejecting them, and the RP's error aggregates every offending field while naming only `revisionsuffix`. It was inert. A full swagger walk also found `ephemeralStorage` is the **only** read-only field anywhere under `properties.template.*`, so the `containers` round trip needs no other stripping.
+
+**Verification status — the probes are applied.** Confirmed 2026-09-30 by a raw ARM read, not by the script's own assertion:
+- Liveness `/api/health`:8000 — `initialDelaySeconds 10, periodSeconds 30, timeoutSeconds 5, failureThreshold 3`.
+- Startup `/api/health`:8000 — `initialDelaySeconds 5, periodSeconds 10, timeoutSeconds 5, failureThreshold 10`.
+- `provisioningState: Succeeded`, `deploymentErrors: None`, `runningStatus: Running`.
+- The app served throughout: `/api/health` 200, SPA 200, a DB-backed 404 returning the correct error envelope, and plain HTTP still 301-redirecting.
+
+**One operational consequence, filed as `t-owner-deactivate-superseded-revisions`:** applying the probes left **three active revisions**, each running a replica — the pre-probe `--rel-1bbe81bcbec5` plus two `probes-*` ones, because the script ran twice and the fresh-suffix fix is precisely why they no longer collide.
+
+Residual debt from the qa pass is filed as `t-probe-script-residual-nits` and `t-infra-readme-sh-fences`. The `az containerapp update --yaml` alternative was investigated and rejected — decision-log **Entry 28**, whose reopen condition was tested in round three and pointed the other way (see the correction appended to that entry).
 
 ## t-probe-script-residual-nits
 
-ORDINARY DEBT (Gate 4), filed 2026-09-29 from the qa pass on `t-probe-patch-script-defects`. Do not implement on sight. Four independent nits in the same script in `infra/azure/README.md`; one patch would carry all four if any is ever promoted. **All were provoked by synthetic fixtures and none has a current consumer — the live app has no probes at all.** No promotion trigger for any of them.
+ORDINARY DEBT (Gate 4), filed 2026-09-29 from the qa pass on `t-probe-patch-script-defects`. Do not implement on sight. Four independent nits in the same script in `infra/azure/README.md`; one patch would carry all four if any is ever promoted. **All were provoked by synthetic fixtures and none has a current consumer.** Still true after the 2026-09-30 live run: the script applied the probes with none of these four firing. (The original filing added "the live app has no probes at all" as supporting evidence — that part is now out of date, the reasoning is not.) No promotion trigger for any of them.
 - An **empty-string `secretRef`** keeps both keys: the strip tests truthiness (`if env_var.get("secretRef")`), so `{"secretRef": "", "value": ""}` survives intact. ARM has not been seen to emit one.
 - A **pre-existing `Readiness` probe survives the filter**, which drops only `liveness`/`startup`. The script never adds a readiness probe, so the deliberate startup+liveness design intent (`/api/health` checks no dependencies) still holds for anything the script itself wrote.
 - The **probe port is compared as an int** in the verifier (`== 8000`), so a string `"8000"` read back from ARM would false-fail the check. ARM's schema types the field `int32`, so this is defensive only.
@@ -2027,3 +2069,29 @@ TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the qa pass on `t-probe-patch-scr
 - Current consumer: none. The owner has not run either block, and a fence label does not change what Git Bash does with a pasted block.
 - **Promotion trigger: anyone running those blocks under `sh`/dash** (a `sh infra-create.sh`, a CI step, or a non-bash default shell). Also fires if either block is lifted into a script file.
 - Agent: `devops`.
+
+## t-probe-script-yaml-rationale
+
+TRIGGERED DEBT (Gate 3), filed 2026-09-30 from decision-log **Entry 28**'s "Gap, deliberate and flagged" paragraph. Do not implement on sight.
+
+- **The finding.** `infra/azure/README.md` explains why the retry loop polls the re-read (long-running operation, stale `provisioningState`, lagging `latestReadyRevisionName`), but **not** why `az containerapp update --yaml` was rejected. The project convention is that a rejected option's rationale also lives beside the code someone would edit to retry it. Here it lives only in the log, so the retry loop reads as unexplained complexity rather than the deliberate price of giving up the SDK's built-in operation poller. `docs` cannot write `infra/`, which is why Entry 28 had to flag the gap rather than close it.
+- **Promotion trigger** (Entry 28's own words): the next patch that touches the probe script in `infra/azure/README.md`.
+- **The three reasons the note must record.** (1) the built-in `containerapp` module pins `CURRENT_API_VERSION = "2025-07-01"` while this work targets `2026-07-01`; (2) `--yaml`'s merge behaviour into the `containers` array is unverified, and getting it wrong partially overwrites a container definition in production; (3) `--yaml` takes a file, not stdin, against the repo's paste-an-az-block convention.
+- **Record the trap too.** "It would wipe secrets" was the first objection and **it is false** — the `--yaml` path re-reads the app and repopulates secret values via `list_secrets` before patching. The note beside the code has to say so, or a future reader rediscovers the wrong objection and treats it as the reason.
+- **New since Entry 28 was written, and it strengthens the case** (belongs in the note beside the code as well): the round-three root cause was a persisted `revisionSuffix` collision, and `--yaml` would have hit the **identical** collision because it echoes back the same stored value — plus azure-cli#32272 reports that a YAML `revisionSuffix` is dropped from the patch request entirely. So the built-in poller would have polled a *rejected* update to a confident finish.
+- `t-probe-script-residual-nits` and `t-infra-readme-sh-fences` target the same file; if the owner approves more than one together they can ship as a single patch, though all three stay tracked separately.
+- Agent: `devops`. **Needs the owner's explicit approval before anything is written** — `infra/` is off-limits.
+
+## t-owner-deactivate-superseded-revisions
+
+OWNER TASK, `gate: observable`, story `s-deploy-cutover`. Filed 2026-09-30 from applying the probes.
+
+**What is true right now.** The live app has **three active revisions, each running a replica**: the pre-probe `--rel-1bbe81bcbec5`, plus two `probes-*` revisions, because the probe script was run twice (once by the owner, once by the agent — the round-three fresh-suffix fix is exactly why the second run did not collide with the first).
+
+**Why it matters.** In multiple-revision mode a superseded revision **stays active until it is explicitly deactivated**; it does not retire when traffic moves off it. Each active replica opens its own Neon connection pool — which is the specific thing `--max-replicas 1` was chosen to avoid (`infra/azure/README.md`, the note beside that flag: "a handful of users fits one replica, and each extra replica opens its own Neon connection pool"). One replica's worth of pool was the design; three is not.
+
+**Gate 2, not speculative:** the extra replicas and their pools exist today, on the live app.
+
+**What the owner does.** Deactivate the superseded revisions, keeping the one serving traffic **and one known-good rollback target** (runbook §8 depends on a previous revision still being available). Then re-check traffic and health.
+
+**Not an agent action.** Deactivating a revision is a live-app write on off-limits infrastructure. No agent does this unprompted; it needs the owner's explicit approval, and `devops` may run it only after that. The general rule — deactivate superseded revisions after any template change, keep one rollback target — is now in the runbook (§1 and §8).
