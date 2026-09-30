@@ -374,7 +374,7 @@ separate template revision, so verify traffic and health after applying it.
 ## OneDrive sync job
 
 A scheduled Container Apps Job runs one OneDrive archive pass
-(`python -m app.storage.onedrive_sync`) every 30 minutes, from the **same GHCR
+(`app/storage/onedrive_sync.py`) every 30 minutes, from the **same GHCR
 image** as the app. It is one-way background work: the app never waits on it.
 A pass with `GRAPH_REFRESH_TOKEN` empty logs "not configured" and exits 0.
 
@@ -413,7 +413,8 @@ az containerapp job create \
   --replica-retry-limit 0 \
   --replica-timeout 900 \
   --cpu 0.25 --memory 0.5Gi \
-  --command "sh" "-c" "cd /app/backend && exec .venv/bin/python -m app.storage.onedrive_sync" \
+  --command "/app/backend/.venv/bin/python" \
+  --args "/app/backend/app/storage/onedrive_sync.py" \
   --secrets \
     database-url="$DATABASE_URL" \
     s3-endpoint-url="$S3_ENDPOINT_URL" \
@@ -434,7 +435,8 @@ az containerapp job create \
     GRAPH_CLIENT_SECRET=secretref:graph-client-secret \
     GRAPH_REFRESH_TOKEN=secretref:graph-refresh-token \
     GRAPH_ONEDRIVE_FOLDER=<onedrive-folder-path> \
-    ENVIRONMENT=<non-local-environment-name>
+    ENVIRONMENT=<non-local-environment-name> \
+    PYTHONPATH=/app/backend
 
 unset GHCR_USERNAME GHCR_READ_PACKAGES_TOKEN DATABASE_URL S3_ENDPOINT_URL \
   S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_BUCKET_NAME GRAPH_CLIENT_ID \
@@ -462,10 +464,18 @@ argument from local process inspection while the CLI is running.
 How it works:
 - **Schedule.** Cron `*/30 * * * *` is evaluated in **UTC**.
 - **Command.** The image `WORKDIR` is `/app` and the Python package and venv
-  live in `/app/backend` (see the repo-root `Dockerfile`), hence the `cd`.
-  `STATIC_FILES_DIR` is baked into the image and is not set here.
+  live in `/app/backend` (see the repo-root `Dockerfile`), hence the absolute
+  paths. No `--command`/`--args` token may start with a dash: az parses a bare
+  `-c` or `-m` as one of its own options and silently drops it (an earlier
+  `--command "sh" "-c" "..."` became command `["sh"]` and every run failed with
+  `sh: 0: cannot open ...`). So the module runs by file path, not `-m`. That
+  puts `app/storage` on `sys.path` instead of `/app/backend`, hence
+  `PYTHONPATH=/app/backend`: the module uses only absolute `from app...`
+  imports and has a `__main__` block. `STATIC_FILES_DIR` is baked into the
+  image and is not set here.
 - **Env/secret split** follows `docs/deploy-cutover-runbook.md` §2: everything
-  is a secret except `S3_REGION`, `GRAPH_ONEDRIVE_FOLDER` and `ENVIRONMENT`.
+  is a secret except `S3_REGION`, `GRAPH_ONEDRIVE_FOLDER`, `ENVIRONMENT` and
+  `PYTHONPATH`.
   Secret names are the env var name in lower kebab case; the app must use the
   same secret names.
 - **No overlapping runs.** `--parallelism 1` only limits replicas *within one
