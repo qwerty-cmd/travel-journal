@@ -31,12 +31,12 @@ string.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.tables import trips
+from app.data.tables import stops, trip_members, trips
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,3 +119,100 @@ async def get_by_slug(session: AsyncSession, slug: str) -> TripRecord | None:
         rider_slug=row.rider_slug,
         viewer_slug=row.viewer_slug,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PublicTripSummary:
+    """
+    One public trip as the anonymous Discover list shows it (``GET /api/v2/trips``).
+
+    Carries no slug and no member identity: only what ``TripSummaryOut`` exposes.
+    """
+
+    id: str
+    name: str
+    start_date: date
+    rider_count: int
+    last_public_stop_at: datetime | None
+
+
+async def list_public(
+    session: AsyncSession,
+    *,
+    after: tuple[datetime | None, str] | None,
+    limit: int,
+) -> list[PublicTripSummary]:
+    """
+    Up to ``limit`` public trips, in list order, strictly after the keyset ``after``.
+
+    **Which trips.** ``visibility = 'public'`` only, and that filter is applied
+    before the keyset: no cursor value can reach a private trip.
+
+    **Order.** ``last_public_stop_at`` descending with nulls last, then ``id``
+    ascending (``docs/api-contract.md``, "Notes per endpoint (v2)"). ``id`` is the
+    primary key, so the pair is a total order and ties never reorder.
+
+    **``last_public_stop_at``** is ``max(arrived_at)`` over the trip's stops with
+    ``arrived_at <= now() - public_delay_hours`` — the public delay, on the
+    database clock at statement time. The same value for every caller.
+
+    **``rider_count``** counts the trip's active ``trip_members`` rows
+    (``revoked_at IS NULL``), leaders included.
+
+    ``after`` is the ``(last_public_stop_at, id)`` of the previous page's last
+    row, or ``None`` for the first page.
+    """
+    delay = func.make_interval(0, 0, 0, 0, trips.c.public_delay_hours)
+    last_public_stop_at = (
+        select(func.max(stops.c.arrived_at))
+        .where(stops.c.trip_id == trips.c.id, stops.c.arrived_at <= func.now() - delay)
+        .scalar_subquery()
+    )
+    rider_count = (
+        select(func.count())
+        .select_from(trip_members)
+        .where(trip_members.c.trip_id == trips.c.id, trip_members.c.revoked_at.is_(None))
+        .scalar_subquery()
+    )
+    public = (
+        select(
+            trips.c.id,
+            trips.c.name,
+            trips.c.start_date,
+            rider_count.label("rider_count"),
+            last_public_stop_at.label("last_public_stop_at"),
+        )
+        .where(trips.c.visibility == "public")
+        .subquery()
+    )
+
+    statement = select(public).order_by(
+        public.c.last_public_stop_at.desc().nulls_last(), public.c.id.asc()
+    )
+    if after is not None:
+        after_at, after_id = after
+        if after_at is None:
+            # Already in the null tail: only later ids remain.
+            statement = statement.where(
+                public.c.last_public_stop_at.is_(None), public.c.id > after_id
+            )
+        else:
+            statement = statement.where(
+                or_(
+                    public.c.last_public_stop_at < after_at,
+                    and_(public.c.last_public_stop_at == after_at, public.c.id > after_id),
+                    public.c.last_public_stop_at.is_(None),
+                )
+            )
+
+    rows = (await session.execute(statement.limit(limit))).all()
+    return [
+        PublicTripSummary(
+            id=row.id,
+            name=row.name,
+            start_date=row.start_date,
+            rider_count=row.rider_count,
+            last_public_stop_at=row.last_public_stop_at,
+        )
+        for row in rows
+    ]

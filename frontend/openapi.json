@@ -1293,6 +1293,91 @@
         }
       }
     },
+    "/api/v2/trips": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "List public trips",
+        "description": "**Context.** The Discover list: the public trips anyone can browse, with no\naccount (decision-log Entry 29). Private trips never appear.\n\n**How it works.** Anonymous: a session, if sent, is ignored, and the response is\nthe same for every caller. Each item carries `riderCount` (active members,\nleaders included) and `lastPublicStopAt`, the latest `arrivedAt` among stops\nvisible to the public \u2014 those with `arrivedAt <= now() - publicDelayHours` on the\nserver clock. Sorted by `lastPublicStopAt` descending with nulls last, then `id`\nascending; trips with no visible stop come last. Pages hold `limit` items\n(default 20, 1-50). `nextCursor` is opaque; pass it back as `cursor` unchanged\nfor the next page. It is `null` on the last page. A cursor this endpoint did not\nissue is a `422`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}` for one trip,\n`GET /api/v2/me/trips` for the trips the caller is a member of.",
+        "operationId": "list_public_trips_api_v2_trips_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `nextCursor` from the previous page, unchanged. Omit it for the first page. Anything this endpoint did not issue is rejected with 422 / VALIDATION_ERROR.",
+              "title": "Cursor"
+            },
+            "description": "The `nextCursor` from the previous page, unchanged. Omit it for the first page. Anything this endpoint did not issue is rejected with 422 / VALIDATION_ERROR."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "How many trips per page, from 1 to 50 inclusive; defaults to 20. Anything else is rejected with 422 / VALIDATION_ERROR.",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "How many trips per page, from 1 to 50 inclusive; defaults to 20. Anything else is rejected with 422 / VALIDATION_ERROR."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of public trips, most recently active first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPageOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`limit` is outside 1-50, or `cursor` is not a `nextCursor` this endpoint issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -2091,6 +2176,85 @@
         ],
         "title": "TripOut",
         "description": "GET /trips/{slug} response. Works with either slug."
+      },
+      "TripPageOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TripSummaryOut"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Public trips, sorted by `lastPublicStopAt` descending with nulls last, then by `id` ascending. Private trips never appear. Empty when there are none."
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor",
+            "description": "Opaque cursor for the next page: pass it back as `cursor` unchanged. Null on the last page."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "title": "TripPageOut",
+        "description": "GET /api/v2/trips response: one page of public trips."
+      },
+      "TripSummaryOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The trip's id. Non-secret and immutable; the trip's public URL is built from it."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The trip's display name, as its leaders titled it."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "title": "Startdate",
+            "description": "The day the trip starts, as an ISO 8601 date (YYYY-MM-DD) with no time and no timezone."
+          },
+          "riderCount": {
+            "type": "integer",
+            "title": "Ridercount",
+            "description": "How many people are on the trip: its active members, leaders included."
+          },
+          "lastPublicStopAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastpublicstopat",
+            "description": "The latest `arrivedAt` among the stops visible to the public, i.e. with the public delay applied, as a timezone-aware ISO 8601 instant. The same value for every caller, members included. Null when no stop is visible yet."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "startDate",
+          "riderCount",
+          "lastPublicStopAt"
+        ],
+        "title": "TripSummaryOut",
+        "description": "One public trip in the Discover list. The same for every caller."
       }
     }
   }

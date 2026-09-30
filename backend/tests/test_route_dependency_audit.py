@@ -18,7 +18,7 @@ read that needs a *session*, not a trip. So every route falls into exactly one
 class, decided by name first and path second:
 
 - **Anonymous** (``ANONYMOUS_BY_DESIGN``, by route name): no guard at all.
-  Health, the ``/api`` catch-all, signup, signin, signout and recover. A guard declared on one of these fails too — signout, for one, must
+  Health, the ``/api`` catch-all, signup, signin, signout, recover and the public trip list (``list_public_trips``). A guard declared on one of these fails too — signout, for one, must
   answer ``204`` whether or not a session was sent.
 - **Account-scoped** (``ACCOUNT_SCOPED``, by route name): exactly
   ``require_session``, reads and unsafe methods alike, and only under
@@ -126,7 +126,19 @@ TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
 #                       clears the cookie whether or not a session was sent.
 #   recover           — how a caller who forgot the password gets a session back
 #                       with the recovery code; it can't require one either.
-ANONYMOUS_BY_DESIGN = {"health", "unknown_api_path", "signup", "signin", "signout", "recover"}
+#   list_public_trips — GET/HEAD /api/v2/trips, the Discover list. Public trips
+#                       only, the same for every caller; it reads no session and
+#                       no single trip, so there is nothing to gate (contract,
+#                       "The gates": none (anonymous)).
+ANONYMOUS_BY_DESIGN = {
+    "health",
+    "unknown_api_path",
+    "signup",
+    "signin",
+    "signout",
+    "recover",
+    "list_public_trips",
+}
 
 # Routes about the caller's own account rather than a trip, by route name. Each
 # declares exactly `require_session`, and sits under /api/v2.
