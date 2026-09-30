@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import logging
 import re
 import secrets
@@ -171,10 +172,28 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
         app.main.app.dependency_overrides.pop(get_session, None)
 
 
+_addresses = itertools.count(1)
+
+
+def distinct_address() -> str:
+    """A client address no earlier request in this run has used."""
+    n = next(_addresses)
+    return f"10.{(n >> 16) & 255}.{(n >> 8) & 255}.{n & 255}"
+
+
 async def send(client: AsyncClient, method: str, path: str, **kwargs: Any) -> httpx.Response:
-    """One request with an empty cookie jar, so the only cookie sent is the one passed."""
+    """
+    One request with an empty cookie jar, so the only cookie sent is the one passed.
+
+    Each request also comes from its own client address (a distinct right-most
+    ``X-Forwarded-For``), unless the caller sets one. The lockout tests make more
+    than 10 signins in one test, past the per-address ``signin`` bucket; without
+    this the 11th would be the rate limiter's 429, not the lockout's. The limits
+    themselves are tested in ``test_ratelimit.py``.
+    """
+    headers = {"X-Forwarded-For": distinct_address(), **(kwargs.pop("headers", None) or {})}
     client.cookies.clear()
-    response = await client.request(method, path, **kwargs)
+    response = await client.request(method, path, headers=headers, **kwargs)
     client.cookies.clear()
     return response
 
@@ -517,7 +536,8 @@ async def fail_times(client: AsyncClient, username: str, times: int) -> None:
 
 
 def assert_locked(response: httpx.Response, retry_after: int) -> None:
-    assert_envelope(response, 429, "RATE_LIMITED")
+    """A 429 from the account lockout, not from a rate limiter: the lockout's message."""
+    assert_envelope(response, 429, "RATE_LIMITED", auth_routes.LOCKED_MESSAGE)
     assert response.headers["retry-after"] == str(retry_after)
     assert "set-cookie" not in response.headers
 

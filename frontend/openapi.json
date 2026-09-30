@@ -56,6 +56,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -108,6 +127,25 @@
           },
           "422": {
             "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -218,6 +256,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -279,6 +336,25 @@
           },
           "422": {
             "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -398,6 +474,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -503,6 +598,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -597,6 +711,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -645,6 +778,25 @@
           },
           "422": {
             "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

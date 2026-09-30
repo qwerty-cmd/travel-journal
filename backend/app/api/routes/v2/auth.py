@@ -14,6 +14,12 @@ recover a forgotten one with the recovery code, and rotate that code.
   gate. ``me``, signout-all, password change and recovery-code rotation declare
   ``require_session``. ``tests/test_route_dependency_audit.py`` holds each
   route to that by name.
+- **Rate limits** (``app/core/ratelimit.py``), declared in each route's
+  ``dependencies=`` so they run before the gate: signup spends ``signup-ip``
+  and ``signup-global``; signin, recover, password change and recovery-code
+  rotation share the per-address ``signin`` bucket; ``me`` is ``public-read``;
+  signout-all is ``writes``; signout has none. These are separate from the
+  per-account lockout below, which is per account and persisted.
 - **Signing a device in** is ``create_session`` inside the route's transaction,
   then ``set_session_cookie`` on FastAPI's injected ``Response`` after the
   commit. The cookie is ``__Host-btj_session=…; HttpOnly; Max-Age=7776000;
@@ -76,6 +82,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from app.api.responses import error_responses
 from app.core.errors import ApiError
 from app.core.passwords import hash_password, normalise, verify_dummy, verify_password
+from app.core.ratelimit import limit_public_read, limit_signin, limit_signup, limit_writes
 from app.core.recovery_codes import hash_recovery_code, new_recovery_code
 from app.core.security import SIGN_IN_REQUIRED_MESSAGE, require_session
 from app.core.sessions import (
@@ -239,6 +246,7 @@ async def _confirm_own_password(db: SessionDep, user_id: str, presented: str) ->
 
 @router.post(
     "/signup",
+    dependencies=[Depends(limit_signup)],
     status_code=HTTPStatus.CREATED,
     summary="Create an account and sign this device in",
     response_description="The new account and its recovery code, shown this once. "
@@ -307,6 +315,7 @@ async def signup(
 
 @router.post(
     "/signin",
+    dependencies=[Depends(limit_signin)],
     summary="Sign this device in with a username and password",
     response_description="The signed-in account. " + _SIGNED_IN_COOKIE,
     responses=error_responses(
@@ -439,6 +448,7 @@ async def signout(request: Request, response: Response, db: SessionDep) -> None:
 
 @router.get(
     "/me",
+    dependencies=[Depends(limit_public_read)],
     summary="The signed-in account",
     response_description="The caller's own account. The only response that ever contains a "
     "username.",
@@ -470,11 +480,18 @@ async def get_me(user: Annotated[SessionUser, Depends(require_session)]) -> MeOu
 
 
 # HEAD sibling: the same handler, schema-excluded (decision-log Entry 11).
-router.add_api_route("/me", get_me, methods=["HEAD"], include_in_schema=False)
+router.add_api_route(
+    "/me",
+    get_me,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)
 
 
 @router.post(
     "/signout-all",
+    dependencies=[Depends(limit_writes)],
     status_code=HTTPStatus.NO_CONTENT,
     response_class=Response,
     summary="Sign every device out of this account",
@@ -515,6 +532,7 @@ async def signout_all(
 
 @router.post(
     "/recover",
+    dependencies=[Depends(limit_signin)],
     summary="Set a new password with the recovery code, and sign this device in",
     response_description="The account and its new recovery code, shown this once; the code "
     "just used has stopped working. " + _SIGNED_IN_COOKIE,
@@ -613,6 +631,7 @@ async def recover(
 
 @router.post(
     "/password",
+    dependencies=[Depends(limit_signin)],
     summary="Change the password, signing every other device out",
     response_description="The signed-in account. Every earlier session is revoked. "
     + _SIGNED_IN_COOKIE,
@@ -676,6 +695,7 @@ async def change_password(
 
 @router.post(
     "/recovery-code",
+    dependencies=[Depends(limit_signin)],
     summary="Replace the recovery code with a new one",
     response_description="The account and its new recovery code, shown this once; the old "
     "code has stopped working.",

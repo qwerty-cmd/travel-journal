@@ -16,8 +16,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
 from pydantic import AwareDatetime
 
-from app.api.responses import PATH_PARAMETERS_422, error_responses
+from app.api.responses import (
+    PATH_PARAMETERS_422,
+    PUBLIC_READ_429,
+    WRITES_429,
+    error_responses,
+)
 from app.core.errors import ApiError
+from app.core.ratelimit import limit_public_read, limit_writes
 from app.core.security import (
     TripContext,
     TripWriterContext,
@@ -55,6 +61,7 @@ async def _verified_stop(context: TripContext, stop_id: str, session) -> None:
 
 @router.get(
     "",
+    dependencies=[Depends(limit_public_read)],
     summary="List a stop's photos",
     response_description="Every photo on this stop, each with a presigned URL.",
     responses=error_responses(
@@ -62,6 +69,7 @@ async def _verified_stop(context: TripContext, stop_id: str, session) -> None:
             HTTPStatus.NOT_FOUND: "No trip has this slug, or the stop id does not exist on "
             "this trip.",
             HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: PUBLIC_READ_429,
         }
     ),
     description="""
@@ -87,11 +95,18 @@ async def list_photos(
     return await list_by_stop(session, stop_id)
 
 
-router.add_api_route("", list_photos, methods=["HEAD"], include_in_schema=False)
+router.add_api_route(
+    "",
+    list_photos,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)
 
 
 @router.post(
     "",
+    dependencies=[Depends(limit_writes)],
     status_code=HTTPStatus.CREATED,
     summary="Upload a photo to a stop",
     response_description="The photo as stored -- the one just created (201), or the one "
@@ -118,6 +133,7 @@ router.add_api_route("", list_photos, methods=["HEAD"], include_in_schema=False)
                 HTTPStatus.CONFLICT: "The `id` field already belongs to a photo on a "
                 "**different** stop.",
                 HTTPStatus.UNPROCESSABLE_ENTITY: "A required form field is missing or invalid.",
+                HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
     },

@@ -13,7 +13,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.api.responses import PATH_PARAMETERS_422, error_responses
+from app.api.responses import PATH_PARAMETERS_422, PUBLIC_READ_429, error_responses
+from app.core.ratelimit import limit_public_read
 from app.core.security import TripContext, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.bikes import list_by_trip
@@ -24,6 +25,7 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 
 @router.get(
     "/{slug}",
+    dependencies=[Depends(limit_public_read)],
     summary="Get a trip's metadata and its bikes",
     response_description="The trip, the bikes on it, and whether the caller is an active member.",
     responses=error_responses(
@@ -32,6 +34,7 @@ router = APIRouter(prefix="/trips", tags=["trips"])
             "mistyped link, a revoked one and a guess — see `docs/api-contract.md`, "
             "'Access control: 403 and 404 are different answers'.",
             HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: PUBLIC_READ_429,
         }
     ),
     description="""
@@ -108,4 +111,10 @@ async def get_trip(
 # generate a second, identical `useGetTrip` hook from it. `include_in_schema=False`
 # keeps the document to the one operation `docs/api-contract.md` describes.
 # (Measured on FastAPI 0.141.1.)
-router.add_api_route("/{slug}", get_trip, methods=["HEAD"], include_in_schema=False)
+router.add_api_route(
+    "/{slug}",
+    get_trip,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)

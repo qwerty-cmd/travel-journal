@@ -33,6 +33,7 @@ anything that still constructs `ApiError` directly. The same backstop refuses a
 from __future__ import annotations
 
 import logging
+import math
 from http import HTTPStatus
 from typing import Any
 
@@ -221,15 +222,31 @@ class ApiError(Exception):
         return cls(HTTPStatus.UNPROCESSABLE_ENTITY, ErrorCode.VALIDATION_ERROR, message)
 
     @classmethod
-    def rate_limited(cls, message: str, retry_after_seconds: int) -> ApiError:
+    def rate_limited(cls, message: str, retry_after_seconds: float) -> ApiError:
         """
         429 — a rate limit or an account lockout. `message` is shown to the rider.
 
         Carries `Retry-After: <retry_after_seconds>`, which the offline queue waits
-        out before retrying. The contract says whole seconds, at least 1; a value
-        below 1 is a caller bug (a `Retry-After: 0` would have the queue hammer the
-        limiter), so it raises `ValueError` here rather than reaching the wire.
+        out before retrying. The contract says whole seconds, at least 1, so the
+        header is always an integer string: a float wait (a token bucket's) is
+        rounded **up**, since rounding down would send the client back before the
+        token exists. A value that is still below 1 is a caller bug (a
+        `Retry-After: 0` would have the queue hammer the limiter), so it raises
+        `ValueError` here rather than reaching the wire, as does a non-finite
+        float. A `bool` is refused with `TypeError`: it is an `int` to Python, and
+        `True` would otherwise go out as `Retry-After: 1`.
         """
+        if isinstance(retry_after_seconds, bool) or not isinstance(
+            retry_after_seconds, int | float
+        ):
+            raise TypeError(
+                f"retry_after_seconds must be an int or float, not "
+                f"{type(retry_after_seconds).__name__}."
+            )
+        if isinstance(retry_after_seconds, float):
+            if not math.isfinite(retry_after_seconds):
+                raise ValueError(f"retry_after_seconds must be finite, not {retry_after_seconds}.")
+            retry_after_seconds = math.ceil(retry_after_seconds)
         if retry_after_seconds < 1:
             raise ValueError(
                 f"retry_after_seconds must be at least 1, not {retry_after_seconds}. "

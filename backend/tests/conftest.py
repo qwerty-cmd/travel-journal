@@ -11,6 +11,7 @@ docker-compose ``postgres`` service (or any ``DATABASE_URL``) to be up.
 from __future__ import annotations
 
 import secrets
+import time
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from starlette.types import ASGIApp
 
+from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.sessions import ABSOLUTE_LIFETIME, SESSION_COOKIE_NAME, hash_token, new_token
 from app.data import tables
@@ -87,6 +89,20 @@ def make_test_client(
         headers=_client_headers(headers),
         raise_server_exceptions=raise_server_exceptions,
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits() -> None:
+    """
+    Every test starts with empty rate-limit buckets (``app/core/ratelimit.py``).
+
+    The registry is process-wide and every in-process client has the same
+    address, so without this the suite as a whole runs through ``public-read``'s
+    120 a minute and later tests fail with a ``429`` that has nothing to do with
+    them. The clock is put back too, in case a test replaced it.
+    """
+    ratelimit.registry.reset()
+    ratelimit.registry.clock = time.monotonic
 
 
 @pytest.fixture(scope="session")

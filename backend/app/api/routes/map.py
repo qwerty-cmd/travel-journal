@@ -11,7 +11,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.api.responses import PATH_PARAMETERS_422, error_responses
+from app.api.responses import PATH_PARAMETERS_422, PUBLIC_READ_429, error_responses
+from app.core.ratelimit import limit_public_read
 from app.core.security import TripContext, require_trip_access
 from app.data.db import SessionDep
 from app.data.repositories.stops import map_features
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/trips/{slug}/map", tags=["map"])
 
 @router.get(
     "",
+    dependencies=[Depends(limit_public_read)],
     summary="GeoJSON map of a trip's stops and trail",
     response_description="A GeoJSON FeatureCollection with one Point per stop and an "
     "optional LineString trail connecting them chronologically.",
@@ -30,6 +32,7 @@ router = APIRouter(prefix="/trips/{slug}/map", tags=["map"])
             HTTPStatus.NOT_FOUND: "No trip has this slug. Deliberately the same answer for a "
             "mistyped link, a revoked one and a guess.",
             HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: PUBLIC_READ_429,
         }
     ),
     description="""
@@ -57,4 +60,10 @@ async def get_map(
     return await map_features(session, context.trip.id)
 
 
-router.add_api_route("", get_map, methods=["HEAD"], include_in_schema=False)
+router.add_api_route(
+    "",
+    get_map,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)

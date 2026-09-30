@@ -33,6 +33,17 @@ class Settings(BaseSettings):
 
     static_files_dir: str = "../frontend/dist"
 
+    trusted_proxy_hops: int = Field(
+        default=1,
+        ge=0,
+        description="How many proxies in front of the app append to `X-Forwarded-For`. "
+        "Rate limits key on the entry that many places from the right: the address the "
+        "outermost trusted proxy saw. Entries further left came from the client and are "
+        "ignored as spoofable. Default 1: Azure Container Apps' ingress appends one hop. "
+        "0 means no trusted proxy: the header is ignored and the socket address is used, "
+        "as it is when the header is absent (decision-log Entry 29; `app/core/ratelimit.py`).",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

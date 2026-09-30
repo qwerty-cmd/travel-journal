@@ -14,8 +14,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
-from app.api.responses import error_responses
+from app.api.responses import WRITES_429, error_responses
 from app.core.errors import ApiError
+from app.core.ratelimit import limit_writes
 from app.core.security import TripWriterContext, require_trip_writer
 from app.data.db import SessionDep
 from app.data.repositories.bikes import BikeIdOnAnotherTrip, create, patch
@@ -32,6 +33,7 @@ ID_ALREADY_USED_MESSAGE = (
 
 @router.post(
     "",
+    dependencies=[Depends(limit_writes)],
     status_code=HTTPStatus.CREATED,
     summary="Add a bike to a trip",
     response_description="The bike as stored -- the one just created (201), or the one "
@@ -58,6 +60,7 @@ ID_ALREADY_USED_MESSAGE = (
                 "**different** trip. Nothing was created, nothing about the conflicting record "
                 "is disclosed.",
                 HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+                HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
     },
@@ -100,6 +103,7 @@ async def create_bike(
 
 @router.patch(
     "/{id}",
+    dependencies=[Depends(limit_writes)],
     summary="Update a bike on a trip",
     response_description="The bike after applying the patch.",
     responses=error_responses(
@@ -115,6 +119,7 @@ async def create_bike(
             HTTPStatus.NOT_FOUND: "No trip has this slug, or no bike with this id exists on "
             "the trip.",
             HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+            HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
         }
     ),
     description="""

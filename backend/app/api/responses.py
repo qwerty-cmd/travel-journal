@@ -64,6 +64,19 @@ PATH_PARAMETERS_422 = (
 )
 
 
+# The 429 descriptions for the two limiters shared by many routes
+# (`app/core/ratelimit.py`; contract, "Rate limits and lockout").
+PUBLIC_READ_429 = (
+    "The `public-read` limit: 120 requests a minute per client address. Retry after "
+    "`Retry-After` seconds."
+)
+WRITES_429 = (
+    "The `writes` limit: 600 requests an hour per account, or per client address for a "
+    "request with no session. Checked before the slug, the session and the membership, so "
+    "nothing was written. Retry after `Retry-After` seconds."
+)
+
+
 def error_responses(descriptions: dict[HTTPStatus, str]) -> dict[HTTPStatus, dict]:
     """
     Pick statuses from `ERROR_RESPONSES`, each with the route's own description.

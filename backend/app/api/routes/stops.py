@@ -19,8 +19,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
-from app.api.responses import PATH_PARAMETERS_422, error_responses
+from app.api.responses import (
+    PATH_PARAMETERS_422,
+    PUBLIC_READ_429,
+    WRITES_429,
+    error_responses,
+)
 from app.core.errors import ApiError
+from app.core.ratelimit import limit_public_read, limit_writes
 from app.core.security import (
     TripContext,
     TripWriterContext,
@@ -49,6 +55,7 @@ ID_ALREADY_USED_MESSAGE = (
 
 @router.get(
     "",
+    dependencies=[Depends(limit_public_read)],
     summary="List a trip's stops",
     response_description="Every stop on this trip, with its notes and how it was located.",
     responses=error_responses(
@@ -58,6 +65,7 @@ ID_ALREADY_USED_MESSAGE = (
             "'Access control: 403 and 404 are different answers'. A trip that exists but "
             "has no stops yet is **not** this case: that is a `200` with `[]`.",
             HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: PUBLIC_READ_429,
         }
     ),
     description="""
@@ -116,7 +124,13 @@ async def list_stops(
 # generate a second, identical `useListStops` hook from it. `include_in_schema=False`
 # keeps the document to the one operation `docs/api-contract.md` describes.
 # (Measured on FastAPI 0.141.1; decision-log Entry 11.)
-router.add_api_route("", list_stops, methods=["HEAD"], include_in_schema=False)
+router.add_api_route(
+    "",
+    list_stops,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)
 
 
 # No HEAD sibling here, and that is not an omission: HEAD is GET without a body
@@ -125,6 +139,7 @@ router.add_api_route("", list_stops, methods=["HEAD"], include_in_schema=False)
 # away.
 @router.post(
     "",
+    dependencies=[Depends(limit_writes)],
     status_code=HTTPStatus.CREATED,
     summary="Add a stop to a trip",
     response_description="The stop as stored — the one just created (201), or the one "
@@ -161,6 +176,7 @@ router.add_api_route("", list_stops, methods=["HEAD"], include_in_schema=False)
                 "or mistyped field, a `locationSource` outside `gps`/`manual`, or an "
                 "`arrivedAt` with **no UTC offset**. That last one is server-enforced only; the "
                 "generated client types it as a plain string and cannot catch it.",
+                HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
     },
