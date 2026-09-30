@@ -1,53 +1,65 @@
 """
-Slug-based access control — the first thing every endpoint does.
+Access control — the gates every ``/api`` route declares (decision-log Entry 29).
 
-There are no accounts, no passwords and no sessions. A trip has two unguessable
-random tokens (spec Section 4): a **rider slug** granting read + write, and a
-**viewer slug** granting read only. The slug in the URL *is* the authorisation
-(``docs/api-contract.md``, "Access: two slugs, no accounts"). Whoever was given
-which link is the entire access model, which is why this module is spec
-Section 12's top-priority area — there is no second layer behind it.
+**Context.** Access answers two separate questions (``docs/api-contract.md``,
+"Access: public trips, members and leaders"):
 
-Two dependencies, one shape:
+- **Who is asking?** The ``__Host-btj_session`` cookie answers it
+  (``require_session``).
+- **What may they do on this trip?** Their row in ``trip_members`` answers it,
+  read from Postgres on every request with no cache, so a revocation takes
+  effect on the next request (``app/data/repositories/memberships.py``).
 
-- ``require_trip_access`` — read endpoints. Either slug is acceptable.
-- ``require_rider_access`` — write endpoints. The rider slug only.
+A slug is **no longer a credential for anything**. Before Entry 29 the rider
+slug *was* the write authorisation and the viewer slug the read-only one. Now
+either slug only *locates* a trip on the legacy ``/api/trips/{slug}`` routes,
+and writes go through the membership gate (contract default 21: "legacy writes
+accept either slug as the locator: the membership gate is the only
+authorisation"). The ``access`` a legacy read reports is derived from
+membership too, never from which slug was followed.
 
-Both return a ``TripContext``, so a read handler and a write handler consume an
-identical value and the only difference between them is which dependency they
-declared.
+The gates built here:
 
-**Why 403 and 404 must not collapse into each other.** The contract makes this
-distinction load-bearing and both directions of the collapse are real bugs, not
-cosmetic ones:
+- ``require_session`` — a valid session, else ``401``. Account routes.
+- ``require_trip_access`` — legacy reads. Either slug, else ``404``. The session
+  is optional and only decides ``access``; it never refuses a read.
+- ``require_trip_writer`` — legacy writes, with a slug locator. Slug (``404``) →
+  session (``401``) → active membership (``403``). A ``tripId`` locator for the
+  v2 routes arrives with ``t-am-v2-rider-writes``, and ``require_trip_leader``
+  with its first consumer, ``t-am-trip-create``.
 
-- Answering 404 to a viewer-slug *write* tells a read-only guest their link is
-  broken, when in fact it works perfectly for the thing it was issued for.
-- Answering 403 to a slug that resolves to nothing tells anyone guessing URLs
-  that they can distinguish "wrong slug" from "right slug, wrong permission" —
-  which turns the slug space into an oracle. The unguessable-slug model depends
-  on exactly that signal not leaking, because it is the only thing standing
-  between a stranger and a trip.
+**Why the legacy write order is slug → session → membership.** This is the ADR's
+order unchanged (Entry 29; contract, "Where the session check sits"). A trip
+found by slug is never hidden — the slug is proof the caller was sent the link —
+so answering ``404`` for an unknown slug before asking who the caller is reveals
+nothing a ``401`` would have withheld. The v2 routes check the session *first*
+(contract default 1) because there the trip id is public and a private trip must
+answer a signed-out caller with ``401``, not a never-retry ``404`` that would
+permanently fail a queued write whose only problem is an expired session.
 
-So: "nothing resolved" is always a 404, on both dependencies, and a 403 is only
-ever reachable *after* a real trip has been found.
+**Why 401, 403 and 404 are three different answers** (contract, "Access
+control: 401, 403 and 404 are three different answers"). Collapsing any two is a
+real bug:
+
+- ``404`` — nothing you may see exists here. An unknown slug is always ``404``,
+  never ``403``: a ``403`` would tell someone trying links that this one named
+  a real trip. **On private trips (the v2 gates) a non-member's ``404`` is
+  byte-identical to a nonexistent trip's**, so a trip id cannot be used to test
+  whether a private trip exists. That is why a private trip answers ``404`` and
+  not ``403`` to strangers; the legacy slug gate never needs it, because a slug
+  already located the trip.
+- ``401`` — we don't know who you are. The offline queue *pauses* on it and
+  resumes after sign-in; a ``403`` or ``404`` would fail the item for good.
+- ``403`` — we know who you are, the trip is located, and you may not write. A
+  revoked member is told "You're no longer a rider on this trip."; anyone else
+  "You're not a rider on this trip." Both are never-retry.
 
 Errors leave here as ``ApiError`` through its classmethod constructors, never as
-a hand-built response — ``app/core/errors.py`` is what turns them into the one
-envelope shape the generated client and the offline queue can parse.
-
-Nothing in this module ever puts a slug into a message or a response body. A
-slug is the credential; echoing it back is the same class of mistake as echoing
-a password, and error messages are the part of a response most likely to end up
-in a log, a screenshot or a bug report.
-
-**The session gate (decision-log Entry 29).** ``require_session`` is the first
-of the Entry 29 gates (``docs/api-contract.md``, "Access: public trips, members
-and leaders" → The gates). It answers "who is asking?" from the
-``__Host-btj_session`` cookie and returns a ``SessionUser``, or raises
-``401 UNAUTHENTICATED``. No route declares it yet: the auth routes arrive with
-``t-am-auth-sessions``, and the membership gates are built on top of it later.
-The slug dependencies above are unchanged until ``t-am-write-gate-legacy``.
+a hand-built response — ``app/core/errors.py`` turns them into the one envelope
+shape the generated client and the offline queue parse. Nothing here ever puts a
+slug into a message or a response body: a slug is still a locator for a
+possibly private trip, and error messages are the part of a response most
+likely to end up in a log, a screenshot or a bug report.
 """
 
 from __future__ import annotations
@@ -67,7 +79,9 @@ from app.core.sessions import (
     set_session_cookie,
 )
 from app.data.db import SessionDep
+from app.data.repositories.memberships import MembershipRecord, get_for_user
 from app.data.repositories.trips import TripRecord, get_by_slug
+from app.models.member import MemberRole
 from app.models.trip import Access
 
 # Shown to whoever followed a link that resolves to nothing. Deliberately says
@@ -79,149 +93,205 @@ UNKNOWN_TRIP_MESSAGE = (
     "We couldn't find a trip for this link. Check that you have the whole link you were sent."
 )
 
-# Shown on a write attempted with a viewer slug. Says plainly that the link
-# works and is read-only, because the reader is a legitimate guest who needs to
-# know their link is not broken — that is the whole reason this is not a 404.
-READ_ONLY_LINK_MESSAGE = (
-    "This link is read-only. Ask the rider for their editing link if you need to make changes."
-)
-
 # The one message for every 401 from the session gate: no cookie, garbage,
 # expired, over the 365-day cap, deleted, or a disabled account. One string so
 # the answers can't be told apart.
 SIGN_IN_REQUIRED_MESSAGE = "You need to sign in to do this."
 
+# The two 403s from the writer gate (contract, "Offline-queue classification").
+# Distinct on purpose: a rider whose membership was revoked needs to know that is
+# what happened, rather than wonder whether they are signed in to the wrong
+# account.
+NOT_A_RIDER_MESSAGE = "You're not a rider on this trip."
+NO_LONGER_A_RIDER_MESSAGE = "You're no longer a rider on this trip."
+
 
 @dataclass(frozen=True, slots=True)
 class TripContext:
     """
-    The resolved answer to "which trip, and rider or viewer?".
+    The resolved answer to "which trip, and may the caller write to it?".
 
-    Handed to every endpoint by one of the two dependencies below, so a handler
-    never repeats the lookup or re-derives the permission. Frozen: a handler
-    that could reassign ``access`` mid-request could grant itself write access
-    after the guard had already run.
+    Handed to every legacy read by ``require_trip_access``, so a handler never
+    repeats the lookup or re-derives the answer. Frozen: a handler that could
+    reassign ``access`` mid-request could grant itself write UI after the gate
+    had already run.
 
-    ``trip`` carries both slugs (see ``TripRecord``) — they are here so the
-    dependency can derive ``access``, and must not be serialised into a
-    response. ``TripOut`` has no slug fields for that reason.
+    ``trip`` carries both slugs (see ``TripRecord``). They must not be
+    serialised into a response; ``TripOut`` has no slug fields for that reason.
     """
 
     trip: TripRecord
     access: Access
 
 
-def access_for_slug(slug: str, trip: TripRecord) -> Access:
+@dataclass(frozen=True, slots=True)
+class TripWriterContext(TripContext):
     """
-    Which kind of link ``slug`` is, judged against the trip it resolved to.
+    What ``require_trip_writer`` hands a write handler: the trip, and who is writing.
 
-    Compared against the matched record's own columns rather than inferred from
-    which half of the repository's ``OR`` fired. Two reasons. It keeps
-    *derivation* separately testable from *enforcement* — a bug in one cannot be
-    hidden by the other passing. And it stays self-consistent in the case the
-    lookup cannot rule out on its own: a string that is one trip's rider slug
-    and a different trip's viewer slug. Random tokens make that unreachable in
-    practice, but the answer here is a property of the row returned, so
-    whichever row that is, the access reported is true of *that* trip.
-
-    Anything that is not the rider slug is a viewer, so the *fallthrough* is the
-    lesser permission and a future third slug column cannot silently grant
-    writes by being added. That is a property of the ``else`` branch only, and
-    it is worth being precise about what it does **not** cover: when a slug
-    matches more than one column of the same row, this comparison resolves the
-    tie to the **greater** permission, because ``rider_slug`` is tested first.
-    The one row where that could happen is ``rider_slug == viewer_slug``, on
-    which a link issued as read-only would return ``RIDER``.
-
-    So the guarantee holds *because the database excludes that row*, not on the
-    strength of this expression: ``trips_slugs_differ_check``
-    (``migrations/0002_trips_slugs_differ_check.sql``) makes an equal pair
-    unstorable. If that constraint is ever dropped, this function starts
-    granting writes through viewer links and nothing here will notice.
+    ``access`` is always ``Access.RIDER`` — the gate raised otherwise. ``user``
+    is the signed-in account, the source of ``created_by`` and of a photo's
+    ``uploaded_by`` display name. ``role`` is the caller's active membership role.
     """
-    return Access.RIDER if slug == trip.rider_slug else Access.VIEWER
+
+    user: SessionUser
+    role: MemberRole
 
 
-async def _resolve_trip(slug: str, session: AsyncSession) -> TripContext:
+def access_for_membership(membership: MembershipRecord | None) -> Access:
     """
-    Look the slug up and derive its access, or raise 404 if nothing matches.
+    ``TripOut.access`` for a caller with this membership: ``rider`` iff it is active.
 
-    The single place "no such trip" becomes an HTTP answer. Both dependencies
-    funnel through it so the two cannot drift apart and start giving different
-    statuses for the same unresolvable slug — which would leak by comparison
-    even though each answer alone looked reasonable.
+    Deprecated field, kept for clients from before the upgrade (contract, "TripOut.
+    viewer.role and TripOut.access only tell the UI what to show"): ``rider`` when
+    the caller is an active rider or leader, ``viewer`` otherwise — anonymous,
+    signed-in stranger, pending, or revoked. Which slug was followed plays no part.
+
+    A pure function so the *flag* stays testable apart from the *gate*: an
+    ``access`` stuck at ``rider`` shows a stranger buttons that always fail, with
+    enforcement still perfectly correct, and only a separate test catches that.
     """
-    trip = await get_by_slug(session, slug)
+    return Access.RIDER if membership is not None and membership.active else Access.VIEWER
+
+
+async def _locate_trip(slug: str, db: AsyncSession) -> TripRecord:
+    """
+    The trip either slug names, or ``404``.
+
+    The single place "no such trip" becomes an HTTP answer. Both legacy gates
+    funnel through it so they cannot drift apart and give different statuses for
+    the same unresolvable slug — which would leak by comparison even though each
+    answer alone looked reasonable.
+    """
+    trip = await get_by_slug(db, slug)
     if trip is None:
-        # 404 and not 403, always. A 403 here would confirm to a caller working
-        # through guesses that some other slug *does* exist, and that is the one
-        # fact this access model cannot afford to give away.
+        # 404 and not 403, always, and before the session is even looked at. A
+        # 403 here would confirm to a caller working through guesses that the
+        # slug names a real trip.
         raise ApiError.not_found(UNKNOWN_TRIP_MESSAGE)
+    return trip
 
-    return TripContext(trip=trip, access=access_for_slug(slug, trip))
+
+async def _signed_in_user(request: Request, response: Response, db: AsyncSession) -> SessionUser:
+    """The session gate's body, shared by ``require_session`` and ``require_trip_writer``."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    resolved = await resolve_session(db, token) if token else None
+    if resolved is None:
+        # `is not None`, not truthiness: an empty cookie value was still sent,
+        # and is still cleared.
+        raise ApiError.unauthenticated(
+            SIGN_IN_REQUIRED_MESSAGE,
+            set_cookie=cleared_session_cookie_header() if token is not None else None,
+        )
+
+    if resolved.refreshed:
+        set_session_cookie(response, token)
+
+    return resolved.user
+
+
+async def _optional_user(
+    request: Request, response: Response, db: AsyncSession
+) -> SessionUser | None:
+    """
+    The signed-in account if a valid session was sent, else ``None``. Never raises.
+
+    For reads, where the session only decides what the UI is told. An invalid
+    cookie is treated as no cookie: a read never answers ``401``, so there is no
+    ``401`` to carry a clearing ``Set-Cookie`` either. A valid session due its
+    daily refresh is re-issued on ``response``, as ``require_session`` does.
+    """
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    resolved = await resolve_session(db, token)
+    if resolved is None:
+        return None
+    if resolved.refreshed:
+        set_session_cookie(response, token)
+    return resolved.user
 
 
 async def require_trip_access(
     slug: Annotated[
         str,
         Path(
-            description="The trip's rider or viewer slug — the unguessable link the "
-            "trip was shared with. Read endpoints accept either one."
+            description="The trip's rider or viewer slug — the link the trip was shared "
+            "with. Either one locates the trip; neither grants anything. Legacy reads "
+            "accept both and give the full, undelayed trip."
         ),
     ],
+    request: Request,
+    response: Response,
     session: SessionDep,
 ) -> TripContext:
     """
-    Read-endpoint guard: resolve ``{slug}`` to a trip, either slug accepted.
+    Legacy read gate: resolve ``{slug}`` to a trip, either slug accepted.
 
-    Returns the trip together with the access the caller is acting under, which
-    handlers pass on as ``TripOut.access`` so the frontend knows whether to
-    render write UI. That flag is a hint for rendering only — the API's actual
-    enforcement point is ``require_rider_access``, on the write endpoints
-    themselves, regardless of what the UI chose to show.
+    ``access`` is ``rider`` iff the session user is an active member
+    (``access_for_membership``), and ``viewer`` for everyone else, including
+    anonymous callers. The session is optional: it never turns a read into a
+    ``401``. ``access`` is a hint for rendering only — the enforcement point is
+    ``require_trip_writer``, on the write routes, regardless of what the UI
+    chose to show.
 
-    Raises 404 if no trip has this slug.
+    Raises ``404`` if no trip has this slug.
     """
-    return await _resolve_trip(slug, session)
+    trip = await _locate_trip(slug, session)
+    user = await _optional_user(request, response, session)
+    membership = await get_for_user(session, trip.id, user.user_id) if user else None
+    return TripContext(trip=trip, access=access_for_membership(membership))
 
 
-async def require_rider_access(
+async def require_trip_writer(
     slug: Annotated[
         str,
         Path(
-            description="The trip's **rider** slug. Write endpoints reject the "
-            "viewer slug with a 403, and an unknown slug with a 404."
+            description="The trip's rider or viewer slug. It only locates the trip: the "
+            "write itself needs a signed-in account with an active membership on it. An "
+            "unknown slug is a 404, no session a 401, and a non-member or revoked member "
+            "a 403."
         ),
     ],
+    request: Request,
+    response: Response,
     session: SessionDep,
-) -> TripContext:
+) -> TripWriterContext:
     """
-    Write-endpoint guard: resolve ``{slug}`` and require that it is the rider's.
+    Legacy write gate: slug (``404``) → session (``401``) → active membership (``403``).
 
-    Returns the same ``TripContext`` as ``require_trip_access`` — its ``access``
-    is always ``Access.RIDER`` on success — so a write handler and a read
-    handler take the same value.
+    The order is the ADR's, and is the reason this gate does not declare
+    ``require_session`` as a sub-dependency: FastAPI solves sub-dependencies
+    before the function body, which would put the ``401`` ahead of the ``404``.
+    It calls the same session code in order instead (see the module docstring
+    for why slug-first is safe here and session-first is right on v2).
 
-    Raises 404 if no trip has this slug, and 403 if it resolves but is the
-    viewer slug. The order matters: an unknown slug must never reach the
-    permission check, or the two answers become distinguishable to someone
-    guessing links (see the module docstring).
+    The membership is read fresh on every request. A revoked member gets
+    ``NO_LONGER_A_RIDER_MESSAGE``; a signed-in caller with no membership row at
+    all (including one with only a pending join request) gets
+    ``NOT_A_RIDER_MESSAGE``. Both are ``403``: the trip was located, so ``404``
+    would be a lie that sends a rider chasing a link that isn't broken.
 
-    FastAPI parses the request body before it solves dependencies, so a body
-    that isn't valid JSON gets a 422 before this guard runs. That 422 is
-    byte-identical for rider, viewer and unknown slugs, so it reveals nothing
-    about the slug. Don't add a second slug check ahead of body parsing to
-    "fix" the order: it would be a second copy of this guard that can drift
-    from it. Decision-log Entry 23 (won't-fix).
+    Because a gate runs before the handler, a replay of an already-stored id
+    from a revoked rider is refused here too, before any replay lookup — a
+    replay is not an exception to authorisation (contract, "Idempotency:
+    additions").
+
+    FastAPI validates the request body alongside dependencies, so a body that
+    isn't valid JSON gets a 422 before this gate runs; a schema-invalid body
+    still gets this gate's answer first. Neither reveals anything about the slug
+    (decision-log Entry 23, won't-fix).
     """
-    context = await _resolve_trip(slug, session)
-    if context.access is not Access.RIDER:
-        # 403 and not 404. The caller is looking at a real trip through a link
-        # that genuinely works — telling them it does not exist would send a
-        # read-only guest chasing a broken link that isn't broken.
-        raise ApiError.forbidden(READ_ONLY_LINK_MESSAGE)
+    trip = await _locate_trip(slug, session)
+    user = await _signed_in_user(request, response, session)
+    membership = await get_for_user(session, trip.id, user.user_id)
 
-    return context
+    if membership is None:
+        raise ApiError.forbidden(NOT_A_RIDER_MESSAGE)
+    if not membership.active:
+        raise ApiError.forbidden(NO_LONGER_A_RIDER_MESSAGE)
+
+    return TripWriterContext(trip=trip, access=Access.RIDER, user=user, role=membership.role)
 
 
 async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:
@@ -240,7 +310,9 @@ async def require_session(request: Request, response: Response, db: SessionDep) 
       its headers onto the response the route returns. It does **not** copy them
       when a route returns a ``Response`` object itself, or when the request ends
       in an error: then the refresh is skipped, and the next request after 24 h
-      re-issues it.
+      re-issues it. The same holds for ``require_trip_writer`` and
+      ``require_trip_access``, so every gated route returns a model (or ``None``
+      with a decorator status), never its own ``Response``.
     - **Clear.** On a 401 from a request that sent the cookie, the clearing
       ``Set-Cookie`` (``Max-Age=0``) travels on the ``ApiError``, because the
       exception handler builds a new response and ``response`` is discarded. A
@@ -251,17 +323,4 @@ async def require_session(request: Request, response: Response, db: SessionDep) 
     OpenAPI document and Kubb generates no client field for a value JavaScript
     can't read.
     """
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    resolved = await resolve_session(db, token) if token else None
-    if resolved is None:
-        # `is not None`, not truthiness: an empty cookie value was still sent,
-        # and is still cleared.
-        raise ApiError.unauthenticated(
-            SIGN_IN_REQUIRED_MESSAGE,
-            set_cookie=cleared_session_cookie_header() if token is not None else None,
-        )
-
-    if resolved.refreshed:
-        set_session_cookie(response, token)
-
-    return resolved.user
+    return await _signed_in_user(request, response, db)

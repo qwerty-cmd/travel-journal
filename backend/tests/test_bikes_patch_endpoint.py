@@ -17,6 +17,15 @@ What the contract promises for this row:
 4. **Empty body.** Returns 200 with the bike unchanged.
 5. **Last-write-wins.** No conflict detection, no ETags.
 6. **Response is 200 with the updated ``BikeOut``.**
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -28,7 +37,7 @@ from http import HTTPStatus
 from typing import Any
 
 import pytest
-from conftest import SeededTrip, make_async_client
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -63,7 +72,9 @@ class SeededBikeForPatch:
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, talking to the test database."""
     import app.main
 
@@ -76,7 +87,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        async with make_async_client(application) as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
@@ -382,12 +396,15 @@ async def test_viewer_slug_is_forbidden(
     client: AsyncClient,
     seeded_trips: list[SeededTrip],
     bikes_for_patch: list[SeededBikeForPatch],
+    non_member_session: SignedInAccount,
 ) -> None:
     """A viewer link cannot patch a bike -- 403 FORBIDDEN."""
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"make": "Ducati"})
+    response = await client.patch(
+        _url(trip.viewer_slug, bike.id), json={"make": "Ducati"}, headers=non_member_session.headers
+    )
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
     assert parse_envelope(response).code is ErrorCode.FORBIDDEN
@@ -398,12 +415,15 @@ async def test_viewer_slug_does_not_modify_bike(
     migrated_engine: AsyncEngine,
     seeded_trips: list[SeededTrip],
     bikes_for_patch: list[SeededBikeForPatch],
+    non_member_session: SignedInAccount,
 ) -> None:
     """A rejected viewer-slug patch must not modify the bike in the database."""
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"make": "Ducati"})
+    response = await client.patch(
+        _url(trip.viewer_slug, bike.id), json={"make": "Ducati"}, headers=non_member_session.headers
+    )
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
 
     row = await db_row(migrated_engine, bike.id)
@@ -526,12 +546,17 @@ async def test_viewer_slug_with_invalid_body_is_still_403(
     client: AsyncClient,
     seeded_trips: list[SeededTrip],
     bikes_for_patch: list[SeededBikeForPatch],
+    non_member_session: SignedInAccount,
 ) -> None:
     """The access guard runs before body validation -- viewer slug is 403 even with a bad body."""
     trip = seeded_trips[0]
     bike = bikes_for_patch[0]
 
-    response = await client.patch(_url(trip.viewer_slug, bike.id), json={"year": "not a number"})
+    response = await client.patch(
+        _url(trip.viewer_slug, bike.id),
+        json={"year": "not a number"},
+        headers=non_member_session.headers,
+    )
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
 

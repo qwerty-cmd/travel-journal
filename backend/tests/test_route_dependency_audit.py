@@ -2,10 +2,10 @@
 Every registered ``/api`` route declares the access guard its route class requires.
 
 The failure this exists to catch is silent. ``require_trip_access`` and
-``require_rider_access`` have the same signature and return the same
+``require_trip_writer`` take the same ``{slug}`` and both hand the handler a
 ``TripContext``, so a write endpoint that declares the read guard by mistake
-still compiles, still resolves the slug, still returns 200 — and now accepts the
-*viewer* slug on a write. The same goes for an account route that forgets
+still compiles, still resolves the slug, still returns 200 — and now accepts a
+write from anyone holding either link, signed in or not. The same goes for an account route that forgets
 ``require_session``: it still answers, for nobody in particular. Nothing in a
 per-endpoint test suite notices, because each endpoint's own tests assert the
 behaviour of the guard it happens to declare. The guard is declared by hand,
@@ -24,9 +24,12 @@ class, decided by name first and path second:
   ``require_session``, reads and unsafe methods alike, and only under
   ``/api/v2``.
 - **Trip-scoped** (everything else): must sit under ``/api/trips`` or
-  ``/api/v2/trips``. A read (GET/HEAD) declares the trip read guard; an unsafe
-  method declares today's trip write guard (``TRIP_GUARD``).
-  ``t-am-write-gate-legacy`` tightens the write rule to writer/leader.
+  ``/api/v2/trips``. A read (GET/HEAD) declares the trip read guard. An unsafe
+  method declares exactly one membership gate from ``TRIP_UNSAFE_GUARDS`` —
+  ``require_trip_writer``, and ``require_trip_leader`` once it is built
+  (``t-am-trip-create``) — and nothing else (``t-am-write-gate-legacy``, Entry
+  29 obligation 4). ``require_session`` alone is not enough on a trip write: it
+  says who is asking, not whether they may write to this trip.
 
 Both allowlists are by *name*, so renaming a path cannot quietly widen an
 exemption, and each name must match routes on exactly one path, so a
@@ -83,12 +86,12 @@ from typing import Annotated, Any
 import pytest
 from fastapi import APIRouter, Depends
 
-from app.core.security import require_rider_access, require_session, require_trip_access
+from app.core.security import require_session, require_trip_access, require_trip_writer
 from app.main import app
 
 # Every guard the audit recognises. `_declared_guards` reports any of these found
 # at any depth of a route's dependency tree.
-GUARDS = (require_trip_access, require_rider_access, require_session)
+GUARDS = (require_trip_access, require_trip_writer, require_session)
 
 # Methods that only read, and methods that change something. A method in
 # neither set — a DELETE endpoint, say — is a hard failure rather than a skip:
@@ -97,8 +100,13 @@ GUARDS = (require_trip_access, require_rider_access, require_session)
 READ_METHODS = frozenset({"GET", "HEAD"})
 UNSAFE_METHODS = frozenset({"POST", "PATCH"})
 
-# The trip guard each kind of method must declare on a trip-scoped route.
-TRIP_GUARD = {"read": require_trip_access, "unsafe": require_rider_access}
+# The trip guard a trip-scoped read must declare.
+TRIP_READ_GUARD = require_trip_access
+
+# The membership gates an unsafe trip-scoped route may declare, exactly one of.
+# `require_trip_leader` joins this set (and GUARDS) when `t-am-trip-create`
+# builds it; until then no route can declare it.
+TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer})
 
 # Trip-scoped routes live under one of these (legacy slug routes, v2 trip-id routes).
 TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
@@ -235,11 +243,18 @@ def _violation(method: str, route: Any) -> str | None:
             "give it a trip guard under a trip path, or a reasoned entry in "
             "ANONYMOUS_BY_DESIGN or ACCOUNT_SCOPED"
         )
-    expected = TRIP_GUARD["read" if method in READ_METHODS else "unsafe"]
-    if guards != {expected}:
+    if method in READ_METHODS:
+        if guards != {TRIP_READ_GUARD}:
+            return (
+                f"{label} is a trip-scoped read and must declare exactly "
+                f"`{TRIP_READ_GUARD.__name__}`; it declares {_names(guards) or 'no trip guard'}"
+            )
+        return None
+
+    if len(guards) != 1 or not guards <= TRIP_UNSAFE_GUARDS:
         return (
-            f"{label} is trip-scoped and must declare exactly `{expected.__name__}`; "
-            f"it declares {_names(guards) or 'no trip guard'}"
+            f"{label} is a trip-scoped write and must declare exactly one of "
+            f"{_names(set(TRIP_UNSAFE_GUARDS))}; it declares {_names(guards) or 'no trip guard'}"
         )
     return None
 
@@ -433,7 +448,7 @@ def test_the_rules_reject_miswired_routes() -> None:
     async def signin(user: Annotated[Any, Depends(require_session)]) -> None:
         return None
 
-    async def stray(guard: Annotated[Any, Depends(require_rider_access)]) -> None:
+    async def stray(guard: Annotated[Any, Depends(require_trip_writer)]) -> None:
         return None
 
     async def read(guard: Annotated[Any, Depends(require_trip_access)]) -> None:
@@ -446,6 +461,21 @@ def test_the_rules_reject_miswired_routes() -> None:
     scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["DELETE"])
     scratch.add_api_route("/api/trips/{slug}/things", read, methods=["GET"])
     scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["PATCH"])
+
+    # A trip write with only a session: who is asking, but not whether they may
+    # write to this trip (t-am-write-gate-legacy).
+    async def session_only(user: Annotated[Any, Depends(require_session)]) -> None:
+        return None
+
+    # A trip write declaring the membership gate *and* another guard.
+    async def doubled(
+        guard: Annotated[Any, Depends(require_trip_writer)],
+        read: Annotated[Any, Depends(require_trip_access)],
+    ) -> None:
+        return None
+
+    scratch.add_api_route("/api/trips/{slug}/session-only", session_only, methods=["POST"])
+    scratch.add_api_route("/api/trips/{slug}/doubled", doubled, methods=["POST"])
     routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
 
     must_fail = [
@@ -454,12 +484,55 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("POST", "/api/v2/auth/signin"),
         ("POST", "/api/elsewhere/{slug}"),
         ("DELETE", "/api/trips/{slug}/things/{id}"),
+        ("POST", "/api/trips/{slug}/session-only"),
+        ("POST", "/api/trips/{slug}/doubled"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
 
     for key in [("GET", "/api/trips/{slug}/things"), ("PATCH", "/api/trips/{slug}/things/{id}")]:
         assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
+
+
+def test_a_synthetic_app_with_an_unguarded_trip_post_fails_the_audit() -> None:
+    """
+    An app with one unguarded ``POST`` under ``/api/trips/{slug}`` fails, end to end.
+
+    ``test_the_rules_reject_miswired_routes`` feeds routes straight to
+    ``_violation``. This drives the whole audit path the live app goes through
+    — mount a router on a ``FastAPI`` app, walk the lazily-included tree, take
+    every ``/api`` (method, route) pair — so a walk that silently skipped the
+    route would fail here too. A guarded sibling is the control: the audit must
+    single out the unguarded write, not reject everything.
+    """
+    from fastapi import FastAPI
+
+    synthetic = FastAPI()
+    router = APIRouter(prefix="/api/trips/{slug}")
+
+    async def unguarded(slug: str) -> None:
+        return None
+
+    async def guarded(guard: Annotated[Any, Depends(require_trip_writer)]) -> None:
+        return None
+
+    router.add_api_route("/leaky", unguarded, methods=["POST"])
+    router.add_api_route("/fine", guarded, methods=["POST"])
+    synthetic.include_router(router)
+
+    pairs = [
+        (method, route)
+        for route in _walk(synthetic.routes)
+        if route.path.startswith("/api")
+        for method in sorted(route.methods or ())
+    ]
+    violations = {route.path: _violation(method, route) for method, route in pairs}
+
+    assert set(violations) == {"/api/trips/{slug}/leaky", "/api/trips/{slug}/fine"}, (
+        f"the walk did not find both synthetic routes: {sorted(violations)}"
+    )
+    assert violations["/api/trips/{slug}/leaky"] is not None, "an unguarded trip POST passed"
+    assert violations["/api/trips/{slug}/fine"] is None, violations["/api/trips/{slug}/fine"]
 
 
 # --------------------------------------------------------------------------

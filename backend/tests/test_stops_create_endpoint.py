@@ -37,6 +37,15 @@ What the contract promises for this row:
 Setup follows ``test_stops_list_endpoint.py``: the real app, a real database,
 ``get_session`` overridden onto this test's engine because the app-level engine
 pools asyncpg connections bound to whichever event loop first used them.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -51,7 +60,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from conftest import SeededTrip, make_async_client
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -107,7 +116,9 @@ class SeededStop:
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, talking to the test database on this test's event loop."""
     import app.main
 
@@ -120,7 +131,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        async with make_async_client(application) as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
@@ -430,7 +444,10 @@ async def test_manual_location_source_round_trips(
 
 
 async def test_viewer_slug_is_forbidden(
-    client: AsyncClient, seeded_trips: list[SeededTrip], created_ids: list[str]
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    created_ids: list[str],
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     A viewer link cannot create a stop — ``403``, with ``FORBIDDEN`` in the envelope.
@@ -443,7 +460,9 @@ async def test_viewer_slug_is_forbidden(
     payload = new_payload()
     created_ids.append(payload["id"])
 
-    response = await client.post(STOPS_PATH.format(slug=trip.viewer_slug), json=payload)
+    response = await client.post(
+        STOPS_PATH.format(slug=trip.viewer_slug), json=payload, headers=non_member_session.headers
+    )
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
     assert parse_envelope(response).code is ErrorCode.FORBIDDEN
@@ -454,6 +473,7 @@ async def test_viewer_slug_creates_no_row(
     migrated_engine: AsyncEngine,
     seeded_trips: list[SeededTrip],
     created_ids: list[str],
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     ...and the stop is **not in the table** — queried directly, not re-read through the API.
@@ -471,7 +491,9 @@ async def test_viewer_slug_creates_no_row(
     created_ids.append(payload["id"])
     before = await stop_ids_for_trip(migrated_engine, trip.id)
 
-    response = await client.post(STOPS_PATH.format(slug=trip.viewer_slug), json=payload)
+    response = await client.post(
+        STOPS_PATH.format(slug=trip.viewer_slug), json=payload, headers=non_member_session.headers
+    )
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
 
     assert await rows_for_id(migrated_engine, payload["id"]) == []
@@ -519,7 +541,10 @@ async def test_unknown_slug_creates_no_row(
 
 
 async def test_no_slug_appears_in_the_403_or_404_body(
-    client: AsyncClient, seeded_trips: list[SeededTrip], created_ids: list[str]
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    created_ids: list[str],
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     Neither failure body echoes a slug back.
@@ -533,7 +558,9 @@ async def test_no_slug_appears_in_the_403_or_404_body(
     created_ids.append(payload["id"])
 
     for slug in (first.viewer_slug, UNKNOWN_SLUG):
-        response = await client.post(STOPS_PATH.format(slug=slug), json=payload)
+        response = await client.post(
+            STOPS_PATH.format(slug=slug), json=payload, headers=non_member_session.headers
+        )
 
         assert response.status_code in {HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND}
         for candidate in (
@@ -591,6 +618,7 @@ async def test_viewer_slug_with_an_invalid_body_still_writes_nothing(
     seeded_trips: list[SeededTrip],
     created_ids: list[str],
     case: str,
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     A read-only link plus a malformed body is still a rejection with no row.
@@ -604,7 +632,9 @@ async def test_viewer_slug_with_an_invalid_body_still_writes_nothing(
     created_ids.append(payload["id"])
     before = await stop_ids_for_trip(migrated_engine, trip.id)
 
-    response = await client.post(STOPS_PATH.format(slug=trip.viewer_slug), json=payload)
+    response = await client.post(
+        STOPS_PATH.format(slug=trip.viewer_slug), json=payload, headers=non_member_session.headers
+    )
 
     assert response.status_code in {
         HTTPStatus.FORBIDDEN,
@@ -642,7 +672,11 @@ async def test_unknown_slug_with_an_invalid_body_still_writes_nothing(
 
 @pytest.mark.parametrize("case", sorted(INVALID_BODIES))
 async def test_the_access_guard_runs_before_body_validation(
-    client: AsyncClient, seeded_trips: list[SeededTrip], created_ids: list[str], case: str
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    created_ids: list[str],
+    case: str,
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     The observed ordering, pinned now that it has been observed.
@@ -661,7 +695,9 @@ async def test_the_access_guard_runs_before_body_validation(
     payload = dict(INVALID_BODIES[case], id=str(uuid4()))
     created_ids.append(payload["id"])
 
-    viewer = await client.post(STOPS_PATH.format(slug=trip.viewer_slug), json=payload)
+    viewer = await client.post(
+        STOPS_PATH.format(slug=trip.viewer_slug), json=payload, headers=non_member_session.headers
+    )
     unknown = await client.post(STOPS_PATH.format(slug=UNKNOWN_SLUG), json=payload)
 
     assert viewer.status_code == HTTPStatus.FORBIDDEN, viewer.text

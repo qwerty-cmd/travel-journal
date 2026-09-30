@@ -14,8 +14,9 @@ promises this one response makes, each of which fails independently:
    ``WHERE trip_id`` is not a cosmetic bug — it is one trip's data appearing
    under another trip's link, which is the same class of failure as one trip's
    slug opening another trip's journal.
-3. **``access``.** It is derived by the slug dependency from the matched row and
-   passed through untouched. It drives whether the frontend renders write UI, so
+3. **``access``.** It is derived by the read gate from the caller's membership
+   (since decision-log Entry 29; ``rider`` iff an active member, whichever slug)
+   and passed through untouched. It drives whether the frontend renders write UI, so
    an ``access`` stuck at ``rider`` shows a read-only guest buttons that always
    fail, while the API's own enforcement stays perfectly correct — the two are
    different mechanisms and only one of them is tested by the 403 tests in
@@ -54,13 +55,13 @@ from http import HTTPStatus
 from typing import Any, get_args
 
 import pytest
-from conftest import SeededBike, SeededTrip, make_async_client
+from conftest import SeededBike, SeededTrip, SignedInAccount, make_async_client
 from fastapi import params
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.core.security import require_rider_access, require_trip_access
+from app.core.security import require_trip_access, require_trip_writer
 from app.data import tables
 from app.data.db import get_session
 from app.data.repositories.bikes import list_by_trip
@@ -333,15 +334,24 @@ async def test_both_slugs_return_an_identical_trip_payload(
 # --------------------------------------------------------------------------
 
 
+# Since decision-log Entry 29 (t-am-write-gate-legacy) `access` follows the
+# caller's membership, not the slug: either slug only locates the trip (contract
+# default 21). The two tests below were "the rider's link reports rider" and
+# "the two links differ"; they are now the membership versions of the same
+# checks. The others in this section ask with no session, where both links
+# report `viewer`, so they are unchanged.
+
+
 async def test_rider_slug_reports_rider_access(
-    client: AsyncClient, seeded_trips: list[SeededTrip]
+    client: AsyncClient, seeded_trips: list[SeededTrip], rider_session: SignedInAccount
 ) -> None:
-    """The rider's link reports ``rider``."""
+    """An active member reports ``rider`` — through either link (contract default 21)."""
     trip = seeded_trips[0]
 
-    body = (await client.get(TRIP_PATH.format(slug=trip.rider_slug))).json()
+    for slug in (trip.rider_slug, trip.viewer_slug):
+        body = (await client.get(TRIP_PATH.format(slug=slug), headers=rider_session.headers)).json()
 
-    assert body["access"] == Access.RIDER.value
+        assert body["access"] == Access.RIDER.value
 
 
 async def test_viewer_slug_reports_viewer_access(
@@ -361,22 +371,31 @@ async def test_viewer_slug_reports_viewer_access(
     assert body["access"] == Access.VIEWER.value
 
 
-async def test_access_differs_between_the_two_links_to_one_trip(
-    client: AsyncClient, seeded_trips: list[SeededTrip]
+async def test_access_differs_between_a_member_and_a_non_member_on_one_link(
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    rider_session: SignedInAccount,
+    non_member_session: SignedInAccount,
 ) -> None:
     """
-    One trip, two links, two different answers.
+    One trip, one link, two callers, two different answers (contract default 21).
 
     Asserted as a difference as well as by value: a handler that read ``access``
-    off the stored row instead of off the request would have to give the same
-    answer to both, and this is the shape of that bug.
+    off the stored row or off the slug instead of off the caller's membership
+    would have to give the same answer to both, and this is the shape of that
+    bug. Checked on both links, so neither slug decides it.
     """
     trip = seeded_trips[0]
 
-    rider = (await client.get(TRIP_PATH.format(slug=trip.rider_slug))).json()
-    viewer = (await client.get(TRIP_PATH.format(slug=trip.viewer_slug))).json()
+    for slug in (trip.rider_slug, trip.viewer_slug):
+        member = (
+            await client.get(TRIP_PATH.format(slug=slug), headers=rider_session.headers)
+        ).json()
+        stranger = (
+            await client.get(TRIP_PATH.format(slug=slug), headers=non_member_session.headers)
+        ).json()
 
-    assert rider["access"] != viewer["access"]
+        assert member["access"] != stranger["access"]
 
 
 async def test_second_trips_viewer_slug_reports_viewer_access(
@@ -802,15 +821,16 @@ def test_route_declares_require_trip_access() -> None:
 
 def test_route_does_not_declare_the_write_guard() -> None:
     """
-    ...and specifically not ``require_rider_access``.
+    ...and specifically not the write gate, ``require_trip_writer``.
 
     Stated separately because the damage is one-sided and silent: the rider's
-    own link would keep working perfectly, so every test run by whoever made the
-    change would pass, while every viewer got a 403 on the app's first request.
+    own session would keep working perfectly, so every test run by whoever made the
+    change would pass, while every anonymous reader got a 401 on the app's first
+    request.
     """
     from app.api.routes.trips import get_trip
 
-    assert require_rider_access not in _declared_dependencies(get_trip)
+    assert require_trip_writer not in _declared_dependencies(get_trip)
 
 
 def test_route_takes_its_session_from_get_session() -> None:

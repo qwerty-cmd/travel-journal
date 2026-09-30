@@ -20,6 +20,15 @@ Against the real app, the local Postgres and the local MinIO; nothing mocked.
    trip's prefix, not in the table.
 6. **``PhotoOut.url`` is a SigV4 presigned GET** for the deterministic key,
    valid for an hour, and it actually serves the uploaded bytes.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -37,7 +46,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from botocore.exceptions import ClientError
-from conftest import SeededTrip, make_async_client
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -57,7 +66,7 @@ ABOVE_MULTIPART_THRESHOLD = 8 * 1024 * 1024 + 1
 
 
 async def _app_client(
-    engine: AsyncEngine, *, raise_app_exceptions: bool
+    engine: AsyncEngine, account: SignedInAccount, *, raise_app_exceptions: bool
 ) -> AsyncIterator[AsyncClient]:
     import app.main
 
@@ -70,8 +79,11 @@ async def _app_client(
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
+        # Every request acts as `account` (the `rider_session`, an active member of
+        # both seeded trips): since decision-log Entry 29 the slug only locates the
+        # trip and the write gate needs a member's session (t-am-write-gate-legacy).
         async with make_async_client(
-            application, raise_app_exceptions=raise_app_exceptions
+            application, headers=account.headers, raise_app_exceptions=raise_app_exceptions
         ) as http_client:
             yield http_client
     finally:
@@ -79,14 +91,18 @@ async def _app_client(
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, on the test database."""
-    async for http_client in _app_client(migrated_engine, raise_app_exceptions=True):
+    async for http_client in _app_client(migrated_engine, rider_session, raise_app_exceptions=True):
         yield http_client
 
 
 @pytest.fixture
-async def quiet_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def quiet_client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """
     The same app, but an unhandled exception comes back as the ``500`` a phone sees.
 
@@ -94,7 +110,9 @@ async def quiet_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClien
     ``ASGITransport`` would surface the re-raise instead of the response -- which
     is the thing under test.
     """
-    async for http_client in _app_client(migrated_engine, raise_app_exceptions=False):
+    async for http_client in _app_client(
+        migrated_engine, rider_session, raise_app_exceptions=False
+    ):
         yield http_client
 
 
@@ -313,7 +331,10 @@ async def test_cross_stop_conflict_writes_nothing_under_the_other_stop(
 
 
 async def test_viewer_slug_writes_nothing_to_storage(
-    client: AsyncClient, stop: tuple[SeededTrip, str], swept_prefixes: list[str]
+    client: AsyncClient,
+    stop: tuple[SeededTrip, str],
+    swept_prefixes: list[str],
+    non_member_session: SignedInAccount,
 ) -> None:
     """A ``403`` on the viewer slug leaves no object under the stop's key."""
     trip, stop_id = stop
@@ -325,6 +346,7 @@ async def test_viewer_slug_writes_nothing_to_storage(
         PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop_id),
         data=form(photo_id),
         files=upload(b"viewer-bytes"),
+        headers=non_member_session.headers,
     )
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text

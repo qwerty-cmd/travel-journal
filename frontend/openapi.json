@@ -11,7 +11,7 @@
           "trips"
         ],
         "summary": "Get a trip's metadata and its bikes",
-        "description": "**Context.** The rider shares one trip through two unguessable links: a rider\nlink that can write and a viewer link that can only read. This is the endpoint\nboth of them open first, and for a viewer it is the whole journal header. It\nanswers three questions in one round trip \u2014 which trip is this, which bikes are\non it, and may I write to it \u2014 because the app is used on the Stuart Hwy where a\nsecond request is a second chance to be offline. Task `t-trip-metadata-endpoint`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches;\na viewer slug is a perfectly ordinary success here, not a 403, because this is a\nread. The dependency also derives `access` from the matched row, and that value\nis passed straight through to `TripOut.access` \u2014 the handler never recomputes\nit. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,\nfiltered to this trip; a trip with no bikes returns `\"bikes\": []`, which is a\nnormal trip and not a 404. Neither slug is in the response: `TripOut` has no\nslug field, and the slug is the credential.\n\n`access` is a **UI hint**, not the enforcement point. It tells the frontend\nwhether to render Add stop / upload photo / edit bikes. The write endpoints\nreject a viewer slug themselves regardless of what the UI chose to show.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits\nabove, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and\n`POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the\nrider-only writes behind the `bikes` list returned here.",
+        "description": "**Context.** A trip from before accounts was shared through two links, a rider\nlink and a viewer link. Since decision-log Entry 29 either link only *locates*\nthe trip; what the caller may do is decided by their membership. This is the\nendpoint both links open first. It answers three questions in one round trip \u2014\nwhich trip is this, which bikes are on it, and should the UI offer writes \u2014\nbecause the app is used on the Stuart Hwy where a second request is a second\nchance to be offline. Tasks `t-trip-metadata-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches.\nThe session is optional here and never produces a 401. The dependency derives\n`access`: `rider` iff the session user has an active membership on this trip\n(read fresh on every request), `viewer` for everyone else \u2014 anonymous, a\nsigned-in non-member, a pending requester or a revoked member. Which slug was\nfollowed plays no part. The value is passed straight through to\n`TripOut.access`; the handler never recomputes it. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,\nfiltered to this trip; a trip with no bikes returns `\"bikes\": []`, which is a\nnormal trip and not a 404. Neither slug is in the response: `TripOut` has no\nslug field, and the slug is the credential.\n\n`access` is a **UI hint**, deprecated, and not the enforcement point. It tells\nthe frontend whether to render Add stop / upload photo / edit bikes. The write\nendpoints check the session and membership themselves regardless of what the UI\nchose to show.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits\nabove, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and\n`POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the\nmember-only writes behind the `bikes` list returned here.",
         "operationId": "get_trip_api_trips__slug__get",
         "parameters": [
           {
@@ -20,15 +20,15 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.",
               "title": "Slug"
             },
-            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+            "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip."
           }
         ],
         "responses": {
           "200": {
-            "description": "The trip, the bikes on it, and which kind of link was used.",
+            "description": "The trip, the bikes on it, and whether the caller is an active member.",
             "content": {
               "application/json": {
                 "schema": {
@@ -66,7 +66,7 @@
           "stops"
         ],
         "summary": "List a trip's stops",
-        "description": "**Context.** The stops are the journal \u2014 where the rider got to, when, and what\nthey wrote about it. `GET /api/trips/{slug}` is the header above this list;\nthis is the body. It is also the **only** endpoint that serves `notes` and\n`locationSource`: `GET /api/trips/{slug}/map` deliberately omits both so the\nsame data is not served from two places and given two chances to drift, and the\nfrontend resolves a clicked pin back to its full stop from this list by `id`.\nTask `t-stops-list-endpoint`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches; a\nviewer slug is an ordinary success here, not a 403, because this is a read. The\nstops are fetched by `data/repositories/stops.list_by_trip`, filtered on the\n`trip_id` the dependency resolved rather than on anything the caller typed, so\nno other trip's stops can appear. **A trip with no stops is a `200` with `[]`** \u2014\nan empty collection, not a missing one, and never a 404. Neither slug is in the\nresponse: `StopOut` has no slug field, and the slug is the credential.\n\nThe list comes back ordered by `arrivedAt` then `id`, but that is for response\nstability only and is **not** part of the contract \u2014 match stops by `id`, never\nby position. The map endpoint's chronological trail is established by the map\nhandler itself and does not read its ordering guarantee from here.\n\n**Related APIs.** `GET /api/trips/{slug}` for the trip header and its bikes,\n`POST /api/trips/{slug}/stops` to add a stop (rider slug only),\n`GET /api/trips/{slug}/stops/{id}/photos` for one stop's photos, and\n`GET /api/trips/{slug}/map` for the same stops as GeoJSON.",
+        "description": "**Context.** The stops are the journal \u2014 where the rider got to, when, and what\nthey wrote about it. `GET /api/trips/{slug}` is the header above this list;\nthis is the body. It is also the **only** endpoint that serves `notes` and\n`locationSource`: `GET /api/trips/{slug}/map` deliberately omits both so the\nsame data is not served from two places and given two chances to drift, and the\nfrontend resolves a clicked pin back to its full stop from this list by `id`.\nTask `t-stops-list-endpoint`.\n\n**How it works.** `{slug}` is resolved by the shared `require_trip_access`\ndependency, which accepts **either** slug and raises a 404 if neither matches; a\nviewer slug is an ordinary success here, not a 403, because this is a read. The\nstops are fetched by `data/repositories/stops.list_by_trip`, filtered on the\n`trip_id` the dependency resolved rather than on anything the caller typed, so\nno other trip's stops can appear. **A trip with no stops is a `200` with `[]`** \u2014\nan empty collection, not a missing one, and never a 404. Neither slug is in the\nresponse: `StopOut` has no slug field, and the slug is the credential.\n\nThe list comes back ordered by `arrivedAt` then `id`, but that is for response\nstability only and is **not** part of the contract \u2014 match stops by `id`, never\nby position. The map endpoint's chronological trail is established by the map\nhandler itself and does not read its ordering guarantee from here.\n\n**Related APIs.** `GET /api/trips/{slug}` for the trip header and its bikes,\n`POST /api/trips/{slug}/stops` to add a stop (active members only),\n`GET /api/trips/{slug}/stops/{id}/photos` for one stop's photos, and\n`GET /api/trips/{slug}/map` for the same stops as GeoJSON.",
         "operationId": "list_stops_api_trips__slug__stops_get",
         "parameters": [
           {
@@ -75,10 +75,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.",
               "title": "Slug"
             },
-            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+            "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip."
           }
         ],
         "responses": {
@@ -123,7 +123,7 @@
           "stops"
         ],
         "summary": "Add a stop to a trip",
-        "description": "**Context.** This is how a stop gets into the journal, and the one write the app\nmakes most: the rider taps \"Add stop\" on the Stuart Hwy, often with no signal, so\nthe stop is captured on the device with an id the *client* generates and queued\nuntil there is a connection. Rider slug only \u2014 a viewer link can read this trip's\nstops but not add one. Task `t-stops-create-endpoint`.\n\n**How it works.** `{slug}` is resolved by `require_rider_access`, which raises a\n404 if no trip has this slug and a 403 if it is the trip's viewer slug; the stop\nis stored against the `trip_id` that dependency resolved, never against anything\nin the path or the body. `StopCreate.id` then decides one of **three** branches\n(`docs/api-contract.md`, \"Idempotency\"; decision-log Entry 14):\n\n- an **unseen** id creates the stop \u2014 `201`, body is the new stop;\n- an id **already on this trip** is a replay \u2014 `200`, body is the **stored**\n  record, and a body that differs from the stored one changes nothing;\n- an id that exists **on a different trip** is not a replay \u2014 `409` /\n  `CONFLICT`, nothing is created, and nothing about the other record is\n  disclosed.\n\nThe replay is matched on `(trip_id, id)` rather than on the id alone, so no\nother trip's stop can be returned through this trip's slug, and the third branch\nis decided by a check *before* the insert rather than by letting the insert fail\n\u2014 a driver error would render `500` / `INTERNAL_ERROR`, which the offline queue\nretries forever.\n\n`arrivedAt` is the time the rider arrived, not the time this request was\nreceived, and its **UTC offset is required**: a naive value is a `422`, because a\nrider crossing timezones has no offset worth guessing (decision-log Entry 15).\n\n**Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,\n`GET /api/trips/{slug}` is the trip header above it (its `access` field is the\nUI hint for whether to offer this write at all),\n`POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created\nhere, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.",
+        "description": "**Context.** This is how a stop gets into the journal, and the one write the app\nmakes most: the rider taps \"Add stop\" on the Stuart Hwy, often with no signal, so\nthe stop is captured on the device with an id the *client* generates and queued\nuntil there is a connection. Only a signed-in, active member of the trip can add\none; either slug just locates the trip (decision-log Entry 29, contract default\n21). Tasks `t-stops-create-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `require_trip_writer` checks, in order: the slug (404 if no\ntrip has it), the session (401), and an active membership on the trip, read fresh\non every request (403 \"You're not a rider on this trip.\" or, for a revoked\nmember, \"You're no longer a rider on this trip.\"). The stop is stored against the\n`trip_id` that dependency resolved, never against anything in the path or the\nbody, with `created_by` set to the signed-in account. `StopCreate.id` then decides\none of **three** branches\n(`docs/api-contract.md`, \"Idempotency\"; decision-log Entry 14):\n\n- an **unseen** id creates the stop \u2014 `201`, body is the new stop;\n- an id **already on this trip** is a replay \u2014 `200`, body is the **stored**\n  record, and a body that differs from the stored one changes nothing;\n- an id that exists **on a different trip** is not a replay \u2014 `409` /\n  `CONFLICT`, nothing is created, and nothing about the other record is\n  disclosed.\n\nThe replay is matched on `(trip_id, id)` rather than on the id alone, so no\nother trip's stop can be returned through this trip's slug, and the third branch\nis decided by a check *before* the insert rather than by letting the insert fail\n\u2014 a driver error would render `500` / `INTERNAL_ERROR`, which the offline queue\nretries forever.\n\n`arrivedAt` is the time the rider arrived, not the time this request was\nreceived, and its **UTC offset is required**: a naive value is a `422`, because a\nrider crossing timezones has no offset worth guessing (decision-log Entry 15).\n\n**Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,\n`GET /api/trips/{slug}` is the trip header above it (its `access` field is the\nUI hint for whether to offer this write at all: `rider` iff the caller is an\nactive member),\n`POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created\nhere, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.",
         "operationId": "create_stop_api_trips__slug__stops_post",
         "parameters": [
           {
@@ -132,10 +132,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.",
               "title": "Slug"
             },
-            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+            "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403."
           }
         ],
         "requestBody": {
@@ -169,8 +169,18 @@
               }
             }
           },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "The slug resolved, but it is the trip's **viewer** slug \u2014 a read-only link. Deliberately not a 404: the link genuinely works, just not for writes. Nothing was created.",
+            "description": "Signed in, and the slug located the trip, but the account has no active membership on it: \"You're not a rider on this trip.\" for a non-member, \"You're no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was written.",
             "content": {
               "application/json": {
                 "schema": {
@@ -180,7 +190,7 @@
             }
           },
           "404": {
-            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess \u2014 see `docs/api-contract.md`, 'Access control: 403 and 404 are different answers'.",
+            "description": "No trip has this slug. Deliberately the same answer for a mistyped link, a revoked one and a guess, and checked before the session \u2014 see `docs/api-contract.md`, 'Access control: 401, 403 and 404 are three different answers'.",
             "content": {
               "application/json": {
                 "schema": {
@@ -218,7 +228,7 @@
           "photos"
         ],
         "summary": "List a stop's photos",
-        "description": "**Context.** Photos attached to a single stop, each carrying a presigned URL\ninto S3-compatible storage. The URL is generated fresh per request and never\nstored in the database. A stop with no photos is a `200` with `[]`.\n\n**How it works.** `{slug}` is resolved by `require_trip_access` (either slug\naccepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404\nif it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,\n`POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (rider slug\nonly).",
+        "description": "**Context.** Photos attached to a single stop, each carrying a presigned URL\ninto S3-compatible storage. The URL is generated fresh per request and never\nstored in the database. A stop with no photos is a `200` with `[]`.\n\n**How it works.** `{slug}` is resolved by `require_trip_access` (either slug\naccepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404\nif it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.\n\n**Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,\n`POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (active\nmembers only).",
         "operationId": "list_photos_api_trips__slug__stops__stop_id__photos_get",
         "parameters": [
           {
@@ -236,10 +246,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.",
               "title": "Slug"
             },
-            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+            "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip."
           }
         ],
         "responses": {
@@ -284,7 +294,7 @@
           "photos"
         ],
         "summary": "Upload a photo to a stop",
-        "description": "**Context.** This is how a photo gets into the journal. Multipart: form fields\n(`id`, `uploadedBy`, `takenAt`) alongside the binary `file` part. Rider slug\nonly. Task `t-photo-upload-endpoint`.\n\n**How it works.** `{slug}` is resolved by `require_rider_access` (403 on viewer,\n404 on unknown). `{stop_id}` is verified to belong to the resolved trip.\nThe `id` form field decides the three-way idempotency branch: unseen -> 201,\nsame stop -> 200 replay, different stop -> 409. The file is stored in S3 with\nobject key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in\nthe database.\n\n**Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this\nendpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo\nattaches to.",
+        "description": "**Context.** This is how a photo gets into the journal. Multipart: form fields\n(`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary\n`file` part. Only a signed-in, active member of the trip can upload; either slug\njust locates the trip (decision-log Entry 29, contract default 21). Tasks\n`t-photo-upload-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `require_trip_writer` checks the slug (404), the session (401)\nand an active membership (403), in that order, before anything else \u2014 a replay\nis not an exception to it. `{stop_id}` is verified to belong to the resolved trip.\nThe stored `uploadedBy` is the signed-in account's display name at upload time,\nwhatever the form sent, and `created_by` is the account.\nThe `id` form field decides the three-way idempotency branch: unseen -> 201,\nsame stop -> 200 replay, different stop -> 409. The file is stored in S3 with\nobject key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in\nthe database.\n\n**Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this\nendpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo\nattaches to.",
         "operationId": "upload_photo_api_trips__slug__stops__stop_id__photos_post",
         "parameters": [
           {
@@ -302,10 +312,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.",
               "title": "Slug"
             },
-            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+            "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403."
           }
         ],
         "requestBody": {
@@ -339,8 +349,18 @@
               }
             }
           },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was stored.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "description": "Signed in, and the slug located the trip, but the account has no active membership on it: \"You're not a rider on this trip.\" for a non-member, \"You're no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was stored, and a replay of an already-stored id is refused the same way.",
             "content": {
               "application/json": {
                 "schema": {
@@ -388,7 +408,7 @@
           "bikes"
         ],
         "summary": "Add a bike to a trip",
-        "description": "**Context.** Bikes are registered per trip so the journal records who is riding\nwhat. Rider slug only -- a viewer link can read bikes (via `GET /trips/{slug}`)\nbut not add one. Task `t-bikes-create-endpoint`.\n\n**How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`\n(decision-log Entry 14): unseen id creates the bike (201), id already on this\ntrip is a replay (200, stored record returned unchanged), id on a different trip\nis a 409 with nothing disclosed about the conflicting record.\n\n**Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,\n`PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.",
+        "description": "**Context.** Bikes are registered per trip so the journal records who is riding\nwhat. Only a signed-in, active member of the trip can add one; either slug just\nlocates the trip (decision-log Entry 29, contract default 21). The server sets\n`created_by` from the session. Tasks `t-bikes-create-endpoint`,\n`t-am-write-gate-legacy`.\n\n**How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`\n(decision-log Entry 14): unseen id creates the bike (201), id already on this\ntrip is a replay (200, stored record returned unchanged), id on a different trip\nis a 409 with nothing disclosed about the conflicting record. `require_trip_writer`\nruns first: slug (404), session (401), active membership (403).\n\n**Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,\n`PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.",
         "operationId": "create_bike_api_trips__slug__bikes_post",
         "parameters": [
           {
@@ -397,10 +417,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.",
               "title": "Slug"
             },
-            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+            "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403."
           }
         ],
         "requestBody": {
@@ -434,8 +454,18 @@
               }
             }
           },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "description": "Signed in, and the slug located the trip, but the account has no active membership on it: \"You're not a rider on this trip.\" for a non-member, \"You're no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was written.",
             "content": {
               "application/json": {
                 "schema": {
@@ -483,7 +513,7 @@
           "bikes"
         ],
         "summary": "Update a bike on a trip",
-        "description": "**Context.** Partial update of a bike registered on this trip. Only the fields\npresent in the request body are changed \u2014 absent fields stay as they are.\nRider slug only. Task `t-bikes-patch-endpoint`.\n\n**How it works.** Last-write-wins: no conflict detection, no ETags, no version\nfield. Two concurrent patches both succeed; whichever one the database sees\nlast is the one that sticks (spec Section 4).\n\n**Related APIs.** `POST /api/trips/{slug}/bikes` creates the bike in the first\nplace. `GET /api/trips/{slug}` returns the current state in `TripOut.bikes`.",
+        "description": "**Context.** Partial update of a bike registered on this trip. Only the fields\npresent in the request body are changed \u2014 absent fields stay as they are.\nActive members only, through `require_trip_writer` (slug 404, session 401,\nmembership 403). Tasks `t-bikes-patch-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** Last-write-wins: no conflict detection, no ETags, no version\nfield. Two concurrent patches both succeed; whichever one the database sees\nlast is the one that sticks (spec Section 4).\n\n**Related APIs.** `POST /api/trips/{slug}/bikes` creates the bike in the first\nplace. `GET /api/trips/{slug}` returns the current state in `TripOut.bikes`.",
         "operationId": "patch_bike_api_trips__slug__bikes__id__patch",
         "parameters": [
           {
@@ -501,10 +531,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.",
+              "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.",
               "title": "Slug"
             },
-            "description": "The trip's **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404."
+            "description": "The trip's rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403."
           }
         ],
         "requestBody": {
@@ -528,8 +558,18 @@
               }
             }
           },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "The slug resolved, but it is the trip's **viewer** slug.",
+            "description": "Signed in, and the slug located the trip, but the account has no active membership on it: \"You're not a rider on this trip.\" for a non-member, \"You're no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was written.",
             "content": {
               "application/json": {
                 "schema": {
@@ -576,10 +616,10 @@
             "required": true,
             "schema": {
               "type": "string",
-              "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one.",
+              "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.",
               "title": "Slug"
             },
-            "description": "The trip's rider or viewer slug \u2014 the unguessable link the trip was shared with. Read endpoints accept either one."
+            "description": "The trip's rider or viewer slug \u2014 the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip."
           }
         ],
         "responses": {
@@ -1321,11 +1361,6 @@
             "title": "Id",
             "description": "Client-generated UUID4, assigned when the photo is captured (possibly offline, before upload succeeds). Replaying the same id -- same photo retried after a dropped connection -- returns the existing photo (200) instead of storing a duplicate. See docs/api-contract.md 'Idempotency'."
           },
-          "uploadedBy": {
-            "type": "string",
-            "title": "Uploadedby",
-            "description": "Display name only, no auth -- see spec Section 6."
-          },
           "takenAt": {
             "type": "string",
             "format": "date-time",
@@ -1337,12 +1372,23 @@
             "contentMediaType": "application/octet-stream",
             "title": "File",
             "description": "The photo file."
+          },
+          "uploadedBy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uploadedby",
+            "description": "Optional and ignored. Before accounts, the uploader's free-text display name; queued uploads from then still send it. The stored name is now the signed-in account's display name at upload time, whatever this field says."
           }
         },
         "type": "object",
         "required": [
           "id",
-          "uploadedBy",
           "takenAt",
           "file"
         ],
@@ -1538,7 +1584,7 @@
           "uploadedBy": {
             "type": "string",
             "title": "Uploadedby",
-            "description": "Display name only, no auth \u2014 see spec Section 6. Whoever the uploading device said it was; it is not tied to a user account and nothing verifies it. Stored as `photos.uploaded_by`."
+            "description": "Who uploaded the photo: the uploading account's `displayName` at upload time, set by the server from the session, whatever the upload form sent. For photos uploaded before accounts existed, the free-text label stored then. A snapshot: it does not change if the account is renamed. Stored as `photos.uploaded_by`."
           },
           "takenAt": {
             "type": "string",
@@ -1880,7 +1926,7 @@
           },
           "access": {
             "$ref": "#/components/schemas/Access",
-            "description": "Which kind of slug was used to make this request \u2014 'rider' or 'viewer'. The frontend uses this, not a stored user role, to decide whether to show write UI (Add stop, upload photo, edit bikes)."
+            "description": "Deprecated; kept for clients from before accounts. 'rider' when the caller is signed in with an active membership on this trip (rider or leader), 'viewer' otherwise \u2014 anonymous, a signed-in non-member, a pending requester or a revoked member. Which slug was used plays no part. A UI hint for whether to show write UI (Add stop, upload photo, edit bikes); the server enforces access on every write regardless."
           }
         },
         "type": "object",

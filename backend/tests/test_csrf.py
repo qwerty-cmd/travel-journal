@@ -36,7 +36,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from conftest import SeededTrip, make_async_client
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -414,6 +414,7 @@ async def test_blocked_create_writes_nothing(
     seeded_trips: list[SeededTrip],
     created_ids: list[str],
     headers: list[tuple[str, str]],
+    rider_session: SignedInAccount,
 ) -> None:
     """A valid rider-slug bike create, blocked by CSRF, leaves the table untouched."""
     trip = seeded_trips[0]
@@ -428,8 +429,14 @@ async def test_blocked_create_writes_nothing(
 
     # Control: the identical request from the same origin does write -- so the
     # unchanged count above is the CSRF check, not a payload the route rejects.
+    # Sent as `rider_session`: since decision-log Entry 29 a write also needs an
+    # active member's session (t-am-write-gate-legacy).
     allowed = await send_raw(
-        client, "POST", path, [("Origin", "https://testserver")], json_body=payload
+        client,
+        "POST",
+        path,
+        [("Origin", "https://testserver"), *rider_session.headers.items()],
+        json_body=payload,
     )
     assert allowed.status_code == 201, allowed.text
     assert await bike_count(migrated_engine, trip.id) == before + 1

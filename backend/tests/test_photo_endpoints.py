@@ -21,6 +21,15 @@ What the contract promises:
 9. **POST — `takenAt` is an offset-aware instant.** A naive value (no UTC
    offset) is 422 / ``VALIDATION_ERROR`` and writes nothing; an offset-carrying
    one is stored as the instant the device sent, whatever zone the API runs in.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -35,7 +44,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from conftest import SeededTrip, make_async_client
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -71,7 +80,9 @@ class SeededStop:
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, talking to the test database on this test's event loop."""
     import app.main
 
@@ -84,7 +95,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        async with make_async_client(application) as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
@@ -230,6 +244,7 @@ class TestListPhotos:
         seeded_stops: list[SeededStop],
         created_photo_ids: list[str],
         s3_bucket: None,
+        rider_session: SignedInAccount,
     ) -> None:
         """After uploading a photo, GET returns it with a presigned URL."""
         trip = seeded_trips[0]
@@ -252,7 +267,9 @@ class TestListPhotos:
         photo = next(p for p in photos if p["id"] == form["id"])
         assert set(photo.keys()) == CONTRACT_KEYS
         assert photo["stopId"] == stop.id
-        assert photo["uploadedBy"] == "Alice"
+        # The form sent "Alice"; the stored name is the uploading account's
+        # display name whatever the form says (contract default 23).
+        assert photo["uploadedBy"] == rider_session.display_name
         assert photo["archived"] is False
         # URL is a presigned S3 URL
         assert photo["url"].startswith("http")
@@ -365,6 +382,7 @@ class TestUploadPhoto:
         seeded_stops: list[SeededStop],
         created_photo_ids: list[str],
         s3_bucket: None,
+        rider_session: SignedInAccount,
     ) -> None:
         """Happy path: rider slug, unseen id -> 201 with PhotoOut."""
         trip = seeded_trips[0]
@@ -381,7 +399,9 @@ class TestUploadPhoto:
         assert set(body.keys()) == CONTRACT_KEYS
         assert body["id"] == form["id"]
         assert body["stopId"] == stop.id
-        assert body["uploadedBy"] == "Alice"
+        # The form sent "Alice"; the stored name is the uploading account's
+        # display name whatever the form says (contract default 23).
+        assert body["uploadedBy"] == rider_session.display_name
         assert body["archived"] is False
         assert body["url"].startswith("http")
 
@@ -486,6 +506,7 @@ class TestUploadPhoto:
         client: AsyncClient,
         seeded_trips: list[SeededTrip],
         seeded_stops: list[SeededStop],
+        non_member_session: SignedInAccount,
     ) -> None:
         """Viewer slug on POST -> 403 FORBIDDEN."""
         trip = seeded_trips[0]
@@ -493,7 +514,9 @@ class TestUploadPhoto:
         url = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
 
         form = upload_form()
-        response = await client.post(url, data=form, files=fake_file())
+        response = await client.post(
+            url, data=form, files=fake_file(), headers=non_member_session.headers
+        )
 
         assert response.status_code == HTTPStatus.FORBIDDEN
         error = parse_envelope(response)
@@ -505,6 +528,7 @@ class TestUploadPhoto:
         seeded_trips: list[SeededTrip],
         seeded_stops: list[SeededStop],
         migrated_engine: AsyncEngine,
+        non_member_session: SignedInAccount,
     ) -> None:
         """A rejected 403 must not write a row."""
         trip = seeded_trips[0]
@@ -512,7 +536,7 @@ class TestUploadPhoto:
         url = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
 
         form = upload_form()
-        await client.post(url, data=form, files=fake_file())
+        await client.post(url, data=form, files=fake_file(), headers=non_member_session.headers)
 
         rows = await photo_rows_for_id(migrated_engine, form["id"])
         assert rows == []
@@ -765,7 +789,9 @@ class TestTakenAtIsOffsetAware:
         photo = next(p for p in listed if p["id"] == form["id"])
         assert datetime.fromisoformat(photo["takenAt"]) == submitted
 
-    @pytest.mark.parametrize("missing", ["id", "uploadedBy", "takenAt"])
+    # `uploadedBy` is not here: since t-am-write-gate-legacy it is optional and
+    # ignored (the stored name comes from the account), so omitting it is a 201.
+    @pytest.mark.parametrize("missing", ["id", "takenAt"])
     async def test_missing_form_field_still_returns_422_validation_error(
         self,
         client: AsyncClient,
@@ -833,6 +859,7 @@ async def test_the_access_guard_runs_before_body_validation(
     seeded_trips: list[SeededTrip],
     seeded_stops: list[SeededStop],
     case: str,
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     Viewer slug -> 403 and unknown slug -> 404, whatever the form looks like.
@@ -858,7 +885,10 @@ async def test_the_access_guard_runs_before_body_validation(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id), data=data, files=fresh()
     )
     viewer = await client.post(
-        PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id), data=data, files=fresh()
+        PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id),
+        data=data,
+        files=fresh(),
+        headers=non_member_session.headers,
     )
     unknown = await client.post(
         PHOTOS_PATH.format(slug=UNKNOWN_SLUG, stop_id=stop.id), data=data, files=fresh()

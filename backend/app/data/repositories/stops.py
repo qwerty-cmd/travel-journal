@@ -123,7 +123,9 @@ async def list_by_trip(session: AsyncSession, trip_id: str) -> list[StopOut]:
     ]
 
 
-async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple[StopOut, bool]:
+async def create(
+    session: AsyncSession, trip_id: str, stop: StopCreate, *, created_by: str
+) -> tuple[StopOut, bool]:
     """
     Store one stop under this trip — or recognise that it is already stored.
 
@@ -136,6 +138,9 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
     ``trip_id`` is the id the slug dependency resolved, never anything the caller
     typed — the same rule ``list_by_trip`` holds, and here it is also what the
     replay lookup is keyed on.
+
+    ``created_by`` is the writing account's id, from the session the write gate
+    resolved (decision-log Entry 29). A replay keeps the original author.
 
     **Why this is two statements and not one insert.** The whole of decision-log
     Entry 14 lives in the shape below, and this is the file where someone
@@ -211,6 +216,7 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
             location_source=stop.locationSource,
             arrived_at=stop.arrivedAt,
             notes=stop.notes,
+            created_by=created_by,
         )
     )
     await session.commit()

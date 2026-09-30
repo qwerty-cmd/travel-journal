@@ -67,7 +67,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from conftest import SeededBike, SeededTrip, make_async_client
+from conftest import SeededBike, SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from test_route_dependency_audit import _api_routes
@@ -137,6 +137,9 @@ STORAGE_ROUTES = {("POST", "/api/trips/{slug}/stops/{stop_id}/photos")}
 # only ones with a 200 replay and a 409 conflict body to leak-check
 # (t-slug-audit-replay-and-conflict-bodies). Derived from the plan, not listed.
 CREATE_ROUTES = sorted(key for key, row in EXPECTED_STATUS.items() if row is CREATE)
+
+# The methods that go through the write gate and so need a session (Entry 29).
+WRITE_METHODS = {"POST", "PATCH"}
 
 
 # --------------------------------------------------------------------------
@@ -411,6 +414,8 @@ async def test_no_slug_value_comes_back_from_any_route(
     seeded_bikes: list[SeededBike],
     seeded_stop: SeededStop,
     bucket_if_storage_route: None,
+    rider_session: SignedInAccount,
+    non_member_session: SignedInAccount,
     method: str,
     path: str,
     slug_kind: str,
@@ -430,6 +435,14 @@ async def test_no_slug_value_comes_back_from_any_route(
     ]
 
     url, kwargs = build_request(method, path, slug, seeded_stop.id, seeded_bikes[0].id)
+    # Since decision-log Entry 29 (t-am-write-gate-legacy) a slug only locates the
+    # trip and a write needs an active member's session. Writes go as
+    # `rider_session`; the viewer-slug write goes as a signed-in non-member, so
+    # its planned 403 (now the membership gate's) is still the answer driven.
+    # Reads need no session and send none.
+    if method in WRITE_METHODS:
+        account = non_member_session if slug_kind == "viewer" else rider_session
+        kwargs = {**kwargs, "headers": account.headers}
     response = await client.request(method, url, **kwargs)
 
     expected = EXPECTED_STATUS[method, path][slug_kind]
@@ -483,6 +496,7 @@ async def test_no_slug_value_comes_back_from_a_replay_or_a_conflict(
     seeded_stop: SeededStop,
     other_trip_stop: SeededStop,
     bucket_if_storage_route: None,
+    rider_session: SignedInAccount,
     method: str,
     path: str,
 ) -> None:
@@ -511,7 +525,8 @@ async def test_no_slug_value_comes_back_from_a_replay_or_a_conflict(
         url, kwargs = build_request(
             method, path, slug, stop_id, seeded_bikes[0].id, record_id=record_id
         )
-        return await client.request(method, url, **kwargs)
+        # As an active member of both seeded trips (Entry 29: writes need one).
+        return await client.request(method, url, **kwargs, headers=rider_session.headers)
 
     created = await send(trip.rider_slug, seeded_stop.id)
     assert created.status_code == HTTPStatus.CREATED, created.text[:300]

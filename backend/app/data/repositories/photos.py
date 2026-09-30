@@ -129,6 +129,8 @@ async def insert(
     uploaded_by: str,
     taken_at,
     object_key: str,
+    *,
+    created_by: str | None = None,
 ) -> PhotoOut:
     """
     Insert a new photo row. Caller must have already checked for replay/conflict.
@@ -137,6 +139,12 @@ async def insert(
     the arguments: ``taken_at`` goes in with the device's offset and comes back
     from ``timestamptz`` as UTC, so echoing the argument made a ``201`` spell
     the same instant differently from its own ``200`` replay.
+
+    ``uploaded_by`` is the uploading account's ``display_name`` at upload time
+    and ``created_by`` its id (decision-log Entry 29, contract default 23). The
+    upload route always passes both. ``created_by`` defaults to ``None`` only
+    because the column is nullable and a photo with no account behind it (a
+    pre-0003 row, a repository test) is a legitimate row.
     """
     stored = (
         await session.execute(
@@ -147,6 +155,7 @@ async def insert(
                 object_key=object_key,
                 uploaded_by=uploaded_by,
                 taken_at=taken_at,
+                created_by=created_by,
             )
             .returning(
                 photos.c.id,

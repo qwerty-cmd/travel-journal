@@ -25,10 +25,12 @@ EXPECTED_ERROR_STATUSES = {
     ("get", "/api/trips/{slug}/stops"): {"404", "422"},
     ("get", "/api/trips/{slug}/stops/{stop_id}/photos"): {"404", "422"},
     ("get", "/api/trips/{slug}/map"): {"404", "422"},
-    ("post", "/api/trips/{slug}/stops"): {"403", "404", "409", "422"},
-    ("post", "/api/trips/{slug}/stops/{stop_id}/photos"): {"403", "404", "409", "422"},
-    ("post", "/api/trips/{slug}/bikes"): {"403", "404", "409", "422"},
-    ("patch", "/api/trips/{slug}/bikes/{id}"): {"403", "404", "422"},
+    # 401 on the writes since decision-log Entry 29 (t-am-write-gate-legacy): the
+    # write gate needs a session. 429 joins these with t-am-rate-limits.
+    ("post", "/api/trips/{slug}/stops"): {"401", "403", "404", "409", "422"},
+    ("post", "/api/trips/{slug}/stops/{stop_id}/photos"): {"401", "403", "404", "409", "422"},
+    ("post", "/api/trips/{slug}/bikes"): {"401", "403", "404", "409", "422"},
+    ("patch", "/api/trips/{slug}/bikes/{id}"): {"401", "403", "404", "422"},
 }
 CREATE_OPERATIONS = [op for op, codes in EXPECTED_ERROR_STATUSES.items() if "409" in codes]
 READ_OPERATIONS = [op for op in EXPECTED_ERROR_STATUSES if op[0] == "get"]
