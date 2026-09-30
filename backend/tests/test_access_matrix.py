@@ -24,8 +24,10 @@ iff the caller is an active member.
 ``t-am-v2-rider-writes`` added the v2 write columns (section 13): anonymous
 ``401`` for a public trip, a private trip and a random id alike; a non-member
 or pending caller ``403`` on a public trip and, on a private one, the ``404`` a
-nonexistent trip id gets; revoked ``403``; rider and leader ``2xx``. The leader
-column arrives with ``t-am-trip-create``. ``t-am-write-gate-legacy`` owns the
+nonexistent trip id gets; revoked ``403``; rider and leader ``2xx``.
+``t-am-trip-create`` added the leader columns (section 14) on PATCH trip: the
+write columns' answers, except that an active rider is ``403`` "You're not a
+leader on this trip." and only a leader gets ``200``. ``t-am-write-gate-legacy`` owns the
 legacy rows below; ``t-am-v2-trip-reads`` added the v2 read columns (section
 12): public read ``200`` for everyone, delayed for non-members and full for
 members; private read ``200`` full for members and, for everyone else, the
@@ -1897,3 +1899,151 @@ async def test_a_revoked_riders_v2_replay_of_a_stored_id_is_refused(
     assert replay.status_code == HTTPStatus.FORBIDDEN, replay.text
     assert replay.json() == {"error": {"code": "FORBIDDEN", "message": AC_NO_LONGER_A_RIDER}}
     assert await snapshot(migrated_engine, cast.trip.id) == before
+
+
+# --------------------------------------------------------------------------
+# 14. The leader columns: "Public leader" and "Private leader" (t-am-trip-create)
+# --------------------------------------------------------------------------
+
+# Contract matrix, leader columns, on the one leader route so far: PATCH
+# /api/v2/trips/{tripId}. None = 200. The leader gate is the v2 writer gate plus
+# a role check, so a non-member and a revoked member get the writer's 403
+# messages and only an active rider gets the leader one.
+AC_NOT_A_LEADER = "You're not a leader on this trip."
+_NOT_A_LEADER = (HTTPStatus.FORBIDDEN, ErrorCode.FORBIDDEN, AC_NOT_A_LEADER)
+EXPECTED_V2_LEADER = {
+    ("anonymous", "public"): EXPECTED_WRITE["anonymous"],
+    ("anonymous", "private"): EXPECTED_WRITE["anonymous"],
+    ("non_member", "public"): EXPECTED_WRITE["non_member"],
+    ("non_member", "private"): _NOT_FOUND,
+    ("pending", "public"): EXPECTED_WRITE["pending"],
+    ("pending", "private"): _NOT_FOUND,
+    ("rider", "public"): _NOT_A_LEADER,
+    ("rider", "private"): _NOT_A_LEADER,
+    ("revoked", "public"): EXPECTED_WRITE["revoked"],
+    ("revoked", "private"): EXPECTED_WRITE["revoked"],
+    ("leader", "public"): None,
+    ("leader", "private"): None,
+}
+
+
+async def patch_trip(
+    client: AsyncClient, trip_id: str, headers: dict[str, str], name: str
+) -> Response:
+    """PATCH the trip's name: the one field no identity's row could change by accident."""
+    return await client.patch(f"/api/v2/trips/{trip_id}", json={"name": name}, headers=headers)
+
+
+async def trip_settings(engine: AsyncEngine, trip_id: str) -> tuple[str, str, int]:
+    """(name, visibility, public_delay_hours), read straight from the table."""
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(
+                    tables.trips.c.name,
+                    tables.trips.c.visibility,
+                    tables.trips.c.public_delay_hours,
+                ).where(tables.trips.c.id == trip_id)
+            )
+        ).one()
+    return (row.name, row.visibility, row.public_delay_hours)
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_leader_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    visibility: str,
+    identity: str,
+) -> None:
+    """
+    The leader-column cell for PATCH trip, on both visibilities: status, whole body, table.
+
+    A private trip's 404 is compared byte for byte (headers too, all but
+    ``date``) with the same PATCH to a random trip id, and a refusal must leave
+    the trip's settings unchanged.
+    """
+    before = await trip_settings(migrated_engine, cast.trip.id)
+    name = f"Leader patch {uuid4()}"
+
+    response = await patch_trip(client, cast.trip.id, cast.headers(identity), name)
+
+    expected = EXPECTED_V2_LEADER[(identity, visibility)]
+    after = await trip_settings(migrated_engine, cast.trip.id)
+    if expected is None:
+        assert response.status_code == HTTPStatus.OK, response.text
+        assert response.json()["name"] == name
+        assert response.json()["viewer"] == {"role": "leader"}
+        assert after == (name, *before[1:])
+        return
+
+    status, code, message = expected
+    assert response.status_code == status, response.text
+    assert response.json() == {"error": {"code": code.value, "message": message}}
+    assert session_cookies(response) == []
+    if identity == "anonymous":
+        assert response.headers.get("www-authenticate") == WWW_AUTHENTICATE
+    if status == HTTPStatus.NOT_FOUND:
+        nonexistent = await patch_trip(client, str(uuid4()), cast.headers(identity), name)
+        assert nonexistent.status_code == HTTPStatus.NOT_FOUND
+        assert response.content == nonexistent.content
+        assert {k: v for k, v in response.headers.items() if k != "date"} == {
+            k: v for k, v in nonexistent.headers.items() if k != "date"
+        }
+    assert after == before
+
+
+async def test_v2_anonymous_leader_action_is_the_same_401_for_every_trip_id(
+    client: AsyncClient, cast: Cast, visibility: str
+) -> None:
+    """Session first on the leader gate too: this trip and a random id get byte-identical 401s."""
+    existing = await patch_trip(client, cast.trip.id, {}, "Anonymous")
+    random_id = await patch_trip(client, str(uuid4()), {}, "Anonymous")
+
+    assert_unauthenticated(existing)
+    assert existing.content == random_id.content
+    assert {k: v for k, v in existing.headers.items() if k != "date"} == {
+        k: v for k, v in random_id.headers.items() if k != "date"
+    }
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("identity", ["non_member", "pending"])
+async def test_a_private_trip_leader_action_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+) -> None:
+    """No timing oracle on the leader path: the private-trip 404 runs as many statements."""
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await patch_trip(client, trip_id, cast.headers(identity), "Probe")
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count
+
+
+async def test_a_leader_of_one_trip_cannot_patch_another(
+    client: AsyncClient, migrated_engine: AsyncEngine, cast: Cast, visibility: str
+) -> None:
+    """A leader on ``trip`` has no row on ``other_trip`` (private, seeded): the 404, nothing changed."""
+    before = await trip_settings(migrated_engine, cast.other_trip.id)
+    response = await patch_trip(client, cast.other_trip.id, cast.headers("leader"), "Hijack")
+    assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+    assert await trip_settings(migrated_engine, cast.other_trip.id) == before

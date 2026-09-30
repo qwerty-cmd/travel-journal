@@ -11,6 +11,7 @@ The rules, from ``docs/api-contract.md`` "Rate limits and lockout":
 - ``/api/health``, the ``/api`` catch-all and ``signout``: no limiter;
 - signup: ``limit_signup`` (``signup-ip`` and ``signup-global``, one dependency);
 - signin, recover, password change, recovery-code rotation: ``limit_signin``;
+- ``POST /api/v2/trips``: ``limit_trip_create`` (``trip-create``);
 - every other ``GET``/``HEAD``: ``limit_public_read``;
 - every other unsafe method: ``limit_writes``.
 
@@ -27,6 +28,7 @@ from app.core.ratelimit import (
     limit_public_read,
     limit_signin,
     limit_signup,
+    limit_trip_create,
     limit_writes,
 )
 from app.main import app
@@ -38,6 +40,7 @@ BY_NAME = {
     "recover": limit_signin,
     "change_password": limit_signin,
     "rotate_recovery_code": limit_signin,
+    "create_trip": limit_trip_create,
 }
 READ_METHODS = {"GET", "HEAD"}
 
@@ -87,7 +90,14 @@ def test_audit_is_not_vacuous() -> None:
         "an allowlisted route name is no longer live, or the walk lost part of the tree"
     )
     expected = {_expected(method, route) for method, route in AUDITED}
-    assert expected == {None, limit_public_read, limit_signin, limit_signup, limit_writes}
+    assert expected == {
+        None,
+        limit_public_read,
+        limit_signin,
+        limit_signup,
+        limit_trip_create,
+        limit_writes,
+    }
 
 
 def test_every_api_route_declares_the_contract_limiter_first() -> None:

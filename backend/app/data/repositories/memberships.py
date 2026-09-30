@@ -4,8 +4,10 @@ Trip membership reads — the ``trip_members`` table from migration 0003 (decisi
 **Context.** Under Entry 29 a slug only *locates* a trip. Whether the caller may
 write to it is answered by their row in ``trip_members``, read here on every
 request (``docs/api-contract.md``, "Access: public trips, members and
-leaders" → The gates). This module is the read side. The writes (claim approval,
-promote, revoke, leave) arrive with the tasks that build those endpoints.
+leaders" → The gates). This module is mostly the read side; its one write so
+far is ``add``, the first leader inserted with a new trip. The other writes
+(claim approval, promote, revoke, leave) arrive with the tasks that build those
+endpoints.
 
 **How it works.** SQLAlchemy Core against ``app/data/tables.py``.
 
@@ -27,6 +29,7 @@ promote, revoke, leave) arrive with the tasks that build those endpoints.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,3 +86,18 @@ async def get_for_user(
         return None
 
     return MembershipRecord(role=MemberRole(row.role), active=row.revoked_at is None)
+
+
+async def add(session: AsyncSession, trip_id: str, user_id: str, role: MemberRole) -> None:
+    """
+    Insert an active ``role`` membership for ``user_id`` on ``trip_id``. Does not commit.
+
+    The caller owns the transaction: a trip's creation inserts the trip and its
+    first leader here together (``trips.create_for_user``), so neither can exist
+    without the other. The row id is a server-generated UUID4.
+    """
+    await session.execute(
+        trip_members.insert().values(
+            id=str(uuid4()), trip_id=trip_id, user_id=user_id, role=role.value
+        )
+    )

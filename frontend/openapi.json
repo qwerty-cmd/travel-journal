@@ -1293,6 +1293,61 @@
         }
       }
     },
+    "/api/v2/me/trips": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "The caller's trips",
+        "description": "**Context.** \"Your trips\": where a signed-in rider finds the trips they belong\nto, private ones included (decision-log Entry 29).\n\n**How it works.** Gated by `require_session` (401 without a valid session).\nLists the trips the caller has an **active** membership on, with `role`\n`rider` or `leader`. Revoked and self-departed memberships are left out, and a\npending join request is not a membership (see `GET /api/v2/me/join-requests`).\nNewest membership first, then by trip `id`. Not paged. An account with no trips\ngets `200` with `[]`.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}` opens one; `POST /api/v2/trips`\ncreates one; `GET /api/v2/trips` is the public list.",
+        "operationId": "list_my_trips_api_v2_me_trips_get",
+        "responses": {
+          "200": {
+            "description": "Every trip the caller is an active member of, with their role.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MyTripOut"
+                  },
+                  "type": "array",
+                  "title": "Response List My Trips Api V2 Me Trips Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/trips": {
       "get": {
         "tags": [
@@ -1376,9 +1431,200 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Create a trip",
+        "description": "**Context.** How a signed-in rider starts a new trip (decision-log Entry 29). The\ncaller becomes its first leader. Trips created here have no slugs: they are\nreached by id.\n\n**How it works.** `limit_trip_create` runs first (3 a day per account; a replay\nspends nothing), then `require_session` (401). `TripCreate.id` is\nclient-generated and must be a canonical lowercase UUID (422 otherwise). It then\ndecides one of three branches: an unseen id creates the trip -> `201`; an id the\ncaller created and is still an active member of is a replay -> `200` with the\nstored trip; any other existing id -> `409`, nothing disclosed. A caller who has\nalready created 20 trips gets `409` for a new id. In one transaction the trip is\nstored with `visibility` as sent (default `public`), `publicDelayHours` 24 and\nno slugs, together with the caller's `leader` membership. Parallel creates by one\naccount are serialised, so the cap can't be overshot.\n\n**Related APIs.** `GET /api/v2/me/trips` lists the caller's trips;\n`PATCH /api/v2/trips/{tripId}` edits the settings; `GET /api/v2/trips/{tripId}`\nreads it back.",
+        "operationId": "create_trip_api_v2_trips_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TripCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The trip just created, with the caller as its leader (201).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**A replay, not a second trip.** The caller created a trip with this id and is still an active member of it, so nothing was created and the **stored** trip is returned, even where this request's body differs from it. `viewer.role` is the caller's current role on it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Either the `id` already names a trip that is not the caller's own replay -- another account's trip, a trip from before accounts, or one the caller created but has since left or been removed from -- or the caller has already created 20 trips (the lifetime cap). Nothing was created, and nothing about another trip is disclosed. Never-retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed validation: `id` is not a canonical lowercase UUID, `name` is empty or over 100 characters after trimming, `startDate` is not an ISO date, or `visibility` is not 'public'/'private'.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `trip-create` limit: 3 creates a day per account, or per client address for a request with no session. A replay of the caller's own trip spends no token and is never refused by it. Checked before the session is validated, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v2/trips/{tripId}": {
+      "patch": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Update a trip's settings",
+        "description": "**Context.** A leader's trip settings: its name, whether it is public, and how\nlong stops stay hidden from the public (decision-log Entry 29).\n\n**How it works.** `limit_writes` runs first, then `require_trip_leader`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it -- the same 404\nthe v2 reads give), then an active **leader** membership (403). Only the fields\npresent in the body change; omitting a field is how \"no change\" is spelled, an\nexplicit `null` is a 422, and an empty body is a 200 with nothing changed.\nThere is no server-side publish confirmation. Last write wins.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}` reads the settings back;\n`POST /api/v2/trips` creates the trip.",
+        "operationId": "patch_trip_api_v2_trips__tripId__patch",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TripPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The trip after applying the patch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed validation: an explicit `null`, a `name` empty or over 100 characters after trimming, a `visibility` other than 'public'/'private', or a `publicDelayHours` outside 0-168.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was changed. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "trips"
@@ -2692,6 +2938,48 @@
         "title": "MeOut",
         "description": "The signed-in account. The only response that ever contains a username."
       },
+      "MemberRole": {
+        "type": "string",
+        "enum": [
+          "rider",
+          "leader"
+        ],
+        "title": "MemberRole",
+        "description": "An active membership's role. Mirrors `trip_members_role_check` in migration 0003."
+      },
+      "MyTripOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The trip's id; the trip's URL is built from it."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The trip's display name, as its leaders titled it."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "title": "Startdate",
+            "description": "The day the trip starts, as an ISO 8601 date (YYYY-MM-DD) with no time and no timezone."
+          },
+          "role": {
+            "$ref": "#/components/schemas/MemberRole",
+            "description": "The caller's role on this trip: 'rider' or 'leader'."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "startDate",
+          "role"
+        ],
+        "title": "MyTripOut",
+        "description": "One trip the caller is an active member of. Elements of `GET /api/v2/me/trips`."
+      },
       "PasswordChange": {
         "properties": {
           "currentPassword": {
@@ -3048,6 +3336,42 @@
         "title": "TrailFeatureProperties",
         "description": "Properties of the trail feature \u2014 intentionally empty.\n\nGeoJSON requires a `properties` member on every Feature, but the trail\ncarries no metadata of its own: it's derived entirely from the stop\nfeatures in the same collection."
       },
+      "TripCreate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Id",
+            "description": "Client-generated UUID4 in canonical form: lowercase hex, hyphenated 8-4-4-4-12. Any other spelling (uppercase, braces, no hyphens) is rejected with 422 / VALIDATION_ERROR, because the id becomes the trip's public URL. Replaying the same id as its creator, while still an active member, returns the existing trip (200); any other existing id is a 409."
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "The trip's display name. Trimmed, then 1-100 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "title": "Startdate",
+            "description": "The day the trip starts, as an ISO 8601 date (YYYY-MM-DD) with no time and no timezone."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "description": "Who can read the trip. Defaults to 'public': anyone can browse it, with stops newer than the public delay (24 hours) hidden from non-members. 'private' hides it from everyone but its members.",
+            "default": "public"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "startDate"
+        ],
+        "title": "TripCreate",
+        "description": "POST /api/v2/trips body. Needs a session; the caller becomes the trip's first leader."
+      },
       "TripOut": {
         "properties": {
           "id": {
@@ -3156,6 +3480,31 @@
         ],
         "title": "TripPageOut",
         "description": "GET /api/v2/trips response: one page of public trips."
+      },
+      "TripPatch": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "The trip's display name. Trimmed, then 1-100 characters, or the request is rejected with 422 / VALIDATION_ERROR. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: omitting is how 'no change' is spelled."
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "description": "Who can read the trip: 'public' or 'private'. There is no server-side publish confirmation; the app warns before publishing. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: omitting is how 'no change' is spelled."
+          },
+          "publicDelayHours": {
+            "type": "integer",
+            "maximum": 168.0,
+            "minimum": 0.0,
+            "title": "Publicdelayhours",
+            "description": "How many hours a stop stays hidden from non-members after its `arrivedAt`, from 0 to 168 inclusive; anything else is rejected with 422 / VALIDATION_ERROR. 0 shows stops to the public as soon as they are sent. Omit the field to leave the stored value alone. Explicit null is rejected with 422 / VALIDATION_ERROR: omitting is how 'no change' is spelled."
+          }
+        },
+        "type": "object",
+        "title": "TripPatch",
+        "description": "PATCH /api/v2/trips/{tripId} body. Leaders only. Every field may be omitted -- only\nfields present in the body change, and an empty body changes nothing -- but none may\nbe null."
       },
       "TripSummaryOut": {
         "properties": {

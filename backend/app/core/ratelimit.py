@@ -58,6 +58,7 @@ run after this).
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from collections import OrderedDict
@@ -72,6 +73,8 @@ from app.core.errors import ApiError
 from app.core.sessions import SESSION_COOKIE_NAME, hash_token
 from app.data.db import SessionDep
 from app.data.repositories import sessions as sessions_repo
+from app.data.repositories import trips as trips_repo
+from app.models.trip import CANONICAL_UUID_PATTERN
 
 # The rider-facing message on every limiter 429. Deliberately different from the
 # lockout's ("Too many failed sign-in attempts. ..."), so the two can be told apart.
@@ -309,9 +312,61 @@ class UserRateLimit(RateLimit):
         _raise_if_refused([(self.buckets[0], key)])
 
 
-# The dependencies routes declare. `trip-create` and `join` are defined above and
-# attached by the tasks that build their routes.
+class TripCreateRateLimit(UserRateLimit):
+    """
+    ``trip-create`` for ``POST /api/v2/trips``: a replay spends no token.
+
+    **Why the replay check lives here.** The contract says "A replay spends no
+    token", but the limiter runs before the handler (see "Order" above), so by
+    the time the handler knows a request is a replay the token would already be
+    gone. Charging after the handler instead was rejected: it would let every
+    request the handler refuses (``401``, ``409``, ``422``) through for free,
+    which is exactly the flood the limiter-first order exists to stop.
+
+    So the limiter makes the same cheap check the handler makes first: when the
+    cookie names a stored session and the body's ``id`` is a trip that account
+    created **and** is still an active member of
+    (``trips.creator_replay_role``, one indexed read), the request is let
+    through without spending or checking a token. It is also let through with
+    the bucket empty, because a replay changes nothing and is exactly what the
+    offline queue sends after a lost ``201``. Anything else, including someone
+    else's id and a non-canonical id, spends a token as usual.
+
+    The body is the one FastAPI has already read and cached on the request; a
+    body that is not a JSON object with a canonical-UUID ``id`` is simply not
+    a replay. The session row is not validated here (that stays the gate's
+    job): an expired session replaying its own trip is let through and then
+    answered ``401`` by the gate, having spent nothing it could have abused.
+
+    Two parallel sends of one new id both spend a token (neither sees a stored
+    trip yet); the handler makes one a create and the other a replay.
+    """
+
+    async def __call__(self, request: Request, db: SessionDep) -> None:  # type: ignore[override]
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        row = await sessions_repo.get_with_user(db, hash_token(token)) if token else None
+        if row is not None and await _is_trip_create_replay(request, db, row.user_id):
+            return
+        key = f"user:{row.user_id}" if row is not None else f"ip:{client_ip(request)}"
+        _raise_if_refused([(self.buckets[0], key)])
+
+
+async def _is_trip_create_replay(request: Request, db: SessionDep, user_id: str) -> bool:
+    """Whether the body's ``id`` is a trip ``user_id`` created and is still an active member of."""
+    try:
+        body = await request.json()
+    except ValueError:  # not JSON (json.JSONDecodeError and UnicodeDecodeError both are)
+        return False
+    trip_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(trip_id, str) or re.fullmatch(CANONICAL_UUID_PATTERN, trip_id) is None:
+        return False
+    return await trips_repo.creator_replay_role(db, trip_id, user_id) is not None
+
+
+# The dependencies routes declare. `join` is defined above and attached by the
+# task that builds its routes.
 limit_public_read = RateLimit(PUBLIC_READ)
 limit_signup = RateLimit(SIGNUP_IP, SIGNUP_GLOBAL)
 limit_signin = RateLimit(SIGNIN)
 limit_writes = UserRateLimit(WRITES)
+limit_trip_create = TripCreateRateLimit(TRIP_CREATE)

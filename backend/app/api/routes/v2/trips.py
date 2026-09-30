@@ -2,8 +2,8 @@
 Trip routes under ``/api/v2/trips`` (decision-log Entry 29).
 
 **Context.** The v2 surface locates trips by id, not by slug. This module
-holds the anonymous Discover list, ``GET /api/v2/trips``, and the trip-scoped
-reads: the trip, its bikes, its stops, one stop's photos and its map
+holds the anonymous Discover list, ``GET /api/v2/trips``, trip creation, a
+leader's settings ``PATCH``, and the trip-scoped reads: the trip, its bikes, its stops, one stop's photos and its map
 (``docs/api-contract.md``, "Endpoints: v2 (new)" and "Notes per endpoint (v2)").
 
 **How it works.**
@@ -31,7 +31,16 @@ reads: the trip, its bikes, its stops, one stop's photos and its map
   all cut by the one rule (``stops.public_visibility``). Bikes are not delayed.
   Each has a schema-excluded HEAD sibling with the same limiter (Entry 11).
 
-**Related.** ``app/data/repositories/trips.py`` (``list_public``, ``get_stats``),
+- **Create** (``POST /api/v2/trips``, ``t-am-trip-create``). ``trip-create``
+  limiter first (a replay spends no token -- ``TripCreateRateLimit``), then
+  ``require_session``. ``trips.create_for_user`` decides replay / id taken /
+  lifetime cap / create under a lock on the creator's ``users`` row, and stores
+  the trip and its leader membership in one transaction.
+- **Settings** (``PATCH /api/v2/trips/{tripId}``). ``writes`` limiter, then
+  ``require_trip_leader``. Only fields present in the body change.
+
+**Related.** ``app/data/repositories/trips.py`` (``list_public``, ``get_stats``,
+``create_for_user``, ``update_settings``),
 ``app/models/trip.py`` (``TripPageOut``, ``TripSummaryOut``, ``TripOut``), and
 the legacy slug reads in ``app/api/routes/``, whose serialisation these reuse.
 """
@@ -45,24 +54,39 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from app.api.responses import PATH_PARAMETERS_422, PUBLIC_READ_429, error_responses
 from app.api.routes.photos import STOP_NOT_FOUND_MESSAGE
 from app.api.routes.trips import trip_out
 from app.core.errors import ApiError
-from app.core.ratelimit import limit_public_read
-from app.core.security import TripReaderContext, require_trip_reader
+from app.core.ratelimit import limit_public_read, limit_trip_create, limit_writes
+from app.core.security import (
+    TripReaderContext,
+    TripWriterContext,
+    require_session,
+    require_trip_leader,
+    require_trip_reader,
+)
+from app.core.sessions import SessionUser
 from app.data.db import SessionDep
 from app.data.repositories import bikes as bikes_repo
 from app.data.repositories import photos as photos_repo
 from app.data.repositories import stops as stops_repo
 from app.data.repositories import trips as trips_repo
+from app.data.repositories.trips import CreateOutcome
 from app.models.bike import BikeOut
 from app.models.map import MapFeatureCollection
 from app.models.photo import PhotoOut
 from app.models.stop import StopOut
-from app.models.trip import TripOut, TripPageOut, TripSummaryOut
+from app.models.trip import (
+    TripCreate,
+    TripOut,
+    TripPageOut,
+    TripPatch,
+    TripSummaryOut,
+    ViewerRole,
+)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -193,6 +217,170 @@ router.add_api_route(
     dependencies=[Depends(limit_public_read)],
     include_in_schema=False,
 )
+
+
+# --------------------------------------------------------------------------
+# Create a trip: `require_session`, `trip-create`
+# --------------------------------------------------------------------------
+
+# Contract, "Rate limits and lockout": a lifetime cap of 20 trips created per
+# user, answered 409.
+LIFETIME_TRIP_CAP = 20
+
+TRIP_ID_TAKEN_MESSAGE = (
+    "This trip couldn't be created: its id is already in use. Nothing was changed. Sending it "
+    "again unchanged will keep failing -- it needs a new id."
+)
+TRIP_CAP_MESSAGE = (
+    "You've already created 20 trips, the most one account can create. Nothing was changed."
+)
+SESSION_401 = (
+    "No valid session: none sent, expired, signed out or revoked, or the account is disabled. "
+    "If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this "
+    "and resumes after sign-in. Nothing was written."
+)
+
+
+@router.post(
+    "",
+    dependencies=[Depends(limit_trip_create)],
+    status_code=HTTPStatus.CREATED,
+    summary="Create a trip",
+    response_description="The trip just created, with the caller as its leader (201).",
+    responses={
+        HTTPStatus.OK: {
+            "model": TripOut,
+            "description": "**A replay, not a second trip.** The caller created a trip with "
+            "this id and is still an active member of it, so nothing was created and the "
+            "**stored** trip is returned, even where this request's body differs from it. "
+            "`viewer.role` is the caller's current role on it.",
+        },
+        **error_responses(
+            {
+                HTTPStatus.UNAUTHORIZED: SESSION_401,
+                HTTPStatus.CONFLICT: "Either the `id` already names a trip that is not the "
+                "caller's own replay -- another account's trip, a trip from before accounts, or "
+                "one the caller created but has since left or been removed from -- or the caller "
+                "has already created 20 trips (the lifetime cap). Nothing was created, and "
+                "nothing about another trip is disclosed. Never-retry.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed validation: `id` is not a "
+                "canonical lowercase UUID, `name` is empty or over 100 characters after "
+                "trimming, `startDate` is not an ISO date, or `visibility` is not "
+                "'public'/'private'.",
+                HTTPStatus.TOO_MANY_REQUESTS: "The `trip-create` limit: 3 creates a day per "
+                "account, or per client address for a request with no session. A replay of the "
+                "caller's own trip spends no token and is never refused by it. Checked before "
+                "the session is validated, so nothing was written. Retry after `Retry-After` "
+                "seconds.",
+            }
+        ),
+    },
+    description="""
+**Context.** How a signed-in rider starts a new trip (decision-log Entry 29). The
+caller becomes its first leader. Trips created here have no slugs: they are
+reached by id.
+
+**How it works.** `limit_trip_create` runs first (3 a day per account; a replay
+spends nothing), then `require_session` (401). `TripCreate.id` is
+client-generated and must be a canonical lowercase UUID (422 otherwise). It then
+decides one of three branches: an unseen id creates the trip -> `201`; an id the
+caller created and is still an active member of is a replay -> `200` with the
+stored trip; any other existing id -> `409`, nothing disclosed. A caller who has
+already created 20 trips gets `409` for a new id. In one transaction the trip is
+stored with `visibility` as sent (default `public`), `publicDelayHours` 24 and
+no slugs, together with the caller's `leader` membership. Parallel creates by one
+account are serialised, so the cap can't be overshot.
+
+**Related APIs.** `GET /api/v2/me/trips` lists the caller's trips;
+`PATCH /api/v2/trips/{tripId}` edits the settings; `GET /api/v2/trips/{tripId}`
+reads it back.
+""",
+)
+async def create_trip(
+    user: Annotated[SessionUser, Depends(require_session)],
+    session: SessionDep,
+    body: TripCreate,
+    response: Response,
+) -> TripOut:
+    """Create the trip with the caller as leader, or hand back the caller's own trip."""
+    result = await trips_repo.create_for_user(
+        session,
+        trip_id=body.id,
+        name=body.name,
+        start_date=body.startDate,
+        visibility=body.visibility.value,
+        user_id=user.user_id,
+        cap=LIFETIME_TRIP_CAP,
+    )
+    if result.outcome is CreateOutcome.ID_TAKEN:
+        raise ApiError.conflict(TRIP_ID_TAKEN_MESSAGE)
+    if result.outcome is CreateOutcome.CAP_REACHED:
+        raise ApiError.conflict(TRIP_CAP_MESSAGE)
+    if result.outcome is CreateOutcome.REPLAY:
+        response.status_code = HTTPStatus.OK
+    return await trip_out(session, result.trip, ViewerRole(result.role.value))
+
+
+# --------------------------------------------------------------------------
+# Trip settings: `require_trip_leader`, `writes`
+# --------------------------------------------------------------------------
+
+
+@router.patch(
+    "/{tripId}",
+    dependencies=[Depends(limit_writes)],
+    summary="Update a trip's settings",
+    response_description="The trip after applying the patch.",
+    responses=error_responses(
+        {
+            HTTPStatus.UNAUTHORIZED: "No valid session: none sent, expired, signed out or "
+            "revoked, or the account is disabled. Checked **before** the trip is looked up, so "
+            "the answer is the same for a public trip, a private trip and a trip id that "
+            "doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). Nothing "
+            "was changed.",
+            HTTPStatus.FORBIDDEN: "Signed in, and the trip is visible to the caller (public, "
+            "or they have a membership row on it), but they are not an active leader: "
+            '"You\'re not a rider on this trip." for a non-member of a public trip, '
+            '"You\'re no longer a rider on this trip." for a revoked member, "You\'re not a '
+            'leader on this trip." for an active rider. Nothing was changed.',
+            HTTPStatus.NOT_FOUND: "No trip has this id, **or** the trip is private and the "
+            "caller has no membership row on it. The two are byte-identical, as on the v2 "
+            "reads, so a trip id can't be used to learn whether a private trip exists.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed validation: an explicit `null`, "
+            "a `name` empty or over 100 characters after trimming, a `visibility` other than "
+            "'public'/'private', or a `publicDelayHours` outside 0-168.",
+            HTTPStatus.TOO_MANY_REQUESTS: "The `writes` limit: 600 requests an hour per "
+            "account, or per client address for a request with no session. Checked before the "
+            "session, the trip and the membership, so nothing was changed. Retry after "
+            "`Retry-After` seconds.",
+        }
+    ),
+    description="""
+**Context.** A leader's trip settings: its name, whether it is public, and how
+long stops stay hidden from the public (decision-log Entry 29).
+
+**How it works.** `limit_writes` runs first, then `require_trip_leader`: a valid
+session (401, for every trip id alike), then the trip (404 if it doesn't exist,
+or if it is private and the caller has no membership row on it -- the same 404
+the v2 reads give), then an active **leader** membership (403). Only the fields
+present in the body change; omitting a field is how "no change" is spelled, an
+explicit `null` is a 422, and an empty body is a 200 with nothing changed.
+There is no server-side publish confirmation. Last write wins.
+
+**Related APIs.** `GET /api/v2/trips/{tripId}` reads the settings back;
+`POST /api/v2/trips` creates the trip.
+""",
+)
+async def patch_trip(
+    context: Annotated[TripWriterContext, Depends(require_trip_leader)],
+    session: SessionDep,
+    body: TripPatch,
+) -> TripOut:
+    """Apply a partial update to the trip's settings."""
+    trip = await trips_repo.update_settings(
+        session, context.trip.id, body.model_dump(exclude_unset=True, mode="json")
+    )
+    return await trip_out(session, trip, context.viewer_role)
 
 
 # --------------------------------------------------------------------------

@@ -32,11 +32,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import StrEnum
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.tables import stops, trip_members, trips
+from app.data.repositories import memberships
+from app.data.tables import stops, trip_members, trips, users
+from app.models.member import MemberRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,5 +292,184 @@ async def list_public(
             rider_count=row.rider_count,
             last_public_stop_at=row.last_public_stop_at,
         )
+        for row in rows
+    ]
+
+
+# --------------------------------------------------------------------------
+# Creating a trip (`POST /api/v2/trips`), editing it, and a member's trips
+# --------------------------------------------------------------------------
+
+
+async def creator_replay_role(
+    session: AsyncSession, trip_id: str, user_id: str
+) -> MemberRole | None:
+    """
+    The caller's active role on ``trip_id`` if they created it, else ``None``.
+
+    This is the whole replay test for ``POST /api/v2/trips`` (contract,
+    "Idempotency: additions"): the id is a replay only when ``trips.created_by``
+    is the caller **and** the caller is still an active member. One statement.
+    ``None`` covers every other case alike: no such trip, someone else's trip,
+    a legacy trip (``created_by`` NULL), and a creator who has since left or
+    been revoked. A NUL byte is ``None`` without a query (see ``get_by_slug``).
+    """
+    if "\x00" in trip_id:
+        return None
+    role = await session.scalar(
+        select(trip_members.c.role)
+        .join(trips, trips.c.id == trip_members.c.trip_id)
+        .where(
+            trips.c.id == trip_id,
+            trips.c.created_by == user_id,
+            trip_members.c.user_id == user_id,
+            trip_members.c.revoked_at.is_(None),
+        )
+    )
+    return None if role is None else MemberRole(role)
+
+
+class CreateOutcome(StrEnum):
+    """Which branch ``create_for_user`` took."""
+
+    CREATED = "created"  # new trip and leader membership, committed
+    REPLAY = "replay"  # the caller's own trip, still an active member: nothing written
+    ID_TAKEN = "id_taken"  # the id is some other trip's (another user's, or a legacy one)
+    CAP_REACHED = "cap_reached"  # the caller has already created `cap` trips
+
+
+@dataclass(frozen=True, slots=True)
+class CreateResult:
+    """``create_for_user``'s answer: the branch, and for CREATED/REPLAY the trip and role."""
+
+    outcome: CreateOutcome
+    trip: TripRecord | None = None
+    role: MemberRole | None = None
+
+
+async def create_for_user(
+    session: AsyncSession,
+    *,
+    trip_id: str,
+    name: str,
+    start_date: date,
+    visibility: str,
+    user_id: str,
+    cap: int,
+) -> CreateResult:
+    """
+    Create a trip with ``user_id`` as its first leader, in one transaction, or say why not.
+
+    **Order.** Replay first, then "id taken", then the lifetime cap, then the
+    insert — so a replay by a user already at the cap is still a replay.
+
+    **Race safety.** The first statement locks the creator's ``users`` row
+    (``SELECT … FOR UPDATE``), and every create by that user takes the same lock,
+    so two parallel creates are serialised: the second counts the first's trip,
+    and at 19 only one of them gets past 20. The same lock turns two parallel
+    sends of one id into a create and a replay. Two *different* users racing on
+    one id hold different locks, so the insert is ``ON CONFLICT (id) DO NOTHING``
+    and a row that didn't go in is ``ID_TAKEN`` — detected, never a primary-key
+    violation surfacing as a ``500``.
+
+    **Transaction.** On ``CREATED`` the trip (both slugs ``NULL``, ``created_by``
+    the caller, ``public_delay_hours`` from the column default of 24) and the
+    leader membership commit together. Every other branch ends the transaction
+    with nothing written, releasing the lock.
+    """
+    await session.execute(select(users.c.id).where(users.c.id == user_id).with_for_update())
+
+    role = await creator_replay_role(session, trip_id, user_id)
+    if role is not None:
+        trip = await get_by_id(session, trip_id)
+        await session.commit()
+        return CreateResult(CreateOutcome.REPLAY, trip, role)
+
+    if await session.scalar(select(exists().where(trips.c.id == trip_id))):
+        await session.commit()
+        return CreateResult(CreateOutcome.ID_TAKEN)
+
+    created = await session.scalar(
+        select(func.count()).select_from(trips).where(trips.c.created_by == user_id)
+    )
+    if created >= cap:
+        await session.commit()
+        return CreateResult(CreateOutcome.CAP_REACHED)
+
+    inserted = await session.scalar(
+        pg_insert(trips)
+        .values(
+            id=trip_id,
+            name=name,
+            start_date=start_date,
+            visibility=visibility,
+            created_by=user_id,
+        )
+        .on_conflict_do_nothing(index_elements=[trips.c.id])
+        .returning(trips.c.id)
+    )
+    if inserted is None:
+        await session.rollback()
+        return CreateResult(CreateOutcome.ID_TAKEN)
+
+    await memberships.add(session, trip_id, user_id, MemberRole.LEADER)
+    trip = await get_by_id(session, trip_id)
+    await session.commit()
+    return CreateResult(CreateOutcome.CREATED, trip, MemberRole.LEADER)
+
+
+# camelCase `TripPatch` field -> snake_case column.
+_PATCH_FIELD_TO_COLUMN = {
+    "name": "name",
+    "visibility": "visibility",
+    "publicDelayHours": "public_delay_hours",
+}
+
+
+async def update_settings(
+    session: AsyncSession, trip_id: str, fields: dict[str, object]
+) -> TripRecord | None:
+    """
+    Apply the ``TripPatch`` fields present in ``fields`` to ``trip_id``, and return the trip.
+
+    ``fields`` is ``TripPatch.model_dump(exclude_unset=True)``: an omitted
+    field is absent and left alone, and an empty dict writes nothing (the
+    contract's "empty body → 200 with nothing changed"). Last write wins.
+    """
+    if fields:
+        values = {_PATCH_FIELD_TO_COLUMN[key]: value for key, value in fields.items()}
+        await session.execute(update(trips).where(trips.c.id == trip_id).values(**values))
+        await session.commit()
+    return await get_by_id(session, trip_id)
+
+
+@dataclass(frozen=True, slots=True)
+class MemberTrip:
+    """One trip the user is an active member of, with their role on it (``MyTripOut``)."""
+
+    id: str
+    name: str
+    start_date: date
+    role: MemberRole
+
+
+async def list_for_member(session: AsyncSession, user_id: str) -> list[MemberTrip]:
+    """
+    Every trip ``user_id`` has an **active** membership on, newest membership first.
+
+    Revoked and self-departed rows are excluded; pending join requests are not
+    memberships and never appear. Ordered by ``joined_at`` descending, then trip
+    id ascending, so the order is total and stable.
+    """
+    rows = (
+        await session.execute(
+            select(trips.c.id, trips.c.name, trips.c.start_date, trip_members.c.role)
+            .join(trip_members, trip_members.c.trip_id == trips.c.id)
+            .where(trip_members.c.user_id == user_id, trip_members.c.revoked_at.is_(None))
+            .order_by(trip_members.c.joined_at.desc(), trips.c.id.asc())
+        )
+    ).all()
+    return [
+        MemberTrip(id=row.id, name=row.name, start_date=row.start_date, role=MemberRole(row.role))
         for row in rows
     ]

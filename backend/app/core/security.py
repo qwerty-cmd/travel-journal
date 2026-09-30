@@ -31,8 +31,9 @@ The gates built here:
   session (``401``) → active membership (``403``).
 - ``require_trip_writer_by_id`` — v2 rider writes, by ``{tripId}``. Session
   (``401``) → trip located (public, or any membership row; else the reader's
-  byte-identical ``404``) → active membership (``403``). ``require_trip_leader``
-  arrives with its first consumer, ``t-am-trip-create``.
+  byte-identical ``404``) → active membership (``403``).
+- ``require_trip_leader`` — v2 leader actions, by ``{tripId}``. The writer gate
+  by trip id unchanged, then the role must be ``leader`` (``403``).
 
 **Why the legacy write order is slug → session → membership.** This is the ADR's
 order unchanged (Entry 29; contract, "Where the session check sits"). A trip
@@ -117,6 +118,12 @@ SIGN_IN_REQUIRED_MESSAGE = "You need to sign in to do this."
 # account.
 NOT_A_RIDER_MESSAGE = "You're not a rider on this trip."
 NO_LONGER_A_RIDER_MESSAGE = "You're no longer a rider on this trip."
+
+# The leader gate's own 403, for an active rider on a leader action. A non-member
+# or revoked member gets the writer's messages above instead: the leader gate is
+# the writer gate plus a role check. Worded as the design spec's fallback
+# ("You're not a leader on this trip.", docs/design/screens/global-states.md).
+NOT_A_LEADER_MESSAGE = "You're not a leader on this trip."
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,6 +501,21 @@ async def require_trip_writer_by_id(
     gate runs before any replay lookup, so a revoked member's replay of a stored
     id is refused here with nothing written.
     """
+    return await _writer_by_id(trip_id, request, response, session)
+
+
+async def _writer_by_id(
+    trip_id: str, request: Request, response: Response, session: AsyncSession
+) -> TripWriterContext:
+    """
+    The body of ``require_trip_writer_by_id``, shared with ``require_trip_leader``.
+
+    A plain function rather than a sub-dependency, so the leader gate is one
+    declared guard (``tests/test_route_dependency_audit.py`` holds each unsafe
+    route to exactly one) and cannot drift from the writer's order: session,
+    then the trip and the membership keyed on the requested id, then the 404,
+    then the 403s.
+    """
     user = await _signed_in_user(request, response, session)
     trip = await get_by_id(session, trip_id)
     # Keyed on the requested id, not on `trip`: one statement whether or not the
@@ -504,6 +526,39 @@ async def require_trip_writer_by_id(
         raise ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)
 
     return _writer_context(trip, user, membership)
+
+
+async def require_trip_leader(
+    trip_id: Annotated[
+        str,
+        Path(
+            alias="tripId",
+            description="The trip's id. Not a secret: it only names the trip. Leader actions "
+            "need a signed-in account with an active leader membership on it. No session is a "
+            "401 for every trip id, existing or not; a private trip the caller has no "
+            "membership row on is a 404 identical to a trip id that doesn't exist; anyone else "
+            "who is not an active leader -- a non-member of a public trip, a revoked member, "
+            "an active rider -- is a 403.",
+        ),
+    ],
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> TripWriterContext:
+    """
+    v2 leader gate: the writer gate by trip id, then the role must be ``leader`` (``403``).
+
+    "Same as writer, but the role must be ``leader``" (contract, "The gates"),
+    taken literally: ``_writer_by_id`` runs unchanged, so session first (``401``
+    for every trip id alike), the private-trip ``404`` byte-identical to a
+    nonexistent id's with the same statements, and the writer's two ``403``
+    messages for a non-member and a revoked member. Only an **active rider**
+    reaches the extra check, and gets ``NOT_A_LEADER_MESSAGE``.
+    """
+    context = await _writer_by_id(trip_id, request, response, session)
+    if context.role is not MemberRole.LEADER:
+        raise ApiError.forbidden(NOT_A_LEADER_MESSAGE)
+    return context
 
 
 async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:
