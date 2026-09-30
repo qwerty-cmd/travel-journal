@@ -22,7 +22,7 @@ const bike = (id: string, riderName: string, specs = ""): BikeOut => ({
 });
 // Deliberately out of riderName order: TripOut.bikes order is not contract.
 const BIKES = [bike("b1", "Zoe", "Engine: 1100cc\nTyres: TKC80"), bike("b2", "alex"), bike("b3", "Mia", "Stock")];
-const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: BIKES, access: "viewer" };
+const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: BIKES, access: "viewer", visibility: "private", publicDelayHours: 24, riderCount: 1, lastPublicStopAt: null, viewer: { role: "none" } };
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

@@ -17,7 +17,7 @@ import type { TripOut } from "./api/gen/types/TripOut";
 
 const fetchMock = vi.fn<typeof fetch>();
 
-const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "rider" };
+const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "rider", visibility: "private", publicDelayHours: 24, riderCount: 1, lastPublicStopAt: null, viewer: { role: "rider" } };
 const CACHED: TripOut = { ...TRIP, name: "Cached name" };
 
 const json = (status: number, body: unknown) =>

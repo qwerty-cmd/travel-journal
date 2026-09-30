@@ -2,11 +2,16 @@ export { changePasswordApiV2AuthPasswordPost } from "./changePasswordApiV2AuthPa
 export { createBikeApiTripsSlugBikesPost } from "./createBikeApiTripsSlugBikesPost";
 export { createStopApiTripsSlugStopsPost } from "./createStopApiTripsSlugStopsPost";
 export { getMapApiTripsSlugMapGet } from "./getMapApiTripsSlugMapGet";
+export { getMapApiV2TripsTripIdMapGet } from "./getMapApiV2TripsTripIdMapGet";
 export { getMeApiV2AuthMeGet } from "./getMeApiV2AuthMeGet";
 export { getTripApiTripsSlugGet } from "./getTripApiTripsSlugGet";
+export { getTripApiV2TripsTripIdGet } from "./getTripApiV2TripsTripIdGet";
+export { listBikesApiV2TripsTripIdBikesGet } from "./listBikesApiV2TripsTripIdBikesGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "./listPhotosApiTripsSlugStopsStopIdPhotosGet";
+export { listPhotosApiV2TripsTripIdStopsStopIdPhotosGet } from "./listPhotosApiV2TripsTripIdStopsStopIdPhotosGet";
 export { listPublicTripsApiV2TripsGet } from "./listPublicTripsApiV2TripsGet";
 export { listStopsApiTripsSlugStopsGet } from "./listStopsApiTripsSlugStopsGet";
+export { listStopsApiV2TripsTripIdStopsGet } from "./listStopsApiV2TripsTripIdStopsGet";
 export { patchBikeApiTripsSlugBikesIdPatch } from "./patchBikeApiTripsSlugBikesIdPatch";
 export { recoverApiV2AuthRecoverPost } from "./recoverApiV2AuthRecoverPost";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./rotateRecoveryCodeApiV2AuthRecoveryCodePost";

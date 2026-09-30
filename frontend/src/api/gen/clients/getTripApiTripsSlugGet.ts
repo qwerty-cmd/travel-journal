@@ -26,8 +26,11 @@ function getGetTripApiTripsSlugGetUrl({ slug }: { slug: GetTripApiTripsSlugGetPa
  * `access`: `rider` iff the session user has an active membership on this trip
  * (read fresh on every request), `viewer` for everyone else — anonymous, a
  * signed-in non-member, a pending requester or a revoked member. Which slug was
- * followed plays no part. The value is passed straight through to
- * `TripOut.access`; the handler never recomputes it. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
+ * followed plays no part. `viewer.role` is derived alongside it (`anonymous`,
+ * `none`, `pending`, `rider` or `leader`), and `access` is `rider` exactly when
+ * that role is `rider` or `leader`. `visibility`, `publicDelayHours`, `riderCount`
+ * and `lastPublicStopAt` are filled as on `GET /api/v2/trips/{tripId}`; this read
+ * itself stays full and undelayed for either slug. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
  * filtered to this trip; a trip with no bikes returns `"bikes": []`, which is a
  * normal trip and not a 404. Neither slug is in the response: `TripOut` has no
  * slug field, and the slug is the credential.

@@ -159,7 +159,7 @@ test("AC8: default marker icon uses the bundled image, not Leaflet's guessed pat
 });
 
 test("AC7: map request failure shows 'Map unavailable' and the trip home still renders", async () => {
-  const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "viewer" };
+  const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "viewer", visibility: "private", publicDelayHours: 24, riderCount: 1, lastPublicStopAt: null, viewer: { role: "none" } };
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
   vi.stubGlobal("scrollTo", () => {});
