@@ -2198,6 +2198,8 @@ docker compose up -d postgres minio minio-init
 cd backend && uv sync && uv run pytest tests/test_passwords.py tests/test_sessions.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
 ```
 
+DONE 2026-09-30. argon2id (19456/2/1, `to_thread` + `Semaphore(2)`, import-time dummy hash ~ same cost as a real verify), NFKC on hash and verify, token `token_urlsafe(32)` with only its SHA-256 stored, strict 90 d / 365 d windows on the app clock, `last_used_at` touched when > 24 h with cookie re-issue via the injected `Response`, `require_session` identical 401 for every reason and cookie clear only when sent. `ApiError` enforces 401/429 headers. argon2-cffi 25.1.0. Tests: 73 (test_passwords 30, test_sessions 43). QA PASS: suite 1239, 30/30 mutants killed. Refresh-loss finding routed to t-am-auth-sessions as added AC; other debt in t-am-identity-core-doc-gaps.
+
 ## t-am-auth-sessions
 
 ADDED AC (from t-am-contract-models QA): strip Pydantic's "Value error, " prefix from 422 messages (e.g. in `_format_validation_errors` for type `value_error`, or raise PydanticCustomError) — first custom ValueError validators are rider-facing on signup/recover.
@@ -2228,6 +2230,8 @@ cd backend && uv run pytest tests/test_auth_endpoints.py tests/test_route_depend
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Added AC (from t-am-identity-core QA, triggered debt promoted here).** `require_session` puts the refreshed cookie on FastAPI's injected `Response`, which is lost when a gated route returns its own `Response` (e.g. a 204 sign-out) or the request errors after `last_used_at` was bumped. Any gated route in this task that returns a `Response` directly must carry the refresh `Set-Cookie` too (or the mechanism moves to a request-state hook); add a test that a >24 h-old session hitting such a route receives the refreshed cookie.
 
 ## t-am-auth-account
 **Goal.** Signout-all, password change, recover and recovery-code rotation, as in the contract.
@@ -2853,3 +2857,7 @@ TRIGGERED DEBT (QA on t-am-csrf). The middleware tests the `/api` prefix against
 ## t-am-csrf-test-gaps
 
 ORDINARY DEBT (dev + QA on t-am-csrf). (1) No test for repeated `Sec-Fetch-Site` headers — mutating `all` → `any` in `is_cross_site` survives all 272 tests (behaviour correct today, verified live). (2) `ApiError.forbidden` docstring in `core/errors.py` still describes only the slug 403. (3) `tests/conftest.py` comment says an `http://` client is cross-site; only the missing `Origin` matters.
+
+## t-am-identity-core-doc-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-identity-core). (1) `models/account.py` comment says NFKC never lengthens past the cap — wrong (`ﬁ`→2 chars, U+FDFA→18); behaviour correct since the cap applies to raw input. (2) `ApiError.__init__` comment says only 401/429 constructors set headers; `unauthenticated()` now also sets `Set-Cookie`. (3) `sessions_repo.touch()` commits the request's shared `AsyncSession` inside a dependency, so an earlier dependency's pending writes would commit with it (none exist today). (4) Test env: the S3 bucket fixture can't create its bucket on a fresh mock under `S3_REGION=auto` (no location constraint); CI and compose are unaffected (bucket pre-created).
