@@ -2263,6 +2263,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-auth-sessions, triggered debt).** Signout-all (and any other `require_session` route here) must not return its own `Response`: set the status on the decorator and return `None`, so `require_session`'s refresh `Set-Cookie` survives; test a >24 h-old session on it.
 
+DONE 2026-09-30. Signout-all 204, password change 200/403/422 (revokes all, issues exactly one), recover 200/401 (anonymous; single-use by one conditional UPDATE; typed-code normalisation, non-ASCII rejected; shared claim-first lockout), recovery-code rotation 200/403 (password required, sessions kept). Wrong current passwords count toward the shared lock and 429 blocks password/rotation while locked; success resets (implementation-defined, recorded as debt for the contract). Tests: 62 endpoint + 2 race. QA PASS: suite 1365; 10 parallel recovers → exactly one 200 in 5/5 rounds; 30 parallel wrong codes → 10 verifies; 5/5 mutants caught. Debt: t-am-auth-account-gaps; double-submit finding routed to t-am-fe-auth-screens.
+
 ## t-am-rate-limits
 
 ADDED AC (from t-am-contract-models QA): `ApiError.rate_limited` rounds a float wait UP to whole seconds (min 1) and rejects bool; Retry-After is always an integer string.
@@ -2692,6 +2694,8 @@ DONE 2026-09-29. The ruling is decision-log Entry 30: plain CSS with custom prop
 - A `BroadcastChannel` `auth` message fires on sign-in and sign-out.
 **Validation.** `cd frontend && npm test && npm run build`
 
+**Added AC (from t-am-auth-account QA, triggered debt promoted here).** Concurrent password changes from one session all return 200 but only the last takes effect; the others get an already-dead cookie. The /account change-password form must block double-submit (disable while pending) — or, if dev prefers, the server re-checks the current password under the row lock; test that a double-tap sends one request.
+
 ## t-am-verify-ios-cookie
 **Owner step on a real iPhone, against the deployed HTTPS host.** `__Host-`/`Secure` cookies over `http://localhost` don't work on Safari (contract default 28), so this can't run against local dev.
 **Blockers (scrum change 16).**
@@ -2873,3 +2877,7 @@ ORDINARY DEBT (test-writer + QA on t-am-identity-core). (1) `models/account.py` 
 ## t-am-auth-sessions-gaps
 
 ORDINARY DEBT (test-writer + QA on t-am-auth-sessions). (1) Contract Me note says Me is the only response containing a username; signup/signin also return `MeOut` per the table — fix the note. (2) `core/security.py` docstring still says no route declares `require_session`. (3) `SessionCreate.username` / `AccountRecover.username` have no `max_length` (see t-am-json-body-limit). (4) Audit self-test never feeds an account route outside `/api/v2` or one declaring two guards (live rule enforces both). (5) With 10 verifies in flight a correct password gets 429 and the account locks — deliberate, keeps the ≤ 10 bound and self-heals stranded slots; QA agrees it's within the contract.
+
+## t-am-auth-account-gaps
+
+ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stolen session and no password, 10 wrong password-change/rotation attempts lock the owner out of signin and recover for 15 min, repeatable; contract-conformant (the contract counts these failures). Should session-authenticated failures count toward the signin/recover lock? (2) The contract's per-account lockout text names only signin/recover for the 429 and the reset; record that password change and rotation also 429 while locked and reset on success. (3) Recover/signin timing: unknown/disabled ~35 ms vs wrong code ~40 ms (extra lockout round-trips); bodies/headers identical, and the lockout already reveals existence. Fix both together if enumeration resistance is tightened. Also: `AccountRecover.username` has no `max_length` (see t-am-auth-sessions-gaps 3).
