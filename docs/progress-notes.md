@@ -2300,6 +2300,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-write-gate-legacy).** The contract lists 429 on the legacy write routes; declare it in their OpenAPI responses when the `writes` limiter lands.
 
+DONE 2026-09-30. `core/ratelimit.py`: continuous-refill token buckets (injectable clock, `threading.Lock`, 50k cap with refilled-first then LRU eviction), key = entry `trusted_proxy_hops` from the right of XFF (socket fallback), limiter first in each route's `dependencies=` (audit-enforced), `writes` keyed `user:` via a side-effect-free session read else `ip:`. `signup` spends ip+global atomically. `trip-create`/`join` defined, unattached. Lockout tests use a distinct XFF per request and assert the lockout message. Tests: test_ratelimit 17 + audit + unit; suite 1842; frontend 385 + build. QA PASS: 9/9 mutants caught, XFF spoofing probes all held. Debt: t-am-ratelimit-gaps, t-am-ratelimit-ipv6-sweep.
+
 ## t-am-write-gate-legacy
 **Goal.** One membership gate. Slugs locate trips but never authorise.
 **Blockers.** This task depends directly on `t-am-identity-core`, `t-am-auth-sessions` and `t-am-auth-account` (scrum change 5). `t-am-rate-limits` now follows it.
@@ -2891,3 +2893,11 @@ ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stol
 ## t-am-write-gate-gaps
 
 ORDINARY DEBT (test-writer + QA on t-am-write-gate-legacy). (1) A photo upload whose body isn't valid multipart gets FastAPI's 400 → `INTERNAL_ERROR` before the gate — the code the queue retries forever; no current client sends one. (2) The membership lookup scans `ix_trip_members_user_id` then filters `trip_id`; a `(trip_id, user_id)` index would serve it (cost bounded by one user's rows). (3) Pre-existing: two concurrent first uploads of the same photo id by two active members can both pass `find_existing`, write the same S3 key, and one INSERT hits the PK. (4) Stale text: stops/bikes/trips repository docstrings describe the slug as the access model; `responses.py` fallback 403 says "viewer slug — read-only"; `api-contract.md` envelope example still shows "This link is read-only.". (5) Legacy GETs with a cookie do a session+membership lookup even where `access` isn't returned.
+
+## t-am-ratelimit-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-rate-limits). (1) Contract gaps to write down: the limiter message text and the lockout message text; the hop>entries fallback to the socket address; `writes` falls back to an `ip:` key without a session; the limiter runs before the gates. (2) FastAPI parses JSON bodies before dependencies, so a malformed body gets 422 without spending a token even when the bucket is empty (no gate, DB or argon2 reached, so nothing gained); multipart is read in full before the 429. (3) Each `writes` request with a cookie costs one indexed session read even when the IP bucket is empty; an expired session keeps keying as its user (user + ip buckets).
+
+## t-am-ratelimit-ipv6-sweep
+
+TRIGGERED DEBT (QA on t-am-rate-limits). Keys are exact addresses, so a client rotating IPv6 addresses (e.g. within a /64) gets a fresh bucket each and can churn the registry enough to evict idle buckets; the eviction sweep scans up to 50k entries under the lock on the loop (~49 ms worst case, about once per 5k new keys). Promotion trigger: abuse from rotating IPv6 addresses, or moving buckets to Postgres (t-am-ratelimit-postgres / Entry 29 multi-replica reopen). Fix then: key IPv6 by /64 and make eviction incremental.
