@@ -30,16 +30,21 @@ export function uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions<TCon
  * (`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary
  * `file` part. Only a signed-in, active member of the trip can upload; either slug
  * just locates the trip (decision-log Entry 29, contract default 21). Tasks
- * `t-photo-upload-endpoint`, `t-am-write-gate-legacy`.
+ * `t-photo-upload-endpoint`, `t-am-write-gate-legacy`, `t-am-photo-exif-strip`.
  * **How it works.** `require_trip_writer` checks the slug (404), the session (401)
  * and an active membership (403), in that order, before anything else — a replay
- * is not an exception to it. `{stop_id}` is verified to belong to the resolved trip.
+ * is not an exception to it. The one check ahead of it is the request-size cap: a
+ * `Content-Length` over 16 MiB (or a body that streams past it) is a 422 before
+ * the body is read. `{stop_id}` is verified to belong to the resolved trip.
  * The stored `uploadedBy` is the signed-in account's display name at upload time,
  * whatever the form sent, and `created_by` is the account.
  * The `id` form field decides the three-way idempotency branch: unseen -> 201,
- * same stop -> 200 replay, different stop -> 409. The file is stored in S3 with
- * object key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in
- * the database.
+ * same stop -> 200 replay, different stop -> 409. A replay is answered before the
+ * file is looked at. Otherwise the file must be a JPEG of at most 15 MiB (422 if
+ * not), and its metadata segments -- APP1-APP15 (EXIF, GPS, XMP, ICC) and COM --
+ * are removed before storage; the image data is stored byte-for-byte. The
+ * stripped file is stored in S3 with object key `{trip_id}/{stop_id}/{photo_id}`,
+ * and only the key is persisted in the database.
  * **Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this
  * endpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo
  * attaches to.

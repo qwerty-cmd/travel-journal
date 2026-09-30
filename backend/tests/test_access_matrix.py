@@ -53,6 +53,7 @@ from conftest import (
     make_async_client,
 )
 from httpx import AsyncClient, Response
+from jpeg_fixtures import minimal_jpeg
 from sqlalchemy import event, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -279,7 +280,7 @@ async def send(
                 "takenAt": "2026-06-14T10:00:00+09:30",
                 "uploadedBy": "Forged Name",
             },
-            files={"file": ("photo.jpg", b"fake-jpeg-bytes", "image/jpeg")},
+            files={"file": ("photo.jpg", minimal_jpeg(), "image/jpeg")},
             headers=headers,
         )
     if write == "create_bike":
@@ -581,7 +582,7 @@ async def test_photo_upload_without_uploaded_by_is_accepted(
     response = await client.post(
         f"/api/trips/{cast.trip.rider_slug}/stops/{cast.stop_id}/photos",
         data={"id": str(uuid4()), "takenAt": "2026-06-14T10:00:00+09:30"},
-        files={"file": ("photo.jpg", b"fake-jpeg-bytes", "image/jpeg")},
+        files={"file": ("photo.jpg", minimal_jpeg(), "image/jpeg")},
         headers=cast.headers("rider"),
     )
 
@@ -884,13 +885,13 @@ async def test_a_revoked_riders_photo_upload_leaves_no_object_and_no_row(
     replay = await client.post(
         url,
         data={"id": stored_id, "takenAt": "2026-06-14T11:00:00+09:30"},
-        files={"file": ("photo.jpg", b"different-bytes-entirely", "image/jpeg")},
+        files={"file": ("photo.jpg", minimal_jpeg(2), "image/jpeg")},
         headers=account.headers,
     )
     fresh = await client.post(
         url,
         data={"id": fresh_id, "takenAt": "2026-06-14T11:00:00+09:30"},
-        files={"file": ("photo.jpg", b"fresh-bytes", "image/jpeg")},
+        files={"file": ("photo.jpg", minimal_jpeg(3), "image/jpeg")},
         headers=account.headers,
     )
 

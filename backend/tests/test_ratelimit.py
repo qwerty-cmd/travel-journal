@@ -56,6 +56,7 @@ from conftest import (
     make_async_client,
 )
 from httpx import AsyncClient
+from jpeg_fixtures import minimal_jpeg
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -204,7 +205,7 @@ def bike_payload() -> dict[str, Any]:
 def photo_form(photo_id: str) -> dict[str, Any]:
     return {
         "data": {"id": photo_id, "takenAt": "2026-06-14T15:15:00+09:30"},
-        "files": {"file": ("photo.jpg", io.BytesIO(b"fake-jpeg-bytes"), "image/jpeg")},
+        "files": {"file": ("photo.jpg", io.BytesIO(minimal_jpeg()), "image/jpeg")},
     }
 
 

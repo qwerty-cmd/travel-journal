@@ -19,7 +19,7 @@ export type BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost = {
     */
     takenAt: string;
     /**
-     * @description The photo file.
+     * @description The photo: a JPEG of at most 15 MiB. Its EXIF, XMP, ICC and comment segments are removed before it is stored.
      * @type string
     */
     file: Blob;

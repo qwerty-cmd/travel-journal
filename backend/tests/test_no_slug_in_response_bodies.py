@@ -77,6 +77,7 @@ from uuid import uuid4
 import pytest
 from conftest import SeededBike, SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient, Response
+from jpeg_fixtures import minimal_jpeg
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from test_route_dependency_audit import _api_routes
@@ -313,7 +314,7 @@ def build_request(
                 "uploadedBy": "Alex",
                 "takenAt": "2026-06-15T14:35:00+09:30",
             },
-            "files": {"file": ("photo.jpg", io.BytesIO(b"fake-jpeg-bytes"), "image/jpeg")},
+            "files": {"file": ("photo.jpg", io.BytesIO(minimal_jpeg()), "image/jpeg")},
         }
 
     if path.endswith("/bikes") and method == "POST":

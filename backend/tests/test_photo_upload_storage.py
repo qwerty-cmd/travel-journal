@@ -48,6 +48,7 @@ import pytest
 from botocore.exceptions import ClientError
 from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
+from jpeg_fixtures import jpeg_with_scan, minimal_jpeg
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -181,7 +182,7 @@ async def test_stored_object_is_the_uploaded_bytes_under_the_deterministic_key(
     photo_id = str(uuid4())
     key = f"{trip.id}/{stop_id}/{photo_id}"
     created_keys.append(key)
-    content = os.urandom(size)
+    content = jpeg_with_scan(os.urandom(size))
 
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
@@ -203,12 +204,12 @@ async def test_replay_does_not_touch_the_stored_object(
     created_keys.append(key)
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
-    first = await client.post(url, data=form(photo_id), files=upload(b"original-bytes"))
-    replay = await client.post(url, data=form(photo_id), files=upload(b"different-bytes"))
+    first = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg(1)))
+    replay = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg(2)))
 
     assert first.status_code == HTTPStatus.CREATED, first.text
     assert replay.status_code == HTTPStatus.OK, replay.text
-    assert stored_bytes(key) == b"original-bytes"
+    assert stored_bytes(key) == minimal_jpeg(1)
 
 
 async def test_created_and_replayed_bodies_are_identical(
@@ -224,8 +225,8 @@ async def test_created_and_replayed_bodies_are_identical(
     created_keys.append(f"{trip.id}/{stop_id}/{photo_id}")
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
-    created = await client.post(url, data=form(photo_id), files=upload(b"bytes"))
-    replay = await client.post(url, data=form(photo_id), files=upload(b"bytes"))
+    created = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg()))
+    replay = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg()))
 
     assert created.status_code == HTTPStatus.CREATED, created.text
     assert replay.status_code == HTTPStatus.OK, replay.text
@@ -315,19 +316,19 @@ async def test_cross_stop_conflict_writes_nothing_under_the_other_stop(
     first = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"original-bytes"),
+        files=upload(minimal_jpeg(1)),
     )
     conflict = await client.post(
         PHOTOS_PATH.format(slug=other_trip.rider_slug, stop_id=other_stop_id),
         data=form(photo_id),
-        files=upload(b"conflicting-bytes"),
+        files=upload(minimal_jpeg(2)),
     )
 
     assert first.status_code == HTTPStatus.CREATED, first.text
     assert conflict.status_code == HTTPStatus.CONFLICT, conflict.text
     assert keys_under(conflicting_prefix) == []
     # And the original object is still the original.
-    assert stored_bytes(f"{trip.id}/{stop_id}/{photo_id}") == b"original-bytes"
+    assert stored_bytes(f"{trip.id}/{stop_id}/{photo_id}") == minimal_jpeg(1)
 
 
 async def test_viewer_slug_writes_nothing_to_storage(
@@ -345,7 +346,7 @@ async def test_viewer_slug_writes_nothing_to_storage(
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"viewer-bytes"),
+        files=upload(minimal_jpeg()),
         headers=non_member_session.headers,
     )
 
@@ -371,7 +372,7 @@ async def test_unknown_slug_writes_nothing_to_storage(
     response = await client.post(
         PHOTOS_PATH.format(slug=f"no-such-slug-{secrets.token_urlsafe(8)}", stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"unknown-slug-bytes"),
+        files=upload(minimal_jpeg()),
     )
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
@@ -444,7 +445,7 @@ async def test_a_storage_failure_is_a_500_that_writes_no_row_and_leaks_no_slug(
     response = await quiet_client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"never-stored"),
+        files=upload(minimal_jpeg()),
     )
 
     assert_internal_error_leaks_nothing(
@@ -487,12 +488,12 @@ async def test_an_insert_failure_after_upload_is_a_500_and_a_retry_lands_the_ret
 
     monkeypatch.setattr(photos_route, "insert", insert_failing_once)
 
-    failed = await quiet_client.post(url, data=form(photo_id), files=upload(b"first-attempt"))
+    failed = await quiet_client.post(url, data=form(photo_id), files=upload(minimal_jpeg(1)))
 
     assert_internal_error_leaks_nothing(failed, trip.rider_slug, trip.viewer_slug, key)
     assert await photo_rows(migrated_engine, photo_id) == []
 
-    retry = await quiet_client.post(url, data=form(photo_id), files=upload(b"retry-attempt"))
+    retry = await quiet_client.post(url, data=form(photo_id), files=upload(minimal_jpeg(2)))
 
     assert retry.status_code == HTTPStatus.CREATED, retry.text
     assert retry.json()["id"] == photo_id
@@ -501,7 +502,7 @@ async def test_an_insert_failure_after_upload_is_a_500_and_a_retry_lands_the_ret
     assert len(rows) == 1
     assert rows[0]["stop_id"] == stop_id
     assert rows[0]["object_key"] == key
-    assert stored_bytes(key) == b"retry-attempt"
+    assert stored_bytes(key) == minimal_jpeg(2)
 
 
 # --------------------------------------------------------------------------
@@ -529,7 +530,7 @@ async def test_a_stop_on_another_trip_is_404_and_writes_nothing_under_either_tri
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=other_stop_id),
         data=form(photo_id),
-        files=upload(b"cross-trip-bytes"),
+        files=upload(minimal_jpeg()),
     )
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
@@ -584,7 +585,7 @@ async def test_photo_url_is_a_sigv4_presigned_get_that_serves_the_uploaded_bytes
     photo_id = str(uuid4())
     key = f"{trip.id}/{stop_id}/{photo_id}"
     created_keys.append(key)
-    content = os.urandom(4096)
+    content = jpeg_with_scan(os.urandom(4096))
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
     created = await client.post(url, data=form(photo_id), files=upload(content))

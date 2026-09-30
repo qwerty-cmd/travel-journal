@@ -370,7 +370,7 @@
           "photos"
         ],
         "summary": "Upload a photo to a stop",
-        "description": "**Context.** This is how a photo gets into the journal. Multipart: form fields\n(`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary\n`file` part. Only a signed-in, active member of the trip can upload; either slug\njust locates the trip (decision-log Entry 29, contract default 21). Tasks\n`t-photo-upload-endpoint`, `t-am-write-gate-legacy`.\n\n**How it works.** `require_trip_writer` checks the slug (404), the session (401)\nand an active membership (403), in that order, before anything else \u2014 a replay\nis not an exception to it. `{stop_id}` is verified to belong to the resolved trip.\nThe stored `uploadedBy` is the signed-in account's display name at upload time,\nwhatever the form sent, and `created_by` is the account.\nThe `id` form field decides the three-way idempotency branch: unseen -> 201,\nsame stop -> 200 replay, different stop -> 409. The file is stored in S3 with\nobject key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in\nthe database.\n\n**Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this\nendpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo\nattaches to.",
+        "description": "**Context.** This is how a photo gets into the journal. Multipart: form fields\n(`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary\n`file` part. Only a signed-in, active member of the trip can upload; either slug\njust locates the trip (decision-log Entry 29, contract default 21). Tasks\n`t-photo-upload-endpoint`, `t-am-write-gate-legacy`, `t-am-photo-exif-strip`.\n\n**How it works.** `require_trip_writer` checks the slug (404), the session (401)\nand an active membership (403), in that order, before anything else \u2014 a replay\nis not an exception to it. The one check ahead of it is the request-size cap: a\n`Content-Length` over 16 MiB (or a body that streams past it) is a 422 before\nthe body is read. `{stop_id}` is verified to belong to the resolved trip.\nThe stored `uploadedBy` is the signed-in account's display name at upload time,\nwhatever the form sent, and `created_by` is the account.\nThe `id` form field decides the three-way idempotency branch: unseen -> 201,\nsame stop -> 200 replay, different stop -> 409. A replay is answered before the\nfile is looked at. Otherwise the file must be a JPEG of at most 15 MiB (422 if\nnot), and its metadata segments -- APP1-APP15 (EXIF, GPS, XMP, ICC) and COM --\nare removed before storage; the image data is stored byte-for-byte. The\nstripped file is stored in S3 with object key `{trip_id}/{stop_id}/{photo_id}`,\nand only the key is persisted in the database.\n\n**Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this\nendpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo\nattaches to.",
         "operationId": "upload_photo_api_trips__slug__stops__stop_id__photos_post",
         "parameters": [
           {
@@ -466,7 +466,7 @@
             }
           },
           "422": {
-            "description": "A required form field is missing or invalid.",
+            "description": "A required form field is missing or invalid; or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the request's `Content-Length` is over 16 MiB, refused before the body is read. Never retried. Nothing was stored.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2001,7 +2001,7 @@
             "type": "string",
             "contentMediaType": "application/octet-stream",
             "title": "File",
-            "description": "The photo file."
+            "description": "The photo: a JPEG of at most 15 MiB. Its EXIF, XMP, ICC and comment segments are removed before it is stored."
           },
           "uploadedBy": {
             "anyOf": [

@@ -9,12 +9,16 @@ not, preventing cross-trip data access.
 """
 
 import asyncio
+import io
+from collections.abc import Callable, Coroutine
 from functools import partial
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.routing import APIRoute
 from pydantic import AwareDatetime
+from starlette.types import Message
 
 from app.api.responses import (
     PATH_PARAMETERS_422,
@@ -23,6 +27,7 @@ from app.api.responses import (
     error_responses,
 )
 from app.core.errors import ApiError
+from app.core.jpeg import MAX_PHOTO_BYTES, JpegError, strip_metadata
 from app.core.ratelimit import limit_public_read, limit_writes
 from app.core.security import (
     TripContext,
@@ -41,7 +46,85 @@ from app.data.repositories.photos import (
 from app.models.photo import PhotoOut
 from app.storage.s3_client import BUCKET_NAME, get_s3_client
 
-router = APIRouter(prefix="/trips/{slug}/stops/{stop_id}/photos", tags=["photos"])
+PHOTO_NOT_JPEG_MESSAGE = (
+    "This photo couldn't be saved: it isn't a complete JPEG image. Nothing was stored. "
+    "Sending it again unchanged will keep failing."
+)
+
+PHOTO_TOO_LARGE_MESSAGE = (
+    "This photo couldn't be saved: it is larger than 15 MiB. Nothing was stored. "
+    "Sending it again unchanged will keep failing."
+)
+
+# The whole multipart request may be at most this long: the 15 MiB file part
+# plus room for the form fields and multipart framing.
+MAX_UPLOAD_REQUEST_BYTES = 16 * 1024 * 1024
+
+
+class CappedBodyRoute(APIRoute):
+    """
+    An `APIRoute` that refuses a `POST` body over `MAX_UPLOAD_REQUEST_BYTES` with a 422.
+
+    Set router-wide, but only the upload (`POST`) is capped: the list's `GET`
+    and `HEAD` pass straight through, so they never answer with the photo
+    message. (`@router.post` has no per-route `route_class` parameter.)
+
+    **Why here and not in a dependency.** FastAPI reads and parses a multipart
+    body (spooling the file to disk) *before* it solves any dependency, so
+    `require_trip_writer` and `limit_writes` cannot stop a huge upload from being
+    read. The route handler this class wraps is the first per-route code that
+    runs, after CSRF and routing but before the body is touched:
+
+    - a declared `Content-Length` over the cap is refused before a byte of the
+      body is received;
+    - a body with no usable `Content-Length` (chunked) is counted as it
+      streams in, and the read stops at the first chunk that crosses the cap.
+
+    The streamed case raises `HTTPException`, not `ApiError`: it is raised from
+    inside FastAPI's body read, which re-raises `HTTPException` and turns any
+    other exception into a `400`. Both render as the same `422
+    VALIDATION_ERROR` envelope (`core/errors.py`).
+
+    A request under the cap goes on to the gate, the limiter and the handler in
+    their usual order; the handler enforces the 15 MiB limit on the file part
+    itself (`_stripped_jpeg`).
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def capped_handler(request: Request) -> Response:
+            if request.method != "POST":
+                return await handler(request)
+
+            declared = request.headers.get("content-length")
+            # A non-numeric value never reaches here under uvicorn (h11 rejects
+            # it); if one did, the streamed count below still caps the body.
+            if declared and declared.isdigit() and int(declared) > MAX_UPLOAD_REQUEST_BYTES:
+                raise ApiError.validation(PHOTO_TOO_LARGE_MESSAGE)
+
+            received = 0
+
+            async def capped_receive() -> Message:
+                nonlocal received
+                message = await request.receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > MAX_UPLOAD_REQUEST_BYTES:
+                        raise HTTPException(
+                            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                            detail=PHOTO_TOO_LARGE_MESSAGE,
+                        )
+                return message
+
+            return await handler(Request(request.scope, capped_receive))
+
+        return capped_handler
+
+
+router = APIRouter(
+    prefix="/trips/{slug}/stops/{stop_id}/photos", tags=["photos"], route_class=CappedBodyRoute
+)
 
 STOP_NOT_FOUND_MESSAGE = (
     "This stop doesn't exist on this trip, so photos can't be listed or uploaded for it."
@@ -57,6 +140,18 @@ async def _verified_stop(context: TripContext, stop_id: str, session) -> None:
     """Raise 404 if stop_id is not on this trip."""
     if not await stop_belongs_to_trip(session, context.trip.id, stop_id):
         raise ApiError.not_found(STOP_NOT_FOUND_MESSAGE)
+
+
+async def _stripped_jpeg(file: UploadFile) -> bytes:
+    """The upload's bytes with metadata removed; 422 if over 15 MiB or not a JPEG."""
+    data = await file.read(MAX_PHOTO_BYTES + 1)
+    if len(data) > MAX_PHOTO_BYTES:
+        raise ApiError.validation(PHOTO_TOO_LARGE_MESSAGE)
+    try:
+        # Linear, but up to 15 MiB of Python-level walking: off the event loop.
+        return await asyncio.to_thread(strip_metadata, data)
+    except JpegError as exc:
+        raise ApiError.validation(PHOTO_NOT_JPEG_MESSAGE) from exc
 
 
 @router.get(
@@ -132,7 +227,11 @@ router.add_api_route(
                 "this trip.",
                 HTTPStatus.CONFLICT: "The `id` field already belongs to a photo on a "
                 "**different** stop.",
-                HTTPStatus.UNPROCESSABLE_ENTITY: "A required form field is missing or invalid.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "A required form field is missing or invalid; "
+                "or the `file` part is not a complete JPEG (it must start `FF D8 FF` and walk "
+                "cleanly to a Start-of-Scan) or is over 15 MiB (15,728,640 bytes); or the "
+                "request's `Content-Length` is over 16 MiB, refused before the body is read. "
+                "Never retried. Nothing was stored.",
                 HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
@@ -142,17 +241,22 @@ router.add_api_route(
 (`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary
 `file` part. Only a signed-in, active member of the trip can upload; either slug
 just locates the trip (decision-log Entry 29, contract default 21). Tasks
-`t-photo-upload-endpoint`, `t-am-write-gate-legacy`.
+`t-photo-upload-endpoint`, `t-am-write-gate-legacy`, `t-am-photo-exif-strip`.
 
 **How it works.** `require_trip_writer` checks the slug (404), the session (401)
 and an active membership (403), in that order, before anything else — a replay
-is not an exception to it. `{stop_id}` is verified to belong to the resolved trip.
+is not an exception to it. The one check ahead of it is the request-size cap: a
+`Content-Length` over 16 MiB (or a body that streams past it) is a 422 before
+the body is read. `{stop_id}` is verified to belong to the resolved trip.
 The stored `uploadedBy` is the signed-in account's display name at upload time,
 whatever the form sent, and `created_by` is the account.
 The `id` form field decides the three-way idempotency branch: unseen -> 201,
-same stop -> 200 replay, different stop -> 409. The file is stored in S3 with
-object key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in
-the database.
+same stop -> 200 replay, different stop -> 409. A replay is answered before the
+file is looked at. Otherwise the file must be a JPEG of at most 15 MiB (422 if
+not), and its metadata segments -- APP1-APP15 (EXIF, GPS, XMP, ICC) and COM --
+are removed before storage; the image data is stored byte-for-byte. The
+stripped file is stored in S3 with object key `{trip_id}/{stop_id}/{photo_id}`,
+and only the key is persisted in the database.
 
 **Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this
 endpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo
@@ -200,7 +304,13 @@ async def upload_photo(
             "rejects it."
         ),
     ],
-    file: Annotated[UploadFile, File(description="The photo file.")],
+    file: Annotated[
+        UploadFile,
+        File(
+            description="The photo: a JPEG of at most 15 MiB. Its EXIF, XMP, ICC and comment "
+            "segments are removed before it is stored."
+        ),
+    ],
     # Last, because it is the only form field with a default. Declared rather than
     # dropped so queued uploads from before the upgrade, which still send it, stay
     # valid in the generated client's types; the value is never read.
@@ -221,6 +331,10 @@ async def upload_photo(
         response.status_code = HTTPStatus.OK
         return existing
 
+    # After the replay branch, so a replay never touches the bytes; before
+    # anything is written, so a rejected upload leaves no object and no row.
+    stripped = await _stripped_jpeg(file)
+
     # Cross-stop conflict check
     if await check_id_conflict(session, id):
         raise ApiError.conflict(PHOTO_ID_CONFLICT_MESSAGE)
@@ -228,16 +342,18 @@ async def upload_photo(
     # Upload to S3, then persist the DB row
     object_key = f"{context.trip.id}/{stop_id}/{id}"
 
-    # Streamed from the spooled upload rather than read into memory first; boto3
-    # switches to multipart on its own above its size threshold. That is a memory
-    # choice, not resumability: a photo is one idempotent request, retried whole
-    # under the same client id by the offline queue: a replay is answered above
-    # with no storage write, and the deterministic key means a retry after a
-    # failed insert overwrites rather than duplicates (decision-log Entry 20). This
+    # The stripped bytes, never the upload as received. boto3 switches to
+    # multipart on its own above its size threshold. That is a memory choice,
+    # not resumability: a photo is one idempotent request, retried whole under
+    # the same client id by the offline queue: a replay is answered above with
+    # no storage write, and the deterministic key means a retry after a failed
+    # insert overwrites rather than duplicates (decision-log Entry 20). This
     # block is where "add resumable multipart" would be re-proposed -- read
     # Entry 20 first.
     s3 = get_s3_client()
-    await asyncio.to_thread(partial(s3.upload_fileobj, file.file, BUCKET_NAME, object_key))
+    await asyncio.to_thread(
+        partial(s3.upload_fileobj, io.BytesIO(stripped), BUCKET_NAME, object_key)
+    )
 
     photo = await insert(
         session,

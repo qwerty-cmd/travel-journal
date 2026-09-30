@@ -46,6 +46,7 @@ from uuid import uuid4
 import pytest
 from conftest import SeededTrip, SignedInAccount, make_async_client
 from httpx import AsyncClient
+from jpeg_fixtures import minimal_jpeg
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.data import tables
@@ -193,9 +194,9 @@ def upload_form(
     }
 
 
-def fake_file(content: bytes = b"fake-jpeg-bytes", filename: str = "photo.jpg"):
-    """A minimal file-like object for multipart upload."""
-    return {"file": (filename, io.BytesIO(content), "image/jpeg")}
+def fake_file(content: bytes | None = None, filename: str = "photo.jpg"):
+    """A minimal valid JPEG as a multipart file part."""
+    return {"file": (filename, io.BytesIO(content or minimal_jpeg()), "image/jpeg")}
 
 
 async def photo_rows_for_id(engine: AsyncEngine, photo_id: str) -> list[Any]:
@@ -445,7 +446,7 @@ class TestUploadPhoto:
         assert first.status_code == HTTPStatus.CREATED
 
         # Replay -> 200
-        second = await client.post(url, data=form, files=fake_file(b"different-bytes"))
+        second = await client.post(url, data=form, files=fake_file(minimal_jpeg(2)))
         assert second.status_code == HTTPStatus.OK
 
         # The stored photo is returned, not a new one
@@ -919,3 +920,75 @@ async def test_the_access_guard_runs_before_body_validation(
     assert unknown.status_code == HTTPStatus.NOT_FOUND, unknown.text
     assert parse_envelope(unknown).code == ErrorCode.NOT_FOUND
     assert await photo_rows_for_id(migrated_engine, probe_id) == []
+
+
+# --------------------------------------------------------------------------
+# The 16 MiB request cap applies to the upload only
+# --------------------------------------------------------------------------
+
+
+async def _raw_asgi(method: str, path: str, content_length: int) -> tuple[int, bytes]:
+    """
+    One request straight into the ASGI app, declaring `content_length` but sending no body.
+
+    httpx will not send a GET whose `Content-Length` disagrees with its body, so
+    this bypasses it. The declared length is all the cap looks at before reading.
+    """
+    import app.main
+
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"origin", b"https://testserver"),
+            (b"content-type", b"multipart/form-data; boundary=x"),
+            (b"content-length", str(content_length).encode()),
+        ],
+        "client": ("203.0.113.9", 50000),
+        "server": ("testserver", 443),
+    }
+    await app.main.app(scope, receive, send)
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return status, body
+
+
+async def test_a_large_content_length_on_the_list_get_is_not_refused_as_a_photo(
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    seeded_stops: list[SeededStop],
+) -> None:
+    """
+    `CappedBodyRoute` is set on the whole photos router, but only the upload
+    POST is capped. The POST is the control: the same header there is the 422.
+    """
+    from app.api.routes.photos import MAX_UPLOAD_REQUEST_BYTES, PHOTO_TOO_LARGE_MESSAGE
+
+    trip = seeded_trips[0]
+    stop = seeded_stops[0]
+    path = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
+    too_big = MAX_UPLOAD_REQUEST_BYTES + 1
+
+    get_status, get_body = await _raw_asgi("GET", path, too_big)
+    post_status, post_body = await _raw_asgi("POST", path, too_big)
+
+    assert get_status == HTTPStatus.OK, get_body
+    assert PHOTO_TOO_LARGE_MESSAGE.encode() not in get_body
+    assert post_status == HTTPStatus.UNPROCESSABLE_ENTITY, post_body
+    assert PHOTO_TOO_LARGE_MESSAGE.encode() in post_body
