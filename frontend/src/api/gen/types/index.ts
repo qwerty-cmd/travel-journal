@@ -20,8 +20,10 @@ export type { GetMapApiV2TripsTripIdMapGet200, GetMapApiV2TripsTripIdMapGet404, 
 export type { GetMeApiV2AuthMeGet200, GetMeApiV2AuthMeGet401, GetMeApiV2AuthMeGet429, GetMeApiV2AuthMeGetQuery, GetMeApiV2AuthMeGetQueryResponse } from "./GetMeApiV2AuthMeGet";
 export type { GetTripApiTripsSlugGet200, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGetQuery, GetTripApiTripsSlugGetQueryResponse } from "./GetTripApiTripsSlugGet";
 export type { GetTripApiV2TripsTripIdGet200, GetTripApiV2TripsTripIdGet404, GetTripApiV2TripsTripIdGet422, GetTripApiV2TripsTripIdGet429, GetTripApiV2TripsTripIdGetPathParams, GetTripApiV2TripsTripIdGetQuery, GetTripApiV2TripsTripIdGetQueryResponse } from "./GetTripApiV2TripsTripIdGet";
+export type { LeaveTripApiV2TripsTripIdLeavePost204, LeaveTripApiV2TripsTripIdLeavePost401, LeaveTripApiV2TripsTripIdLeavePost403, LeaveTripApiV2TripsTripIdLeavePost404, LeaveTripApiV2TripsTripIdLeavePost409, LeaveTripApiV2TripsTripIdLeavePost422, LeaveTripApiV2TripsTripIdLeavePost429, LeaveTripApiV2TripsTripIdLeavePostMutation, LeaveTripApiV2TripsTripIdLeavePostMutationResponse, LeaveTripApiV2TripsTripIdLeavePostPathParams } from "./LeaveTripApiV2TripsTripIdLeavePost";
 export type { LineStringGeometry } from "./LineStringGeometry";
 export type { ListBikesApiV2TripsTripIdBikesGet200, ListBikesApiV2TripsTripIdBikesGet404, ListBikesApiV2TripsTripIdBikesGet422, ListBikesApiV2TripsTripIdBikesGet429, ListBikesApiV2TripsTripIdBikesGetPathParams, ListBikesApiV2TripsTripIdBikesGetQuery, ListBikesApiV2TripsTripIdBikesGetQueryResponse } from "./ListBikesApiV2TripsTripIdBikesGet";
+export type { ListMembersApiV2TripsTripIdMembersGet200, ListMembersApiV2TripsTripIdMembersGet401, ListMembersApiV2TripsTripIdMembersGet403, ListMembersApiV2TripsTripIdMembersGet404, ListMembersApiV2TripsTripIdMembersGet422, ListMembersApiV2TripsTripIdMembersGet429, ListMembersApiV2TripsTripIdMembersGetPathParams, ListMembersApiV2TripsTripIdMembersGetQuery, ListMembersApiV2TripsTripIdMembersGetQueryResponse } from "./ListMembersApiV2TripsTripIdMembersGet";
 export type { ListMyTripsApiV2MeTripsGet200, ListMyTripsApiV2MeTripsGet401, ListMyTripsApiV2MeTripsGet429, ListMyTripsApiV2MeTripsGetQuery, ListMyTripsApiV2MeTripsGetQueryResponse } from "./ListMyTripsApiV2MeTripsGet";
 export type { ListPhotosApiTripsSlugStopsStopIdPhotosGet200, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422, ListPhotosApiTripsSlugStopsStopIdPhotosGet429, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGetQuery, ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse } from "./ListPhotosApiTripsSlugStopsStopIdPhotosGet";
 export type { ListPhotosApiV2TripsTripIdStopsStopIdPhotosGet200, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGet404, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGet422, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGet429, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGetPathParams, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGetQuery, ListPhotosApiV2TripsTripIdStopsStopIdPhotosGetQueryResponse } from "./ListPhotosApiV2TripsTripIdStopsStopIdPhotosGet";
@@ -31,6 +33,7 @@ export type { ListStopsApiV2TripsTripIdStopsGet200, ListStopsApiV2TripsTripIdSto
 export type { LocationSource, LocationSourceEnumKey } from "./LocationSource";
 export type { MapFeatureCollection } from "./MapFeatureCollection";
 export type { MeOut } from "./MeOut";
+export type { MemberOut } from "./MemberOut";
 export type { MemberRole, MemberRoleEnumKey } from "./MemberRole";
 export type { MyTripOut } from "./MyTripOut";
 export type { PasswordChange } from "./PasswordChange";
@@ -39,6 +42,7 @@ export type { PatchBikeApiV2TripsTripIdBikesBikeIdPatch200, PatchBikeApiV2TripsT
 export type { PatchTripApiV2TripsTripIdPatch200, PatchTripApiV2TripsTripIdPatch401, PatchTripApiV2TripsTripIdPatch403, PatchTripApiV2TripsTripIdPatch404, PatchTripApiV2TripsTripIdPatch422, PatchTripApiV2TripsTripIdPatch429, PatchTripApiV2TripsTripIdPatchMutation, PatchTripApiV2TripsTripIdPatchMutationRequest, PatchTripApiV2TripsTripIdPatchMutationResponse, PatchTripApiV2TripsTripIdPatchPathParams } from "./PatchTripApiV2TripsTripIdPatch";
 export type { PhotoOut } from "./PhotoOut";
 export type { PointGeometry } from "./PointGeometry";
+export type { PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost200, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost401, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost403, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost404, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost422, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost429, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePostMutation, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePostMutationResponse, PromoteMemberApiV2TripsTripIdMembersUserIdPromotePostPathParams } from "./PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost";
 export type { RecoverApiV2AuthRecoverPost200, RecoverApiV2AuthRecoverPost401, RecoverApiV2AuthRecoverPost422, RecoverApiV2AuthRecoverPost429, RecoverApiV2AuthRecoverPostMutation, RecoverApiV2AuthRecoverPostMutationRequest, RecoverApiV2AuthRecoverPostMutationResponse } from "./RecoverApiV2AuthRecoverPost";
 export type { RecoveryCodeCreate } from "./RecoveryCodeCreate";
 export type { RecoveryCodeIssuedOut } from "./RecoveryCodeIssuedOut";
@@ -48,6 +52,7 @@ export type { SigninApiV2AuthSigninPost200, SigninApiV2AuthSigninPost401, Signin
 export type { SignoutAllApiV2AuthSignoutAllPost204, SignoutAllApiV2AuthSignoutAllPost401, SignoutAllApiV2AuthSignoutAllPost429, SignoutAllApiV2AuthSignoutAllPostMutation, SignoutAllApiV2AuthSignoutAllPostMutationResponse } from "./SignoutAllApiV2AuthSignoutAllPost";
 export type { SignoutApiV2AuthSignoutPost204, SignoutApiV2AuthSignoutPostMutation, SignoutApiV2AuthSignoutPostMutationResponse } from "./SignoutApiV2AuthSignoutPost";
 export type { SignupApiV2AuthSignupPost201, SignupApiV2AuthSignupPost409, SignupApiV2AuthSignupPost422, SignupApiV2AuthSignupPost429, SignupApiV2AuthSignupPostMutation, SignupApiV2AuthSignupPostMutationRequest, SignupApiV2AuthSignupPostMutationResponse } from "./SignupApiV2AuthSignupPost";
+export type { StepDownApiV2TripsTripIdStepDownPost200, StepDownApiV2TripsTripIdStepDownPost401, StepDownApiV2TripsTripIdStepDownPost403, StepDownApiV2TripsTripIdStepDownPost404, StepDownApiV2TripsTripIdStepDownPost409, StepDownApiV2TripsTripIdStepDownPost422, StepDownApiV2TripsTripIdStepDownPost429, StepDownApiV2TripsTripIdStepDownPostMutation, StepDownApiV2TripsTripIdStepDownPostMutationResponse, StepDownApiV2TripsTripIdStepDownPostPathParams } from "./StepDownApiV2TripsTripIdStepDownPost";
 export type { StopCreate } from "./StopCreate";
 export type { StopFeature } from "./StopFeature";
 export type { StopFeatureProperties } from "./StopFeatureProperties";
