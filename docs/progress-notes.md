@@ -2542,6 +2542,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-10-05. `routes/v2/members.py`: members GET/HEAD (`require_trip_member_read`), promote and step-down (leader gate), leave (writer gate, riders too). Every change locks the trip row FOR UPDATE, re-reads the caller (and target) under it, then counts leaders; last leader → 409 with nothing changed. Leave sets `revoked_by` = self and leaves join_requests alone. Promote re-checks the caller under the lock (test-writer found it didn't; fixed). Members payload = `MemberOut` only, ordered joinedAt then userId. Tests: test_v2_trip_leadership 39 + matrix §15; suite 2902; frontend 385 + build. QA PASS, 4/4 mutants killed, no cross-leader removal path, no deadlock. Debt: t-am-leadership-contract-wording.
+
 ## t-am-join-requester
 **Goal.** The requester's side of the per-person join lifecycle. This is part of the scrum change 11 split.
 **Scope.**
@@ -3059,3 +3061,7 @@ ORDINARY DEBT (test-writer + QA on t-am-trip-create). (1) The contract gives no 
 ## t-am-trip-create-anon-ip-bucket
 
 TRIGGERED DEBT (test-writer + QA on t-am-trip-create). A trip create with no stored session is charged to the IP `trip-create` bucket (3/day, the UserRateLimit fallback), so the 4th from one IP gets 429 with an 8 h Retry-After instead of 401. The queue pauses on 401 but waits on 429, so a signed-out device's queued create would stall 8 h instead of prompting sign-in. Promotion trigger: the offline queue starts sending trip creates. Fix then: skip the IP charge for trip-create when there is no session (the gate 401s it anyway).
+
+## t-am-leadership-contract-wording
+
+ORDINARY DEBT (dev + test-writer on t-am-trip-leadership). (1) The last-leader 409 message "Promote another rider to leader first" has no full stop, unlike every other message — the code copies the contract verbatim. (2) The promote note says the target "must be an active rider, else 404" but the same bullet says promoting an existing leader returns 200; code and tests follow the 200.
