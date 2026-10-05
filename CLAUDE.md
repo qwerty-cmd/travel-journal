@@ -45,6 +45,7 @@ A finding from task X is not work for task X — one task → one patch → veri
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
 | `docs` | Writes per-task docs, closes out progress.json, owns decision-log | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
 | `designer` | Front-end UI/visual design: design system (tokens), per-screen specs, static HTML mockups in Figma/Canva handoff terms; generates with Google Stitch (owner's user-level Stitch MCP + stitch-skills); reviews built UI against specs. `dev` implements its specs | Read/Grep/Glob/Write/Edit + WebSearch/WebFetch + Skill (+ `mcp__stitch__*` once listed) — writes `docs/design/` only (hook-enforced) |
+| `token-auditor` | Token-budget guardrail: trims briefs before dispatch, audits finished pipelines' transcripts for waste, audits agent/skill definitions for bloat. Recommends cuts; never weakens a gate | Read-only (Read/Grep/Glob/Bash) |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
@@ -62,6 +63,16 @@ The main session is the orchestrator/PM: makes priority calls and reviews result
 `architect` is spawned on-demand when any agent hits a technical blocker — it researches and recommends. Only decisions affecting architecture invariants or the locked stack escalate to the user.
 
 One task = one reviewable patch — don't queue up several unreviewed.
+
+## Token budget — every agent, every task
+Tokens are a shared, limited budget; spending them must buy correctness. These rules never relax a gate (lint, full suite before commit, contract-first access-control tests, independent QA, triage).
+- **Read slices, not files.** Grep first, then `Read` with `offset`/`limit` or `sed -n` a range. Never read `docs/progress-notes.md`, `docs/decision-log.md`, `docs/api-contract.md` or `frontend/src/api/gen/` whole.
+- **Test narrowly while working; run the full suite once**, at the end. Pipe long output through `tail`/`grep`.
+- **Briefs carry pointers, not pasted text** — a `sed` command, a contract section name, a path — plus only what the previous stage learned that the next one can't cheaply re-derive.
+- **Don't re-prove what the previous stage proved** unless something changed or you have a new angle. QA: a few distinguishing mutants, not an exhaustive sweep.
+- **Reports are short:** results, decisions, findings in gate format. No restated brief, no `git status` dumps, no re-listing already-filed debt. Aim for ≤ 40 lines.
+- **Right-size the pipeline:** `test-writer` is mandatory for access control, data integrity and the offline queue; for other tasks `dev` writes the tests and `qa` verifies. One-line or single-command work isn't worth an agent.
+- `token-auditor` audits a finished pipeline when a task looked expensive, and the agent definitions whenever they grow.
 
 ## Commands
 ```
