@@ -39,8 +39,8 @@ A finding from task X is not work for task X — one task → one patch → veri
 | `pm-assist` | Context gatherer — assembles structured task briefs, status summaries, and next-task lookups | Read-only (Read/Grep/Glob/Bash) |
 | `scrum-master` | Scope guardrail — pre-flight (is the task tight?) and post-flight (did the diff stay in scope?) | Read-only (Read/Grep/Glob/Bash) |
 | `architect` | Technical research for blockers — investigates, recommends, escalates only when architecture invariants are at stake | Read-only + WebSearch/WebFetch |
-| `dev` | Implements one task, then chains the full pipeline: test-writer → qa → docs. Returns combined result | Full edit + Agent |
-| `test-writer` | Writes tests, then chains into qa with a structured context brief | Read/Edit/Write/Bash + Agent (to spawn qa) |
+| `dev` | Implements one task and returns a pointer brief for the next stage (the orchestrator runs test-writer → qa → docs) | Read/Edit/Write/Bash/Grep/Glob |
+| `test-writer` | Writes tests (contract-first for access control, data integrity, offline queue) and returns a brief for qa | Read/Edit/Write/Bash |
 | `qa` | Independently verifies acceptance criteria; no edit access, reports findings to caller | Read/Bash/Grep |
 | `devops` | Infra/deployment only (`Dockerfile`, `docker-compose.yml`, `infra/`) — never application code | Read/Edit/Write/Bash |
 | `docs` | Writes per-task docs, closes out progress.json, owns decision-log | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
@@ -53,10 +53,10 @@ Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry 
 
 The main session is the orchestrator/PM: makes priority calls and reviews results. Typical task flow:
 
-1. `pm-assist` assembles the task brief (structured format).
+1. `pm-assist` assembles the task brief (structured format) when the task needs context gathered.
 2. `scrum-master` pre-flight validates scope and prerequisites.
-3. `dev` runs the full pipeline: implement → test-writer → qa → docs. Returns one combined result.
-4. Orchestrator reviews. Optionally `scrum-master` post-flight checks the diff for scope drift.
+3. The orchestrator runs the pipeline stage by stage — subagents can't spawn agents here: `dev` implements → `test-writer` (mandatory for access control, data integrity and the offline queue; otherwise `dev` writes the tests) → `qa` → `docs`, each dispatched with a pointer brief built from the previous stage's report.
+4. Orchestrator reviews, commits, and updates the tracker. Optionally `scrum-master` post-flight checks the diff for scope drift.
 
 `designer` runs before `ba` scopes any UI/visual task: its spec in `docs/design/` becomes the task's source of truth for layout and tokens, the way the API contract is for endpoints. Choosing a styling approach or adding a font, icon set or map theme is a locked-stack decision it recommends, never assumes.
 
