@@ -2509,6 +2509,410 @@
         }
       }
     },
+    "/api/v2/trips/{tripId}/members": {
+      "get": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "List a trip's members",
+        "description": "**Context.** Who is on the trip, for its members: riders get a read-only list,\nleaders use it to promote (decision-log Entry 29). A member list is never shown\nto anyone who is not an active member, on a public trip either.\n\n**How it works.** `limit_public_read` runs first, then `require_trip_member_read`:\na valid session (401, for every trip id alike), then the trip (404 if it doesn't\nexist, or if it is private and the caller has no membership row on it -- the\nsame 404 the v2 reads give), then an active membership as rider or leader (403).\nOnly active members are listed, oldest `joinedAt` first; revoked and departed\nmembers are not. Each entry is the user id, display name, role and joined-at,\nnever a username.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/members/{userId}/promote`,\n`POST /api/v2/trips/{tripId}/step-down`, `POST /api/v2/trips/{tripId}/leave`.",
+        "operationId": "list_members_api_v2_trips__tripId__members_get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Reading the members needs a signed-in account with an active membership on it, as a rider or a leader. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Reading the members needs a signed-in account with an active membership on it, as a rider or a leader. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trip's active members, in `joinedAt` order, oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemberOut"
+                  },
+                  "title": "Response List Members Api V2 Trips  Tripid  Members Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active member: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/members/{userId}/promote": {
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Promote a rider to leader",
+        "description": "**Context.** Leadership is shared by peers: any leader can make an active rider\na leader too (decision-log Entry 29).\n\n**How it works.** `limit_writes` runs first, then `require_trip_leader`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it), then an active\n**leader** membership (403). Then, under a lock on the trip row, the target\nmust have an active membership on this trip, else 404. A rider becomes a\nleader; promoting an existing leader (the caller included) is a 200 with\nnothing changed, so a retry is safe.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/members` lists the user ids;\n`POST /api/v2/trips/{tripId}/step-down` is the way back.",
+        "operationId": "promote_member_api_v2_trips__tripId__members__userId__promote_post",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The account id of the member to promote, as `MemberOut.userId` gives it. Must be an active member of this trip.",
+              "title": "Userid"
+            },
+            "description": "The account id of the member to promote, as `MemberOut.userId` gives it. Must be an active member of this trip."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The member after the change, now a leader.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, or the trip is private and the caller has no membership row on it (byte-identical to a trip id that doesn't exist); **or** the trip is visible but `userId` has no active membership on it -- never a member, revoked, departed, or only a pending requester. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/step-down": {
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Step down from leading a trip",
+        "description": "**Context.** A leader can hand back leadership and stay on the trip as a rider,\nas long as another leader remains (decision-log Entry 29).\n\n**How it works.** `limit_writes` runs first, then `require_trip_leader`: a valid\nsession (401, for every trip id alike), then the trip (404 if it doesn't exist,\nor if it is private and the caller has no membership row on it), then an active\n**leader** membership (403). Then, under a lock on the trip row\n(`SELECT \u2026 FOR UPDATE`), the caller's own row is re-read and the other active\nleaders counted. None \u2192 409 with nothing changed. Otherwise the caller becomes\na rider. Because every membership change takes the same lock, two leaders\nstepping down at once can't both succeed on a two-leader trip.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/members/{userId}/promote`\nto add a leader first; `POST /api/v2/trips/{tripId}/leave` to leave entirely.",
+        "operationId": "step_down_api_v2_trips__tripId__step_down_post",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's membership after the change, now a rider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller is the trip's only active leader: \"Promote another rider to leader first\". Checked under a lock on the trip row, so of two leaders stepping down at once, the second gets this. Nothing was changed; it fails the same way on retry until another leader exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/leave": {
+      "post": {
+        "tags": [
+          "trips"
+        ],
+        "summary": "Leave a trip",
+        "description": "**Context.** Any member, rider or leader, can leave a trip on their own\n(decision-log Entry 29). A trip must keep a leader, so the last one has to\npromote someone first.\n\n**How it works.** `limit_writes` runs first, then `require_trip_writer_by_id`:\na valid session (401, for every trip id alike), then the trip (404 if it\ndoesn't exist, or if it is private and the caller has no membership row on it),\nthen an active membership as rider or leader (403). Then, under a lock on the\ntrip row, a leader with no other active leader gets 409 with nothing changed.\nOtherwise the membership's `revoked_at` is set with `revoked_by` = the caller;\nthe row is kept. Leaving starts no join-request cooldown. Afterwards the caller\nis `none` on the trip: a private trip answers them 404 on reads.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/step-down` to stay as a rider\ninstead; `POST /api/v2/trips/{tripId}/join-requests` to ask to rejoin.",
+        "operationId": "leave_trip_api_v2_trips__tripId__leave_post",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. A write needs a signed-in account with an active membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; a non-member of a public trip, or a revoked member, is a 403."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The caller is no longer a member of the trip."
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active member: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller is the trip's only active leader: \"Promote another rider to leader first\". Checked under a lock on the trip row, so of two leaders stepping down at once, the second gets this. Nothing was changed; it fails the same way on retry until another leader exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -2937,6 +3341,39 @@
         ],
         "title": "MeOut",
         "description": "The signed-in account. The only response that ever contains a username."
+      },
+      "MemberOut": {
+        "properties": {
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "description": "The member's account id. The path parameter for promote and revoke. Only ever returned to active members of the trip."
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "The member's public name. Never their username."
+          },
+          "role": {
+            "$ref": "#/components/schemas/MemberRole",
+            "description": "The member's role on this trip: 'rider' or 'leader'."
+          },
+          "joinedAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Joinedat",
+            "description": "When this membership started, as a timezone-aware ISO 8601 instant. Member lists are ordered by it, oldest first."
+          }
+        },
+        "type": "object",
+        "required": [
+          "userId",
+          "displayName",
+          "role",
+          "joinedAt"
+        ],
+        "title": "MemberOut",
+        "description": "One active member of a trip. Elements of `GET /api/v2/trips/{tripId}/members`."
       },
       "MemberRole": {
         "type": "string",

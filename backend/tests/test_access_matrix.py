@@ -27,7 +27,10 @@ or pending caller ``403`` on a public trip and, on a private one, the ``404`` a
 nonexistent trip id gets; revoked ``403``; rider and leader ``2xx``.
 ``t-am-trip-create`` added the leader columns (section 14) on PATCH trip: the
 write columns' answers, except that an active rider is ``403`` "You're not a
-leader on this trip." and only a leader gets ``200``. ``t-am-write-gate-legacy`` owns the
+leader on this trip." and only a leader gets ``200``. ``t-am-trip-leadership``
+added section 15: the members GET (the write columns' answers, on a read),
+promote and step-down (the leader columns) and leave (the write columns).
+``t-am-write-gate-legacy`` owns the
 legacy rows below; ``t-am-v2-trip-reads`` added the v2 read columns (section
 12): public read ``200`` for everyone, delayed for non-members and full for
 members; private read ``200`` full for members and, for everyone else, the
@@ -2047,3 +2050,167 @@ async def test_a_leader_of_one_trip_cannot_patch_another(
     response = await patch_trip(client, cast.other_trip.id, cast.headers("leader"), "Hijack")
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
     assert await trip_settings(migrated_engine, cast.other_trip.id) == before
+
+
+# --------------------------------------------------------------------------
+# 15. Members and peer leadership (t-am-trip-leadership)
+# --------------------------------------------------------------------------
+
+# GET .../members is member-read: the writer's answers on a read, so an active
+# rider or leader gets 200 and nobody else sees the list. Promote and step-down
+# are leader routes (the leader columns); leave is a writer route (the write
+# columns), so a rider can leave too. None = the route's success status.
+LEADERSHIP_ROUTES = ("list_members", "promote", "step_down", "leave")
+LEADERSHIP_SUCCESS = {
+    "list_members": HTTPStatus.OK,
+    "promote": HTTPStatus.OK,
+    "step_down": HTTPStatus.OK,
+    "leave": HTTPStatus.NO_CONTENT,
+}
+EXPECTED_LEADERSHIP = {
+    "list_members": EXPECTED_V2_WRITE,
+    "promote": EXPECTED_V2_LEADER,
+    "step_down": EXPECTED_V2_LEADER,
+    "leave": EXPECTED_V2_WRITE,
+}
+
+
+async def send_leadership(
+    client: AsyncClient, route: str, trip_id: str, cast: Cast, headers: dict[str, str]
+) -> Response:
+    """One members/leadership request against ``trip_id``. Promote targets the cast's rider."""
+    base = f"/api/v2/trips/{trip_id}"
+    if route == "list_members":
+        return await client.get(f"{base}/members", headers=headers)
+    if route == "promote":
+        rider_id = cast.accounts["rider"].user_id
+        return await client.post(f"{base}/members/{rider_id}/promote", headers=headers)
+    if route == "step_down":
+        return await client.post(f"{base}/step-down", headers=headers)
+    if route == "leave":
+        return await client.post(f"{base}/leave", headers=headers)
+    raise AssertionError(route)
+
+
+async def member_rows(engine: AsyncEngine, trip_id: str) -> set[tuple[Any, ...]]:
+    """Every ``trip_members`` row on the trip: (user, role, revoked?, revoked_by)."""
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(
+                tables.trip_members.c.user_id,
+                tables.trip_members.c.role,
+                tables.trip_members.c.revoked_at.is_not(None).label("revoked"),
+                tables.trip_members.c.revoked_by,
+            ).where(tables.trip_members.c.trip_id == trip_id)
+        )
+        return {tuple(row) for row in rows}
+
+
+@pytest.mark.parametrize("route", LEADERSHIP_ROUTES)
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_leadership_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    visibility: str,
+    identity: str,
+    route: str,
+) -> None:
+    """
+    The matrix cell for the members GET, promote, step-down and leave, on both visibilities.
+
+    A second leader is added first, so the cast's leader stepping down or
+    leaving is not the last-leader ``409`` (that rule has its own tests) and the
+    cell shows the gate alone. A private trip's 404 is compared byte for byte
+    (headers too, all but ``date``) with the same request to a random trip id,
+    and a refusal must leave ``trip_members`` unchanged.
+    """
+    co_leader = await create_signed_in_account(migrated_engine, display_name="Matrix co-leader")
+    try:
+        await grant_membership(migrated_engine, cast.trip.id, co_leader.user_id, role="leader")
+        before = await member_rows(migrated_engine, cast.trip.id)
+
+        response = await send_leadership(client, route, cast.trip.id, cast, cast.headers(identity))
+
+        expected = EXPECTED_LEADERSHIP[route][(identity, visibility)]
+        after = await member_rows(migrated_engine, cast.trip.id)
+        if expected is None:
+            assert response.status_code == LEADERSHIP_SUCCESS[route], response.text
+            caller = cast.accounts[identity].user_id
+            rider = cast.accounts["rider"].user_id
+            if route == "list_members":
+                names = [m["displayName"] for m in response.json()]
+                assert sorted(names) == sorted(
+                    ["Matrix rider", "Matrix leader", "Matrix co-leader"]
+                )
+                assert after == before
+            elif route == "promote":
+                assert response.json()["userId"] == rider
+                assert response.json()["role"] == "leader"
+                assert after == (before - {(rider, "rider", False, None)}) | {
+                    (rider, "leader", False, None)
+                }
+            elif route == "step_down":
+                assert response.json()["role"] == "rider"
+                assert after == (before - {(caller, "leader", False, None)}) | {
+                    (caller, "rider", False, None)
+                }
+            else:
+                assert response.content == b""
+                role = "leader" if identity == "leader" else "rider"
+                assert after == (before - {(caller, role, False, None)}) | {
+                    (caller, role, True, caller)
+                }
+            return
+
+        status, code, message = expected
+        assert response.status_code == status, response.text
+        assert response.json() == {"error": {"code": code.value, "message": message}}
+        assert session_cookies(response) == []
+        if identity == "anonymous":
+            assert response.headers.get("www-authenticate") == WWW_AUTHENTICATE
+        if status == HTTPStatus.NOT_FOUND:
+            nonexistent = await send_leadership(
+                client, route, str(uuid4()), cast, cast.headers(identity)
+            )
+            assert nonexistent.status_code == HTTPStatus.NOT_FOUND
+            assert response.content == nonexistent.content
+            assert {k: v for k, v in response.headers.items() if k != "date"} == {
+                k: v for k, v in nonexistent.headers.items() if k != "date"
+            }
+        assert after == before
+    finally:
+        await delete_accounts(migrated_engine, [co_leader.user_id])
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("route", LEADERSHIP_ROUTES)
+@pytest.mark.parametrize("identity", ["non_member", "pending"])
+async def test_a_private_trip_leadership_request_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+    route: str,
+) -> None:
+    """No timing oracle on the members routes: the private-trip 404 runs as many statements."""
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await send_leadership(client, route, trip_id, cast, cast.headers(identity))
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count

@@ -28,7 +28,10 @@ class, decided by name first and path second:
   surface: ``require_trip_access`` (by slug) under ``/api/trips``,
   ``require_trip_reader`` (by trip id, private trips hidden) under
   ``/api/v2/trips`` (``t-am-v2-trip-reads``). Swapping them is a failure too:
-  the legacy gate on a v2 path would serve private trips to anyone. An unsafe
+  the legacy gate on a v2 path would serve private trips to anyone. A v2 read
+  named in ``MEMBER_READ`` declares ``require_trip_member_read`` instead
+  (``t-am-trip-leadership``): the reader gate would show a public trip's member
+  list to anyone. An unsafe
   method declares exactly one membership gate for its surface —
   ``require_trip_writer`` (by slug) under ``/api/trips``,
   ``require_trip_writer_by_id`` (by trip id, session first) under
@@ -99,6 +102,7 @@ from app.core.security import (
     require_session,
     require_trip_access,
     require_trip_leader,
+    require_trip_member_read,
     require_trip_reader,
     require_trip_writer,
     require_trip_writer_by_id,
@@ -113,6 +117,7 @@ GUARDS = (
     require_trip_writer,
     require_trip_writer_by_id,
     require_trip_leader,
+    require_trip_member_read,
     require_session,
 )
 
@@ -137,8 +142,17 @@ V2_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer_by_id, require_trip_leade
 # Without this, a leader route declaring the rider gate would pass the rule
 # above (it is one of the v2 unsafe guards) and let every rider change it.
 #
-#   patch_trip — PATCH /api/v2/trips/{tripId}, the trip's settings.
-LEADER_ONLY = {"patch_trip"}
+#   patch_trip     — PATCH /api/v2/trips/{tripId}, the trip's settings.
+#   promote_member — POST /api/v2/trips/{tripId}/members/{userId}/promote.
+#   step_down      — POST /api/v2/trips/{tripId}/step-down.
+LEADER_ONLY = {"patch_trip", "promote_member", "step_down"}
+
+# v2 reads that only active members may make, by route name: each must declare
+# exactly `require_trip_member_read` instead of the public reader gate, which
+# would hand a public trip's member list to anyone (t-am-trip-leadership).
+#
+#   list_members — GET/HEAD /api/v2/trips/{tripId}/members.
+MEMBER_READ = {"list_members"}
 
 # Trip-scoped routes live under one of these (legacy slug routes, v2 trip-id routes).
 TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
@@ -302,6 +316,8 @@ def _violation(method: str, route: Any) -> str | None:
         read_guard = (
             V2_TRIP_READ_GUARD if route.path.startswith("/api/v2/") else LEGACY_TRIP_READ_GUARD
         )
+        if route.name in MEMBER_READ and route.path.startswith("/api/v2/"):
+            read_guard = require_trip_member_read
         if guards != {read_guard}:
             return (
                 f"{label} is a trip-scoped read and must declare exactly "
@@ -570,6 +586,19 @@ def test_the_rules_reject_miswired_routes() -> None:
     scratch.add_api_route(
         "/api/v2/trips/{tripId}/leader-gated", leader, methods=["PATCH"], name="patch_trip"
     )
+
+    # A member list behind the public reader gate, behind the member-read gate,
+    # and the member-read gate on an ordinary read (t-am-trip-leadership).
+    async def member_read(guard: Annotated[Any, Depends(require_trip_member_read)]) -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/members-public", v2_read, methods=["GET"], name="list_members"
+    )
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/members-gated", member_read, methods=["GET"], name="list_members"
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/member-read", member_read, methods=["GET"])
     routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
 
     must_fail = [
@@ -585,6 +614,8 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("POST", "/api/v2/trips/{tripId}/slug-gated"),
         ("POST", "/api/trips/{slug}/id-gated"),
         ("PATCH", "/api/v2/trips/{tripId}/rider-gated"),
+        ("GET", "/api/v2/trips/{tripId}/members-public"),
+        ("GET", "/api/v2/trips/{tripId}/member-read"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
@@ -595,6 +626,7 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("GET", "/api/v2/trips/{tripId}/fine"),
         ("POST", "/api/v2/trips/{tripId}/write-fine"),
         ("PATCH", "/api/v2/trips/{tripId}/leader-gated"),
+        ("GET", "/api/v2/trips/{tripId}/members-gated"),
     ]:
         assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
 

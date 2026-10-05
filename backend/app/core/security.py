@@ -34,6 +34,9 @@ The gates built here:
   byte-identical ``404``) → active membership (``403``).
 - ``require_trip_leader`` — v2 leader actions, by ``{tripId}``. The writer gate
   by trip id unchanged, then the role must be ``leader`` (``403``).
+- ``require_trip_member_read`` — ``GET .../members``, by ``{tripId}``. The
+  writer gate by trip id unchanged, declared on a read: only active members
+  see who the members are.
 
 **Why the legacy write order is slug → session → membership.** This is the ADR's
 order unchanged (Entry 29; contract, "Where the session check sits"). A trip
@@ -559,6 +562,38 @@ async def require_trip_leader(
     if context.role is not MemberRole.LEADER:
         raise ApiError.forbidden(NOT_A_LEADER_MESSAGE)
     return context
+
+
+async def require_trip_member_read(
+    trip_id: Annotated[
+        str,
+        Path(
+            alias="tripId",
+            description="The trip's id. Not a secret: it only names the trip. Reading the "
+            "members needs a signed-in account with an active membership on it, as a rider "
+            "or a leader. No session is a 401 for every trip id, existing or not; a private "
+            "trip the caller has no membership row on is a 404 identical to a trip id that "
+            "doesn't exist; a non-member of a public trip, or a revoked member, is a 403.",
+        ),
+    ],
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> TripWriterContext:
+    """
+    v2 member-read gate: session (``401``) → trip located (``404``) → active member (``403``).
+
+    The contract's order for ``GET .../members`` ("The gates"): the trip is
+    located if it exists and is public or the caller has *any* membership row
+    on it, then only an active member reads. That is the writer gate by trip id
+    exactly, so ``_writer_by_id`` runs unchanged: the same ``401`` for every
+    trip id, the private-trip ``404`` byte-identical to a nonexistent id's with
+    the same statements, and the writer's two ``403`` messages. A separate
+    guard rather than ``require_trip_writer_by_id`` on a ``GET``, so the
+    route audit can tell a member read from a write, and the read stays a
+    read if the writer gate ever diverges.
+    """
+    return await _writer_by_id(trip_id, request, response, session)
 
 
 async def require_session(request: Request, response: Response, db: SessionDep) -> SessionUser:

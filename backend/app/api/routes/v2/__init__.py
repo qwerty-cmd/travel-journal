@@ -7,7 +7,7 @@ own router here; ``app/api/routes/__init__.py`` mounts this one under ``/api``.
 
 from fastapi import APIRouter
 
-from app.api.routes.v2 import auth, me, rider_writes, trips
+from app.api.routes.v2 import auth, me, members, rider_writes, trips
 
 v2_router = APIRouter(prefix="/v2")
 v2_router.include_router(auth.router)
@@ -15,3 +15,4 @@ v2_router.include_router(me.router)
 v2_router.include_router(trips.router)
 v2_router.include_router(rider_writes.router)
 v2_router.include_router(rider_writes.photo_router)
+v2_router.include_router(members.router)

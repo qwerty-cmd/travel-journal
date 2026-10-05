@@ -575,6 +575,21 @@ V2_EXPECTED_STATUS: dict[tuple[str, str], dict[str, HTTPStatus] | None] = {
     },
 }
 
+# The member list (t-am-trip-leadership) is not a public read: only an active
+# member gets it, and then it carries user ids by design (`MemberOut.userId`).
+# So a non-member's answer is its gate's refusal, and a rider's 200 is searched
+# for everything except user ids. Planned here so the equality check still holds.
+V2_MEMBER_READS = {
+    ("GET", "/api/v2/trips/{tripId}/members"),
+    ("HEAD", "/api/v2/trips/{tripId}/members"),
+}
+V2_MEMBER_READ_STATUS = {
+    ("anonymous", "public"): HTTPStatus.UNAUTHORIZED,
+    ("anonymous", "private"): HTTPStatus.UNAUTHORIZED,
+    ("non_member", "public"): HTTPStatus.FORBIDDEN,
+    ("non_member", "private"): HTTPStatus.NOT_FOUND,
+}
+
 V2_ROUTES = sorted(
     {
         (method, route.path)
@@ -678,9 +693,10 @@ def test_the_v2_leak_check_catches_each_kind_of_leak() -> None:
 def test_every_v2_read_has_a_plan() -> None:
     """``V2_EXPECTED_STATUS`` and the live v2 GET/HEAD routes are the same set."""
     assert V2_ROUTES, "route enumeration found no /api/v2/trips reads — the walk is broken"
-    assert set(V2_ROUTES) == set(V2_EXPECTED_STATUS), (
-        f"registered but unplanned: {sorted(set(V2_ROUTES) - set(V2_EXPECTED_STATUS))}; "
-        f"planned but not registered: {sorted(set(V2_EXPECTED_STATUS) - set(V2_ROUTES))}"
+    planned = set(V2_EXPECTED_STATUS) | V2_MEMBER_READS
+    assert set(V2_ROUTES) == planned, (
+        f"registered but unplanned: {sorted(set(V2_ROUTES) - planned)}; "
+        f"planned but not registered: {sorted(planned - set(V2_ROUTES))}"
     )
 
 
@@ -715,9 +731,12 @@ async def test_no_identity_or_slug_comes_back_from_a_v2_read(
 
     response = await client.request(method, url, headers=headers)
 
-    plan = V2_EXPECTED_STATUS[method, path]
-    if plan is None or identity == "rider":
+    member_read = (method, path) in V2_MEMBER_READS
+    plan = None if member_read else V2_EXPECTED_STATUS[method, path]
+    if identity == "rider" or (plan is None and not member_read):
         expected = HTTPStatus.OK
+    elif member_read:
+        expected = V2_MEMBER_READ_STATUS[identity, visibility]
     else:
         expected = plan[visibility]
     assert response.status_code == expected, (
@@ -744,7 +763,13 @@ async def test_no_identity_or_slug_comes_back_from_a_v2_read(
             "viewer slug": trip.viewer_slug,
             "another trip's rider slug": other.rider_slug,
             "another trip's viewer slug": other.viewer_slug,
-            **{f"{name}'s user id": a.user_id for name, a in accounts.items()},
+            # A member list hands an active member the members' user ids by
+            # design; a non-member's id must still never appear in it.
+            **{
+                f"{name}'s user id": a.user_id
+                for name, a in accounts.items()
+                if not (member_read and identity == "rider" and name == "rider")
+            },
             **{f"{name}'s username": usernames[a.user_id] for name, a in accounts.items()},
             "the string email": "email",
         },
