@@ -14,8 +14,17 @@
  *   the BroadcastChannel `auth` clears it, and the usual triggers still try;
  * - `RATE_LIMITED` counts the attempt and retries after the response's
  *   `Retry-After` seconds, without advancing the doubling backoff;
- * - anything else counts an attempt and stops the drain, which resumes on the
- *   next trigger or after a 5s → 300s doubling backoff.
+ * - anything else counts an attempt and stops the drain, which resumes after a
+ *   5s → 300s doubling backoff.
+ *
+ * Waits: an entry that just failed retryably is "waiting" until its own timer
+ * (Retry-After or backoff) fires; a drain that reaches a waiting entry stops
+ * there without sending it. `enqueue`, a cross-tab `enqueued`, a sign-in and a
+ * drain's own re-loop all respect every wait. `online` and the tab becoming
+ * visible are fresh connectivity signals and an explicit `drain()` call is a
+ * "try now": they end backoff waits (`online` also resets the doubling) but
+ * never a server-ordered Retry-After. Waits are
+ * per tab and in memory, so a reload or another tab doesn't see them.
  *
  * Several tabs share the one store. Where the Web Locks API exists only the tab
  * holding the `btj-queue-drain` lock drains, so two tabs never send the same
@@ -299,15 +308,43 @@ let queryClient: QueryClient | undefined
 let running: Promise<void> | undefined
 let again = false
 let failures = 0
-let timer: ReturnType<typeof setTimeout> | undefined
+/** Entries (by key) not to be sent before their timer fires; see "Waits" in the module comment. */
+type Wait = { kind: 'retryAfter' | 'backoff'; timer: ReturnType<typeof setTimeout> }
+const waits = new Map<number, Wait>()
+
+/** `key` is not sent again until `ms` from now; the timer then ends the wait and drains. */
+function wait(key: number, kind: Wait['kind'], ms: number): void {
+  clearTimeout(waits.get(key)?.timer)
+  const timer = setTimeout(() => {
+    if (waits.get(key)?.timer === timer) waits.delete(key)
+    trigger()
+  }, ms)
+  waits.set(key, { kind, timer })
+}
+
+/** Ends every backoff wait now (a connectivity signal); Retry-After waits stay. */
+function endBackoffWaits(): void {
+  for (const [key, w] of waits) {
+    if (w.kind !== 'backoff') continue
+    clearTimeout(w.timer)
+    waits.delete(key)
+  }
+}
 
 /**
  * Sends pending entries in key order, one at a time. One drain per tab: a call
  * while one is running returns that drain, which then runs once more. Each pass
  * takes the cross-tab lock; a pass that can't get it is skipped, since the tab
- * holding it is draining the same store.
+ * holding it is draining the same store. An explicit call is a "try now": it
+ * ends backoff waits first, never a Retry-After wait.
  */
 export function drain(): Promise<void> {
+  endBackoffWaits()
+  return run()
+}
+
+/** The drain itself; automatic triggers call this and so respect every wait. */
+function run(): Promise<void> {
   if (running) {
     again = true
     return running
@@ -326,7 +363,7 @@ export function drain(): Promise<void> {
 }
 
 function trigger(): void {
-  drain().catch(console.error)
+  run().catch(console.error)
 }
 
 /**
@@ -380,6 +417,8 @@ async function drainOnce(): Promise<void> {
   for (const entry of await readAll()) {
     // Held entries are skipped untouched (not sent, not failed, attempts unchanged); later entries still go.
     if (entry.failed || isHeld(entry)) continue
+    // Not due yet: FIFO, so nothing behind it goes either; its own timer drains again.
+    if (waits.has(entry.key)) return
     try {
       await send(entry)
     } catch (err) {
@@ -387,7 +426,6 @@ async function drainOnce(): Promise<void> {
       if (code === 'UNAUTHENTICATED') {
         // Pause: the entry is untouched (not failed, attempt not counted) and no backoff is scheduled.
         setPaused(true)
-        clearTimeout(timer)
         await changed()
         return
       }
@@ -397,8 +435,7 @@ async function drainOnce(): Promise<void> {
         // The server's wait replaces the doubling backoff, which is left where it was.
         await putEntry({ ...entry, attempts, lastError: (err as ApiError).message })
         await changed()
-        clearTimeout(timer)
-        timer = setTimeout(trigger, retryAfter * 1000)
+        wait(entry.key, 'retryAfter', retryAfter * 1000)
         return
       }
       if (isNeverRetry(err)) {
@@ -417,8 +454,7 @@ async function drainOnce(): Promise<void> {
       await putEntry({ ...entry, attempts, lastError: err instanceof Error ? err.message : String(err) })
       await changed()
       failures++
-      clearTimeout(timer)
-      timer = setTimeout(trigger, Math.min(BACKOFF_START_MS * 2 ** (failures - 1), BACKOFF_CAP_MS))
+      wait(entry.key, 'backoff', Math.min(BACKOFF_START_MS * 2 ** (failures - 1), BACKOFF_CAP_MS))
       return
     }
     failures = 0
@@ -452,12 +488,14 @@ export function startQueue(client: QueryClient): void {
     }
   }
   window.addEventListener('online', () => {
-    clearTimeout(timer)
+    endBackoffWaits()
     failures = 0
     trigger()
   })
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') trigger()
+    if (document.visibilityState !== 'visible') return
+    endBackoffWaits()
+    trigger()
   })
   trigger()
 }

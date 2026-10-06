@@ -1,11 +1,13 @@
 import { useCallback } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useGetMapApiV2TripsTripIdMapGet } from "../api/gen/hooks/useGetMapApiV2TripsTripIdMapGet";
 import { useGetTripApiV2TripsTripIdGet } from "../api/gen/hooks/useGetTripApiV2TripsTripIdGet";
 import { useListStopsApiV2TripsTripIdStopsGet } from "../api/gen/hooks/useListStopsApiV2TripsTripIdStopsGet";
+import { BottomActionBar } from "../components/BottomActionBar";
 import { Timeline } from "../components/Timeline";
 import { TripMap } from "../components/TripMap";
-import { delayCaption } from "../tripV2";
+import { PlusIcon } from "../icons";
+import { delayCaption, viewerRole } from "../tripV2";
 
 // Design feature: the trip's journal at /trips/$tripId (trip-detail.md, Map tab
 // content plus the timeline and bikes on one page). Non-members of a public
@@ -16,9 +18,11 @@ import { delayCaption } from "../tripV2";
 // ("Loading stops…", the envelope message or "Couldn't load stops"), then
 // "Bikes": one card per bike sorted by rider name, "No bikes yet" when empty.
 // Pins and timeline rows open /trips/$tripId/stops/$stopId (the gallery).
-// Read-only for every role here: Add stop and bike editing arrive with their
-// own routes (t-am-fe-rider-add-stop, t-am-fe-bikes-v2) and must gate on
-// `viewer.role` rider or leader.
+// Riders and leaders (`viewerRole()` alone, never isMember / access: a
+// pre-extension cached trip has no role and gets no write UI) also get the
+// BottomActionBar with primary lg "Add stop" (plus) → /trips/$tripId/add; it
+// renders from the persisted record offline too, since add stop only writes to
+// the queue. Bike editing arrives with t-am-fe-bikes-v2 under the same gate.
 // APIs called: GET /api/v2/trips/{tripId}/map, GET /api/v2/trips/{tripId}/stops,
 // and GET /api/v2/trips/{tripId} read from the shell's cache (refetchOnMount:
 // false); bikes come from that TripOut, so they also render from the persisted
@@ -42,6 +46,7 @@ function TripHome() {
   if (!trip.data) return null;
   const caption = delayCaption(trip.data);
   const bikes = [...(trip.data.bikes ?? [])].sort((a, b) => a.riderName.localeCompare(b.riderName));
+  const role = viewerRole(trip.data);
 
   return (
     <main className="trip__panel">
@@ -72,6 +77,15 @@ function TripHome() {
             </li>
           ))}
         </ul>
+      )}
+
+      {(role === "rider" || role === "leader") && (
+        <BottomActionBar>
+          <Link to="/trips/$tripId/add" params={{ tripId }} className="btn btn--primary btn--lg">
+            <PlusIcon />
+            Add stop
+          </Link>
+        </BottomActionBar>
       )}
     </main>
   );

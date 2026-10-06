@@ -15,3 +15,56 @@
 .trip-map .leaflet-control-attribution {
   background: var(--color-map-attribution-bg);
 }
+
+/* Picker mode (add stop, DESIGN.md C15): 280 px (360 px from 768), radius/lg,
+   a grid background so a blank offline tile area still reads as a map, and a
+   fixed decorative crosshair at the centre. */
+.trip-map__picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.trip-map__frame {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  /* The crosshair stacks over the (already isolated) map, never over page bars. */
+  isolation: isolate;
+}
+
+.trip-map--picker {
+  height: 280px;
+  background-color: var(--color-map-empty);
+  background-image:
+    linear-gradient(var(--color-map-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--color-map-grid) 1px, transparent 1px);
+  background-size: var(--space-8) var(--space-8);
+}
+
+@media (min-width: 768px) {
+  .trip-map--picker {
+    height: 360px;
+  }
+}
+
+.trip-map__crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: var(--color-text-primary);
+  z-index: 1;
+}
+
+.trip-map__centre {
+  width: 100%;
+}
+
+.trip-map .trip-map__approx-pin {
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--color-map-pin-approx-fill);
+  border: 3px dashed var(--color-map-pin-approx-stroke);
+}
