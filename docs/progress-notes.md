@@ -2881,6 +2881,8 @@ DONE 2026-10-06. `components/MembersView.tsx` on `/trips/$tripId/members?view=me
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+DONE 2026-10-06. `/trips/$tripId/settings` (leader-only via `viewerRole()`; one form sending only changed fields, never null; name 1–100, delay integer 0–168; private → public shows the inline Publish warning; 200 updates and refetches the cached trip; 403 → no-longer-leader notice; 429 countdown) and a leader-only Settings link on the shell. Tests: tripSettings 23; frontend 580 + build. QA PASS. Simplifications filed under t-am-fe-ui-primitives.
+
 ## t-am-queue-classification
 **Goal.** The offline queue classifies the new 401 and 429 correctly and lets a rider rescue a failed photo (obligation 14, classification half; scrum change 19).
 **Blockers.** `t-am-contract-models` (the new codes) and `t-am-fe-auth-screens` (the `auth` broadcast). The former blocker on `t-am-member-revoke` was dropped, because the 403 classification doesn't change.
@@ -3166,4 +3168,4 @@ ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$t
 
 ## t-am-fe-ui-primitives
 
-ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders. Also no home-page notice after leaving a trip ("You left <trip>").
+ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders. Trip settings (dev on t-am-fe-trip-settings): one Save instead of per-field saves, no Make private ConfirmDialog, "Saved." instead of the designed toasts, no "What the public sees" card, no TopBar, delay chips not 48px. Also no home-page notice after leaving a trip ("You left <trip>").
