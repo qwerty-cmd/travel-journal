@@ -2692,6 +2692,8 @@ DONE 2026-10-06. `app/data/grant_leader.py`, `reset_account.py`, `revoke_member.
 
 **Added AC (from t-am-operator-clis QA, triggered debt promoted here).** `reset_account` without `--disable` on a disabled account prints a recovery code that can't be used (the account stays disabled; recover → 401). The runbook must say plainly that reset does not re-enable an account, and how to re-enable one (today: no CLI — say so, or file it).
 
+DONE 2026-10-06. Runbook §7a "Accounts and membership (Entry 29)": migration 0003 pointer, first leader (grant_leader after the owner signs up; seed `--leader-username` on a fresh DB), reset/disable/revoke invocations (owner-only, code printed once after commit, reset doesn't re-enable, no re-enable CLI), TRUSTED_PROXY_HOPS + Host-passthrough checks, and the security-degrading rollback warning (also pointed to from §8). Docs only. Debt: t-am-reenable-account (triggered).
+
 ## t-am-owner-deploy
 
 Blockers made explicit (orchestrator): every remaining implementation/doc task, not only the last in the chain — the deploy follows the runbook and user guide.
@@ -3099,3 +3101,7 @@ ORDINARY DEBT (QA on t-am-member-revoke). Dropping the `revoked_at IS NULL` filt
 ## t-am-cli-gaps
 
 ORDINARY DEBT (QA on t-am-operator-clis). (1) No test pins that DB-error output omits `str(exc)` — mutating `describe_db_error` to return `str(exc)` passes all tests and would print bound parameters. (2) An unreachable Postgres makes all three CLIs (and seed_trip) print a traceback: asyncpg's ConnectionRefusedError is an OSError, not caught. No secret appears in it.
+
+## t-am-reenable-account
+
+TRIGGERED DEBT (docs on t-am-runbook-accounts). `reset_account --disable` is one-way: there is no CLI to clear `disabled_at`, and a plain reset leaves the account disabled. Promotion trigger: the first time the owner needs to re-enable an account. Fix then: a `reset_account --enable` (or separate CLI) that clears `disabled_at` and issues a fresh code in one transaction.

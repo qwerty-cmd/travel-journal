@@ -342,11 +342,89 @@ checks pass. It never deploys: every step below stays manual. See `infra/azure/R
   go to family and friends. Tell iPhone riders to add the app to their home screen, paste the link
   there, and capture stops **from the installed app, not from Safari** (decision-log Entry 18).
 
+## 7a. Accounts and membership (Entry 29)
+
+Applies from the first deploy of the accounts milestone (`m5-accounts-membership`) onward. Every
+command here is **owner-only**: run it in your own shell with `DATABASE_URL` pointed at Neon, as in
+step 4. Agents never run these CLIs against production. Use real values only in your terminal; never
+paste a username, trip id or recovery code into an agent chat.
+
+### Migration 0003
+
+- [ ] `backend/migrations/0003_accounts_membership.sql` is applied by the ordinary migrate step in
+  step 6 ("Migrate Neon BEFORE any traffic moves"): `cd backend && uv run python -m app.data.migrate`.
+  It only adds and relaxes (decision-log Entry 29 §12), so the previous image keeps working while traffic
+  is still on it. Record in the handover that 0003 shows as applied.
+
+### Make the owner the trip's first leader
+
+Writes are authorised by an active `trip_members` row, not by the slug, so the trip needs
+a leader before anyone can manage it.
+
+- [ ] **The trip already exists (production today, step 4).** `seed_trip` refuses a second trip, so
+  don't re-seed. Sign up in the deployed app first, then grant yourself leadership:
+  `cd backend && uv run python -m app.data.grant_leader --trip-id <trip-id> --username <username>`
+  Read `<trip-id>` with `SELECT id, name FROM trips`. It is idempotent: a second run reports the
+  account "was already an active leader", and a rider is upgraded to leader.
+- [ ] **A fresh database whose owner already has an account.** Seed and grant in one transaction:
+  `cd backend && uv run python -m app.data.seed_trip --name "<trip name>" --start-date YYYY-MM-DD --leader-username <username>`
+  Without `--leader-username` no membership is created; use `grant_leader` afterwards as above.
+
+### Reset, disable, revoke
+
+- [ ] **Reset a rider who lost both password and recovery code:**
+  `cd backend && uv run python -m app.data.reset_account --username <username>`
+  This issues a new recovery code, signs the account out everywhere and clears any lockout. The code is
+  **printed once, after the commit**, to stdout only. Give it to the rider **out of band** (in person,
+  phone, a private message they own), never through an agent session or a shared channel. The rider
+  uses it at sign-in recovery. If stdout fails, the reset is still committed and the CLI says so; run
+  it again to issue another code.
+- [ ] **Disable an account:**
+  `cd backend && uv run python -m app.data.reset_account --username <username> --disable`
+  This signs it out everywhere and clears its lockout. No recovery code is issued.
+  - **Reset does not re-enable a disabled account.** Running `reset_account` without `--disable` on
+    a disabled account still prints a recovery code, but the account stays disabled and recovery
+    answers 401. That code is useless.
+  - **There is currently no CLI to re-enable an account.** Treat disabling as one-way until one exists.
+- [ ] **Remove someone from a trip (leaders included):**
+  `cd backend && uv run python -m app.data.revoke_member --trip-id <trip-id> --username <username>`
+  It refuses to remove the trip's last active leader; grant another leader first. A second run reports
+  "was already revoked". The account itself stays usable for other trips.
+
+### After deploy: `TRUSTED_PROXY_HOPS` and Host passthrough (`t-am-verify-aca-xff`)
+
+Rate limits are keyed by client IP, taken as the **right-most** `X-Forwarded-For` hop
+(`TRUSTED_PROXY_HOPS`, default `1`, on the premise that the Container Apps ingress appends exactly one
+hop). If that premise is wrong, one client can mint a fresh bucket per request by spoofing the header.
+
+- [ ] **You. Spoofed-XFF burst.** From one network, send 121 requests to a public-read endpoint (120 per
+  minute per IP) with a spoofed header, within a minute:
+  `for i in $(seq 121); do curl -s -o /dev/null -w "%{http_code}\n" -H "X-Forwarded-For: 1.2.3.4" https://<app-host>/api/v2/trips; done | sort | uniq -c`
+  Expected: 120 x `200` and 1 x `429`. Then, inside the same minute, from a **second network** (for
+  example a phone hotspot) send the same spoofed request. Expected: `200`, which shows the bucket follows
+  the real client IP, not the spoofed value. Record both results in the handover.
+- [ ] If the first network never gets a `429`, or the second network gets one, the ingress appends a
+  different number of hops. `TRUSTED_PROXY_HOPS` then has to change in the Container App env, which is
+  `infra/` and needs your explicit approval.
+- [ ] **You. Host passthrough.** The CSRF check compares `Origin` with `Host`, so the ingress must pass
+  the browser's original `Host` through unchanged. Sign in (or sign up) in a real browser on the
+  deployed URL. Expected: it succeeds. A `403` on every same-origin write means the Host is being
+  rewritten. That fails closed (nothing is bypassed), but nobody can write until it is fixed.
+
+### Rolling back past Entry 29 is security-degrading
+
+> **Warning.** Rolling the image back to a build from before Entry 29 restores **slug-bearer writes**:
+> anyone holding a rider link can write again, without an account or membership. No schema rollback is
+> needed (0003 only adds and relaxes, and the old image works against it), and legacy trips keep their
+> slugs, but trips created after the cutover (NULL slugs) become unreachable. It is reversible but
+> **security-degrading**. Treat it as a last resort, and roll forward again as soon as you can.
+
 ## 8. Rollback
 
 - [ ] **devops, after your confirmation.** Send traffic back to the last known-good revision with
   `az containerapp ingress traffic set ... --revision-weight <good-revision>=100`, or reactivate that
-  revision. Don't rebuild forward under pressure.
+  revision. Don't rebuild forward under pressure. **If the good revision predates Entry 29, this
+  rollback is security-degrading**: read the warning at the end of step 7a first.
 - [ ] **After any template change, deactivate the revisions it superseded — but keep one.** In
   multiple-revision mode a superseded revision **stays active until you deactivate it**; moving traffic
   off it is not enough. Each active revision keeps a replica running, and each replica opens its own Neon
