@@ -2911,6 +2911,8 @@ DONE 2026-10-06. `offline/queue.ts`: 401 → pause (entry untouched, no attempt,
 - Restart persistence: the hold survives a reload.
 **Validation.** `cd frontend && npm test && npm run build`
 
+DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside the payload, never sent); `isHeld()` re-reads `btj.me` per entry — another account or signed out → held (not sent, not failed, no attempt), counted in a separate notice line that never names the account; entries without userId send as before; `{tripId}` payloads route to the v2 clients, slug payloads to legacy; signin releases, signout holds. `enqueue` overloads require a userId for v2 items at compile time. IDB schema unchanged. Tests: queueUserId 21; frontend 613 + build. QA PASS, 4/4 mutants. Debt: t-am-queue-userid-gaps.
+
 ## t-am-fe-rider-add-stop
 **Goal.** Part (a) of scrum change 21: the rider home and add stop on v2.
 **Blockers.** `t-am-queue-userid` and `t-am-fe-discover-trip-detail`. The former blocker on `t-am-fe-leader-review` was unnecessary.
@@ -3177,3 +3179,7 @@ ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pi
 ## t-am-queue-classification-gaps
 
 ORDINARY DEBT (dev + QA on t-am-queue-classification). (1) Retry-After isn't bounded: 0 retries at once and > ~2,147,483 s overflows setTimeout and fires at once (backend never sends either). (2) The pause flag is cleared only by a 2xx or a signin message; if paused entries later fail for another reason the notice says "Sign in to send…" until a send succeeds. (3) The download filename is `${stopName} ${id}.jpg` from rider text (browsers sanitise it). (4) `offline/README.md` still lists only the five never-retry codes; `btj.queue.paused` bypasses `localStore.ts`.
+
+## t-am-queue-userid-gaps
+
+ORDINARY DEBT (dev + QA on t-am-queue-userid). (1) `useMe()` clears `btj.me` on a 401 without broadcasting or a queue emit, so QueueNotice keeps listing the user's own entries as waiting until the next emit (sending is still correctly blocked). (2) The queue has no bike kind; v2 bike create/patch aren't routed through it (no caller queues bikes today).
