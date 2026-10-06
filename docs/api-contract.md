@@ -512,7 +512,7 @@ Every `GET` also answers `HEAD` through a second, schema-excluded registration o
 - Not yours, or no such request → `404`.
 - You may request again immediately.
 
-**Me / join-requests** lists your requests, newest first, at most 100. The fields are `tripName`, `state` and `message`. `blocked` is reported to the requester as `rejected`.
+**Me / join-requests** lists your requests, newest first, at most 100. The fields are `tripName`, `state` and `message`. `blocked` is reported to the requester as `rejected`. `tripName` is the trip's *current* name, renames included, even for a private trip reached by claim: accepted (`t-am-legacy-claim` ruling), since the claimant's rider link already gave full, undelayed reads of that trip, trip names aren't on the "never to a non-member" list, and freezing the name would need a migration for marginal privacy gain.
 
 **Trip join-requests (leader)**
 - Shows `requester: {userId, displayName}`, never a username, plus `message` and `via` (`direct` or `legacy_rider_link`).

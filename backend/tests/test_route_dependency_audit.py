@@ -231,6 +231,10 @@ ANONYMOUS_BY_DESIGN = {
 #   cancel_join_request  — POST /api/v2/join-requests/{requestId}/cancel. Located by
 #                          request id, and only the caller's own (contract, "The
 #                          gates": `require_session` for cancel).
+#   claim_trip           — POST /api/v2/trips/claim. Locates its trip by a legacy
+#                          rider slug in the body, which grants nothing; the result
+#                          is the caller's own pending request (contract, "The
+#                          gates": `require_session` for claim; "Claim").
 ACCOUNT_SCOPED = {
     "get_me",
     "signout_all",
@@ -240,6 +244,7 @@ ACCOUNT_SCOPED = {
     "create_trip",
     "list_my_join_requests",
     "cancel_join_request",
+    "claim_trip",
 }
 
 

@@ -236,10 +236,19 @@ async def _refusal(
 
 
 async def create(
-    session: AsyncSession, *, trip_id: str, user_id: str, message: str | None, now: datetime
+    session: AsyncSession,
+    *,
+    trip_id: str,
+    user_id: str,
+    message: str | None,
+    now: datetime,
+    via: str = "direct",
 ) -> CreateResult:
     """
-    Make a pending ``direct`` request for ``user_id`` on ``trip_id``, or say why not. Commits.
+    Make a pending request for ``user_id`` on ``trip_id``, or say why not. Commits.
+
+    ``via`` is how it was asked: ``'direct'`` by trip id, or ``'legacy_rider_link'``
+    from a claim. It is recorded only; every rule below applies to both alike.
 
     **Order.** Under the trip lock and then the user lock: an existing pending
     request first (``EXISTING``, its message unchanged), then the refusals in
@@ -270,7 +279,7 @@ async def create(
             trip_id=trip_id,
             user_id=user_id,
             state="pending",
-            via="direct",
+            via=via,
             message=message,
             created_at=now,
         )

@@ -12,7 +12,8 @@ The rules, from ``docs/api-contract.md`` "Rate limits and lockout":
 - signup: ``limit_signup`` (``signup-ip`` and ``signup-global``, one dependency);
 - signin, recover, password change, recovery-code rotation: ``limit_signin``;
 - ``POST /api/v2/trips``: ``limit_trip_create`` (``trip-create``);
-- ``POST /api/v2/trips/{tripId}/join-requests``: ``limit_join`` (``join``);
+- ``POST /api/v2/trips/{tripId}/join-requests`` and ``POST /api/v2/trips/claim``:
+  ``limit_join`` (``join``);
 - every other ``GET``/``HEAD``: ``limit_public_read``;
 - every other unsafe method: ``limit_writes``.
 
@@ -44,6 +45,7 @@ BY_NAME = {
     "rotate_recovery_code": limit_signin,
     "create_trip": limit_trip_create,
     "create_join_request": limit_join,
+    "claim_trip": limit_join,
 }
 READ_METHODS = {"GET", "HEAD"}
 

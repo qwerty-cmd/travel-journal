@@ -14,11 +14,14 @@ join-requests (leader)", "Decision", "Unblock"; task ``t-am-join-leader``).
   so a private trip the caller isn't active on is the byte-identical ``404``
   and can't be joined by id. Cancel and the list are about the caller's own
   requests, so they declare ``require_session`` only; someone else's request
-  is the same ``404`` as an unknown id. The leader list, decision and unblock
+  is the same ``404`` as an unknown id. ``POST /api/v2/trips/claim`` (task
+  ``t-am-legacy-claim``) declares ``require_session`` too: it names its trip
+  by a legacy rider slug in the body, which locates the trip and grants
+  nothing. The leader list, decision and unblock
   declare ``require_trip_leader``; a request id on another trip is the same
   ``404`` as an unknown one.
-- **Rate limits**, each declared first: ``join`` on the create, ``writes`` on
-  cancel, decision and unblock, ``public-read`` on the two lists and their
+- **Rate limits**, each declared first: ``join`` on the create and the claim,
+  ``writes`` on cancel, decision and unblock, ``public-read`` on the two lists and their
   schema-excluded HEAD siblings.
 - **Rules under lock.** ``app/data/repositories/join_requests.py`` decides
   duplicates, blocks, cooldowns and caps under a lock on the trip row and the
@@ -52,6 +55,7 @@ from app.core.ratelimit import limit_join, limit_public_read, limit_writes
 from app.core.security import (
     NO_LONGER_A_RIDER_MESSAGE,
     NOT_A_LEADER_MESSAGE,
+    UNKNOWN_TRIP_MESSAGE,
     TripJoinRequesterContext,
     TripWriterContext,
     require_session,
@@ -61,15 +65,18 @@ from app.core.security import (
 from app.core.sessions import SessionUser
 from app.data.db import SessionDep
 from app.data.repositories import join_requests as join_repo
+from app.data.repositories import trips as trips_repo
 from app.data.repositories.join_requests import (
     CancelOutcome,
     CreateOutcome,
+    CreateResult,
     JoinRequestRecord,
     LeaderOutcome,
     LeaderResult,
     TripJoinRequestRecord,
 )
 from app.models.join_request import (
+    JoinClaimCreate,
     JoinDecisionCreate,
     JoinRequestCreate,
     JoinRequestState,
@@ -80,6 +87,10 @@ from app.models.join_request import (
 )
 
 router = APIRouter(tags=["join-requests"])
+# `POST /trips/claim` alone. A router of its own so `v2/__init__.py` can include it
+# before every `/trips/{tripId}` route (contract: "`/claim` is registered before the
+# `{tripId}` routes").
+claim_router = APIRouter(tags=["join-requests"])
 
 # The 409 messages (contract, "Join request create"; DESIGN.md X5: dev words them).
 ALREADY_A_MEMBER_MESSAGE = "You're already on this trip."
@@ -134,6 +145,15 @@ def _out(record: JoinRequestRecord) -> MyJoinRequestOut:
         message=record.message,
         createdAt=record.created_at,
     )
+
+
+def _refuse_or_return(result: CreateResult, response: Response) -> MyJoinRequestOut:
+    """Map a create outcome to the answer: 409 for a refusal, 200 for one already pending."""
+    if result.outcome in _REFUSALS:
+        raise ApiError.conflict(_REFUSALS[result.outcome])
+    if result.outcome is CreateOutcome.EXISTING:
+        response.status_code = HTTPStatus.OK
+    return _out(result.request)
 
 
 # --------------------------------------------------------------------------
@@ -211,11 +231,89 @@ async def create_join_request(
         message=body.message,
         now=_utcnow(),
     )
-    if result.outcome in _REFUSALS:
-        raise ApiError.conflict(_REFUSALS[result.outcome])
-    if result.outcome is CreateOutcome.EXISTING:
-        response.status_code = HTTPStatus.OK
-    return _out(result.request)
+    return _refuse_or_return(result, response)
+
+
+# --------------------------------------------------------------------------
+# Claim: `require_session`, `join` (on `claim_router`, registered first)
+# --------------------------------------------------------------------------
+
+
+@claim_router.post(
+    "/trips/claim",
+    dependencies=[Depends(limit_join)],
+    status_code=HTTPStatus.CREATED,
+    summary="Ask to join a trip with a legacy rider link",
+    response_description="The new pending request (201).",
+    responses={
+        HTTPStatus.OK: {
+            "model": MyJoinRequestOut,
+            "description": "**Not a second request.** The caller already has a pending "
+            "request on this link's trip, so nothing was created and that request is returned "
+            "unchanged.",
+        },
+        **error_responses(
+            {
+                HTTPStatus.UNAUTHORIZED: SESSION_401 + " Checked **before** the slug is looked "
+                "up, so the answer says nothing about it. Nothing was written.",
+                HTTPStatus.NOT_FOUND: "`riderSlug` is no trip's rider slug: unknown, or a "
+                "viewer slug. The two are byte-identical, and the message is the one an unknown "
+                "legacy link gets. Nothing was written.",
+                HTTPStatus.CONFLICT: "The caller may not ask to join this trip now, for the "
+                "same reasons as `POST /api/v2/trips/{tripId}/join-requests`: already an active "
+                "member, blocked, rejected or removed by someone else less than 7 days ago, 20 "
+                "pending requests of theirs, or 100 on the trip. Nothing was written. "
+                "Never-retry.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed validation: `riderSlug` is "
+                "missing or not a string.",
+                HTTPStatus.TOO_MANY_REQUESTS: "The `join` limit, shared with "
+                "`POST /api/v2/trips/{tripId}/join-requests`: 10 requests an hour per account, "
+                "or per client address for a request with no session. Checked before the "
+                "session and the slug, so nothing was written. Retry after `Retry-After` "
+                "seconds.",
+            }
+        ),
+    },
+    description="""
+**Context.** How someone holding an old rider link asks to ride on the trip it
+points at (decision-log Entry 29). A legacy slug is a locator, never a
+credential: the link becomes a **pending** join request, never membership. It is
+also the only way to ask to join a private trip.
+
+**How it works.** `limit_join` runs first (10 an hour per account), then
+`require_session` (401). `riderSlug` must be the trip's rider slug; a viewer
+slug or an unknown one is the same `404` an unknown legacy link gets. Then the
+rules of `POST /api/v2/trips/{tripId}/join-requests` apply unchanged, under the
+same lock on the trip and then the caller's account: a pending request already
+there is `200`, unchanged; a refusal is `409`; otherwise a pending request with
+`via` `legacy_rider_link` and no message is stored and returned with `201`. The
+slug travels in the body, is never logged and is never echoed back.
+
+**Related APIs.** `GET /api/v2/me/join-requests` lists the caller's requests;
+`POST /api/v2/join-requests/{requestId}/cancel` withdraws one; a leader decides
+it through `POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision`.
+""",
+)
+async def claim_trip(
+    user: Annotated[SessionUser, Depends(require_session)],
+    session: SessionDep,
+    body: JoinClaimCreate,
+    response: Response,
+) -> MyJoinRequestOut:
+    """Turn a legacy rider slug into the caller's pending request on its trip."""
+    trip = await trips_repo.get_by_slug(session, body.riderSlug)
+    # Rider slug only: a viewer slug is the same 404 as no trip at all.
+    if trip is None or trip.rider_slug != body.riderSlug:
+        raise ApiError.not_found(UNKNOWN_TRIP_MESSAGE)
+    result = await join_repo.create(
+        session,
+        trip_id=trip.id,
+        user_id=user.user_id,
+        message=None,
+        now=_utcnow(),
+        via=JoinRequestVia.LEGACY_RIDER_LINK.value,
+    )
+    return _refuse_or_return(result, response)
 
 
 # --------------------------------------------------------------------------

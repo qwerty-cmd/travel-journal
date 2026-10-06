@@ -1348,6 +1348,107 @@
         }
       }
     },
+    "/api/v2/trips/claim": {
+      "post": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "Ask to join a trip with a legacy rider link",
+        "description": "**Context.** How someone holding an old rider link asks to ride on the trip it\npoints at (decision-log Entry 29). A legacy slug is a locator, never a\ncredential: the link becomes a **pending** join request, never membership. It is\nalso the only way to ask to join a private trip.\n\n**How it works.** `limit_join` runs first (10 an hour per account), then\n`require_session` (401). `riderSlug` must be the trip's rider slug; a viewer\nslug or an unknown one is the same `404` an unknown legacy link gets. Then the\nrules of `POST /api/v2/trips/{tripId}/join-requests` apply unchanged, under the\nsame lock on the trip and then the caller's account: a pending request already\nthere is `200`, unchanged; a refusal is `409`; otherwise a pending request with\n`via` `legacy_rider_link` and no message is stored and returned with `201`. The\nslug travels in the body, is never logged and is never echoed back.\n\n**Related APIs.** `GET /api/v2/me/join-requests` lists the caller's requests;\n`POST /api/v2/join-requests/{requestId}/cancel` withdraws one; a leader decides\nit through `POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision`.",
+        "operationId": "claim_trip_api_v2_trips_claim_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinClaimCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new pending request (201).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**Not a second request.** The caller already has a pending request on this link's trip, so nothing was created and that request is returned unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Checked **before** the slug is looked up, so the answer says nothing about it. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`riderSlug` is no trip's rider slug: unknown, or a viewer slug. The two are byte-identical, and the message is the one an unknown legacy link gets. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller may not ask to join this trip now, for the same reasons as `POST /api/v2/trips/{tripId}/join-requests`: already an active member, blocked, rejected or removed by someone else less than 7 days ago, 20 pending requests of theirs, or 100 on the trip. Nothing was written. Never-retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed validation: `riderSlug` is missing or not a string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `join` limit, shared with `POST /api/v2/trips/{tripId}/join-requests`: 10 requests an hour per account, or per client address for a request with no session. Checked before the session and the slug, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v2/trips": {
       "get": {
         "tags": [
@@ -3951,6 +4052,21 @@
           "error"
         ],
         "title": "ErrorEnvelope"
+      },
+      "JoinClaimCreate": {
+        "properties": {
+          "riderSlug": {
+            "type": "string",
+            "title": "Riderslug",
+            "description": "A legacy rider link's slug. Redeeming it creates a **pending** join request on that trip and never grants membership. A viewer slug or an unknown slug is a 404. Never logged and never echoed back."
+          }
+        },
+        "type": "object",
+        "required": [
+          "riderSlug"
+        ],
+        "title": "JoinClaimCreate",
+        "description": "POST /api/v2/trips/claim body. The slug travels in the body, never the URL."
       },
       "JoinDecisionAction": {
         "type": "string",

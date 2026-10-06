@@ -12,6 +12,8 @@ from app.api.routes.v2 import auth, join_requests, me, members, rider_writes, tr
 v2_router = APIRouter(prefix="/v2")
 v2_router.include_router(auth.router)
 v2_router.include_router(me.router)
+# Before trips.router: `/trips/claim` must never be matched as a `{tripId}`.
+v2_router.include_router(join_requests.claim_router)
 v2_router.include_router(trips.router)
 v2_router.include_router(rider_writes.router)
 v2_router.include_router(rider_writes.photo_router)
