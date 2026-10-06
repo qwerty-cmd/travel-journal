@@ -2953,6 +2953,8 @@ DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside
 - The `/t/$slug` screens use DESIGN.md tokens.
 **Validation.** `cd frontend && npm test && npm run build`
 
+**DONE.** `/t/$slug` is read-only: no Add stop, Add bike or Edit bike for any legacy `access` or `viewer.role`; `/t/$slug/add` redirects members to `/trips/$tripId/add` and everyone else to `/t/$slug`. New `LegacyNotice` ("This is an old trip link") by `viewer.role`: signed-out copy with Sign in / Create an account, members get "Open trip"; none/pending keep join-flow's `LegacyJoinPanel`. Display-name prompt removed. Legacy routes restyled with tokens (`t.$slug.css`, bikes reuse `trips.$tripId.bikes.css`). Queue untouched; legacy drain covered by `offline/queueUserId.test.tsx`. Tests: `legacyReadonly.test.tsx` (20); legacy add-form and bike-write tests removed with their UI; frontend 621. QA passed. Debt: `t-am-fe-legacy-readonly-gaps`.
+
 ## t-am-user-guide
 **AC.** `docs/user-guide.md` explains, for friends rather than developers:
 - signup and keeping the recovery code;
