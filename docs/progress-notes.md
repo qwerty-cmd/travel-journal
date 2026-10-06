@@ -3249,8 +3249,10 @@ Scope: infra/azure/app.yaml only.
 AC: no `secrets:` key; env entries use `secretRef` only, names match .env.example (kebab-case secret names); registries block uses passwordSecretRef naming the owner-set secret, no value; probes, ingress (external, https-only), scale min 0 max 1, `activeRevisionsMode: Multiple`; image and revisionSuffix are explicit placeholders (`${IMAGE}`, `${REVISION_SUFFIX}`) for the workflow to substitute; no GRAPH_* anywhere.
 Validation: [V-common]; `! grep -n GRAPH_ infra/azure/app.yaml`. Owner step, in the PR description: diff against `az containerapp show -o yaml`, verify that `update --yaml` keeps the registry credential.
 
-[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github`. If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
+[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github | grep -v '\${{'` (a `${{ secrets.X }}` expression is a reference, not a value). actionlint and shellcheck are run from the orchestrator's scratchpad (not project dependencies). If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
 
+
+**DONE.** `infra/azure/app.yaml`: ingress external :8000 https-only, Multiple revisions, scale 0..1, Startup + Liveness probes on `/api/health` (from the README PATCH script), five secretRef env vars plus `S3_REGION=auto`, `ENVIRONMENT=production`, `TRUSTED_PROXY_HOPS="1"`; registry ghcr.io with `passwordSecretRef: ghcr-read-packages`. Placeholders `${IMAGE}`, `${REVISION_SUFFIX}`, `${APP_CONTAINER_NAME}`, `${GHCR_USERNAME}` for an explicit-list envsubst. No `secrets:` key, no GRAPH_*. **Owner to confirm against `az containerapp show -o yaml`:** transport `auto`, resources 0.5 CPU / 1Gi (CLI defaults; the create command set none), `ENVIRONMENT` value, container name, and the PAT secret name.
 ## t-iac-migrate-job-yaml
 
 Goal: manual-trigger Job spec that runs migrations on the same image.
