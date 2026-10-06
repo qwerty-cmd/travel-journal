@@ -67,6 +67,11 @@ function TripShell() {
             Requests
           </Link>
         )}
+        {role === "leader" && (
+          <Link to="/trips/$tripId/settings" params={{ tripId }} className="btn btn--secondary btn--md trip__leader-link">
+            Settings
+          </Link>
+        )}
         {role === "rider" && (
           <Link to="/trips/$tripId/members" params={{ tripId }} search={{ view: "members" }} className="btn btn--secondary btn--md trip__leader-link">
             Members
