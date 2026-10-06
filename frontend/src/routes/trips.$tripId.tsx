@@ -26,6 +26,7 @@ import "./trips.$tripId.css";
 //   - otherwise: header skeleton (+ "Waking up the server…" after 3 s).
 //     Under the header, a leader-only "Requests" link (gated on viewerRole() alone) to
 //     /trips/$tripId/members, then JoinRequestPanel (join flow, gated on viewerRole() alone).
+// A "Bikes" link (everyone who can read the trip) leads to /trips/$tripId/bikes.
 // APIs called: GET /api/v2/trips/{tripId} via useTripV2 (src/tripV2.ts), seeded
 // from the per-trip-id persisted TripOut; GET /api/v2/auth/me (useMe) for the
 // 404 copy only. Child routes read the same cache entry with refetchOnMount: false.
@@ -77,6 +78,9 @@ function TripShell() {
             Members
           </Link>
         )}
+        <Link to="/trips/$tripId/bikes" params={{ tripId }} className="btn btn--secondary btn--md trip__leader-link">
+          Bikes
+        </Link>
         <JoinRequestPanel tripId={tripId} role={role} />
         <Outlet />
       </div>
