@@ -5,7 +5,9 @@
  * exception the UI has to handle.
  *
  * APIs called: none. Stores the last fetched TripOut per slug (written by
- * useTrip after a real GET /api/trips/{slug} response), and `btj.me`: the
+ * useTrip after a real GET /api/trips/{slug} response), the last fetched TripOut
+ * per trip id (written by useTripV2 after a real GET /api/v2/trips/{tripId}
+ * response), and `btj.me`: the
  * signed-in account's `{id, displayName}` from GET /api/v2/auth/me, for offline
  * cold opens. Never the username (private), the recovery code or any password.
  */
@@ -57,6 +59,28 @@ export function loadTrip(slug: string): TripOut | undefined {
 
 export const saveTrip = (slug: string, trip: TripOut) => write(tripKey(slug), JSON.stringify(trip))
 export const clearTrip = (slug: string) => remove(tripKey(slug))
+
+/**
+ * The v2 trip record, keyed by trip id (`/trips/$tripId`, Entry 19 pattern),
+ * kept apart from the slug-keyed legacy record so the two never overwrite each
+ * other. A record may predate the TripOut extension and lack `viewer` and
+ * `visibility`; readers go through `src/tripV2.ts`, which treats them as absent.
+ */
+export const tripByIdKey = (tripId: string) => `btj.tripById.${tripId}`
+
+export function loadTripById(tripId: string): TripOut | undefined {
+  const raw = read(tripByIdKey(tripId))
+  if (raw === null) return undefined
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as TripOut) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export const saveTripById = (tripId: string, trip: TripOut) => write(tripByIdKey(tripId), JSON.stringify(trip))
+export const clearTripById = (tripId: string) => remove(tripByIdKey(tripId))
 
 export const getDisplayName = () => read(DISPLAY_NAME_KEY) || null
 export const setDisplayName = (name: string) => write(DISPLAY_NAME_KEY, name)

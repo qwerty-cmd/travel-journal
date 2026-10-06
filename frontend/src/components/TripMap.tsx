@@ -34,16 +34,19 @@ function popupFor({ name, arrivedAt }: StopFeatureProperties) {
  * `GET /api/trips/{slug}/map`. GeoJSON is [lng, lat]; L.geoJSON converts it,
  * so coordinates are never swapped by hand. `collection` undefined (still
  * loading) or empty shows Australia. Clicking a pin opens that stop's detail
- * screen, matched on the GeoJSON Feature.id (the stop id). `onMapClick`, when
+ * screen, matched on the GeoJSON Feature.id (the stop id): `onOpenStop` when
+ * given (used by /trips/$tripId), else /t/$slug/stops/$stopId. `onMapClick`, when
  * given, receives each tap's position (longitude wrapped into -180..180), used
  * by the add-stop form's manual-location fallback.
  */
 export function TripMap({
   collection,
   onMapClick,
+  onOpenStop,
 }: {
   collection?: MapFeatureCollection;
   onMapClick?: (lat: number, lng: number) => void;
+  onOpenStop?: (stopId: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
@@ -70,7 +73,11 @@ export function TripMap({
         if (feature.geometry.type !== "Point") return;
         l.bindPopup(popupFor(feature.properties));
         const stopId = String(feature.id);
-        l.on("click", () => navigate({ from: "/t/$slug", to: "/t/$slug/stops/$stopId", params: (p) => ({ ...p, stopId }) }));
+        l.on("click", () =>
+          onOpenStop
+            ? onOpenStop(stopId)
+            : navigate({ from: "/t/$slug", to: "/t/$slug/stops/$stopId", params: (p) => ({ ...p, stopId }) }),
+        );
       },
     }).addTo(map);
     if (collection.features.length) map.fitBounds(layer.getBounds(), { maxZoom: 12 });
@@ -78,7 +85,7 @@ export function TripMap({
     return () => {
       layer.remove();
     };
-  }, [collection, navigate]);
+  }, [collection, navigate, onOpenStop]);
 
   useEffect(() => {
     const map = mapRef.current;

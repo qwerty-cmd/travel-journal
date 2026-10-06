@@ -1,0 +1,53 @@
+/* Card/trip (DESIGN.md §5.5). Tokens only. */
+.trip-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: var(--size-target-min);
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-card);
+  box-shadow: var(--elevation-1);
+}
+
+.trip-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.trip-card__name {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.trip-card__link {
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+
+/* Stretched link: the whole card is the link's hit area. */
+.trip-card__link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+
+.trip-card__link:focus-visible {
+  outline: none;
+}
+
+.trip-card__link:focus-visible::after {
+  outline: var(--size-focus-width) solid var(--color-focus-ring);
+  outline-offset: var(--size-focus-offset);
+}
+
+.trip-card__meta {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}

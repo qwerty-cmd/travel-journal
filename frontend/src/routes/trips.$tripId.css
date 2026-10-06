@@ -1,0 +1,145 @@
+/* Trip detail (docs/design/screens/trip-detail.md). Tokens only. */
+.trip__topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-topbar);
+  padding: 0 var(--space-2);
+}
+
+.trip__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--size-target-min);
+  min-height: var(--size-target-min);
+  color: var(--color-text-primary);
+}
+
+.trip__topbar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-semibold);
+}
+
+.trip__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface-card);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.trip__name {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+  font-weight: var(--font-weight-bold);
+}
+
+.trip__meta,
+.trip__muted {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.trip__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.trip__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.trip__h2 {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.trip__map-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 50vh;
+  background: var(--color-map-empty);
+}
+
+.trip__bikes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.trip__bike {
+  padding: var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-card);
+  box-shadow: var(--elevation-1);
+}
+
+.trip__bike-rider {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.trip__bike-specs,
+.trip__notes {
+  white-space: pre-line;
+}
+
+.trip__skeleton {
+  height: var(--font-line-height-body);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+}
+
+.trip__skeleton--title {
+  height: var(--font-line-height-title);
+  width: 60%;
+}
+
+.trip__skeleton--map {
+  height: 50vh;
+}
+
+.trip__notfound {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-12) var(--space-4);
+  text-align: center;
+}
+
+.trip__notfound-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-sunken);
+}
+
+.trip__notfound-icon svg {
+  width: 48px;
+  height: 48px;
+}
+
+.trip__notfound-title {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}

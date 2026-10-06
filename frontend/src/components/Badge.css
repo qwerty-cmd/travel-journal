@@ -1,0 +1,39 @@
+/* Badge (DESIGN.md §5.9). Tokens only. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+
+.badge--public {
+  background: var(--color-brand-primary-subtle);
+  color: var(--color-brand-primary);
+}
+
+.badge--private,
+.badge--rider {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-primary);
+}
+
+.badge--pending {
+  background: var(--color-status-warning-subtle);
+  color: var(--color-status-warning-text);
+}
+
+.badge--leader {
+  background: var(--color-brand-primary);
+  color: var(--color-brand-on-primary);
+}
+
+.badge--legacy {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
