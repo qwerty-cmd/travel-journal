@@ -28,6 +28,7 @@ export type { PatchBikeApiV2TripsTripIdBikesBikeIdPatchMutationKey } from "./use
 export type { PatchTripApiV2TripsTripIdPatchMutationKey } from "./usePatchTripApiV2TripsTripIdPatch";
 export type { PromoteMemberApiV2TripsTripIdMembersUserIdPromotePostMutationKey } from "./usePromoteMemberApiV2TripsTripIdMembersUserIdPromotePost";
 export type { RecoverApiV2AuthRecoverPostMutationKey } from "./useRecoverApiV2AuthRecoverPost";
+export type { RevokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationKey } from "./useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export type { RotateRecoveryCodeApiV2AuthRecoveryCodePostMutationKey } from "./useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export type { SigninApiV2AuthSigninPostMutationKey } from "./useSigninApiV2AuthSigninPost";
 export type { SignoutAllApiV2AuthSignoutAllPostMutationKey } from "./useSignoutAllApiV2AuthSignoutAllPost";
@@ -127,6 +128,9 @@ export { usePromoteMemberApiV2TripsTripIdMembersUserIdPromotePost } from "./useP
 export { recoverApiV2AuthRecoverPostMutationKey } from "./useRecoverApiV2AuthRecoverPost";
 export { recoverApiV2AuthRecoverPostMutationOptions } from "./useRecoverApiV2AuthRecoverPost";
 export { useRecoverApiV2AuthRecoverPost } from "./useRecoverApiV2AuthRecoverPost";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationKey } from "./useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationOptions } from "./useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
+export { useRevokeMemberApiV2TripsTripIdMembersUserIdDelete } from "./useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePostMutationKey } from "./useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePostMutationOptions } from "./useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { useRotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./useRotateRecoveryCodeApiV2AuthRecoveryCodePost";

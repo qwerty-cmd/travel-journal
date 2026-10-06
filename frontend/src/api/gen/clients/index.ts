@@ -28,6 +28,7 @@ export { patchBikeApiV2TripsTripIdBikesBikeIdPatch } from "./patchBikeApiV2Trips
 export { patchTripApiV2TripsTripIdPatch } from "./patchTripApiV2TripsTripIdPatch";
 export { promoteMemberApiV2TripsTripIdMembersUserIdPromotePost } from "./promoteMemberApiV2TripsTripIdMembersUserIdPromotePost";
 export { recoverApiV2AuthRecoverPost } from "./recoverApiV2AuthRecoverPost";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDelete } from "./revokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./rotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { signinApiV2AuthSigninPost } from "./signinApiV2AuthSigninPost";
 export { signoutAllApiV2AuthSignoutAllPost } from "./signoutAllApiV2AuthSignoutAllPost";

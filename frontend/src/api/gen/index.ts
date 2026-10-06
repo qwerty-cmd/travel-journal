@@ -28,6 +28,7 @@ export type { PatchBikeApiV2TripsTripIdBikesBikeIdPatchMutationKey } from "./hoo
 export type { PatchTripApiV2TripsTripIdPatchMutationKey } from "./hooks/usePatchTripApiV2TripsTripIdPatch";
 export type { PromoteMemberApiV2TripsTripIdMembersUserIdPromotePostMutationKey } from "./hooks/usePromoteMemberApiV2TripsTripIdMembersUserIdPromotePost";
 export type { RecoverApiV2AuthRecoverPostMutationKey } from "./hooks/useRecoverApiV2AuthRecoverPost";
+export type { RevokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationKey } from "./hooks/useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export type { RotateRecoveryCodeApiV2AuthRecoveryCodePostMutationKey } from "./hooks/useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export type { SigninApiV2AuthSigninPostMutationKey } from "./hooks/useSigninApiV2AuthSigninPost";
 export type { SignoutAllApiV2AuthSignoutAllPostMutationKey } from "./hooks/useSignoutAllApiV2AuthSignoutAllPost";
@@ -97,6 +98,7 @@ export type { PromoteMemberApiV2TripsTripIdMembersUserIdPromotePost200, PromoteM
 export type { RecoverApiV2AuthRecoverPost200, RecoverApiV2AuthRecoverPost401, RecoverApiV2AuthRecoverPost422, RecoverApiV2AuthRecoverPost429, RecoverApiV2AuthRecoverPostMutation, RecoverApiV2AuthRecoverPostMutationRequest, RecoverApiV2AuthRecoverPostMutationResponse } from "./types/RecoverApiV2AuthRecoverPost";
 export type { RecoveryCodeCreate } from "./types/RecoveryCodeCreate";
 export type { RecoveryCodeIssuedOut } from "./types/RecoveryCodeIssuedOut";
+export type { RevokeMemberApiV2TripsTripIdMembersUserIdDelete204, RevokeMemberApiV2TripsTripIdMembersUserIdDelete401, RevokeMemberApiV2TripsTripIdMembersUserIdDelete403, RevokeMemberApiV2TripsTripIdMembersUserIdDelete404, RevokeMemberApiV2TripsTripIdMembersUserIdDelete422, RevokeMemberApiV2TripsTripIdMembersUserIdDelete429, RevokeMemberApiV2TripsTripIdMembersUserIdDeleteMutation, RevokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationResponse, RevokeMemberApiV2TripsTripIdMembersUserIdDeletePathParams } from "./types/RevokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export type { RotateRecoveryCodeApiV2AuthRecoveryCodePost200, RotateRecoveryCodeApiV2AuthRecoveryCodePost401, RotateRecoveryCodeApiV2AuthRecoveryCodePost403, RotateRecoveryCodeApiV2AuthRecoveryCodePost422, RotateRecoveryCodeApiV2AuthRecoveryCodePost429, RotateRecoveryCodeApiV2AuthRecoveryCodePostMutation, RotateRecoveryCodeApiV2AuthRecoveryCodePostMutationRequest, RotateRecoveryCodeApiV2AuthRecoveryCodePostMutationResponse } from "./types/RotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export type { SessionCreate } from "./types/SessionCreate";
 export type { SigninApiV2AuthSigninPost200, SigninApiV2AuthSigninPost401, SigninApiV2AuthSigninPost422, SigninApiV2AuthSigninPost429, SigninApiV2AuthSigninPostMutation, SigninApiV2AuthSigninPostMutationRequest, SigninApiV2AuthSigninPostMutationResponse } from "./types/SigninApiV2AuthSigninPost";
@@ -152,6 +154,7 @@ export { patchBikeApiV2TripsTripIdBikesBikeIdPatch } from "./clients/patchBikeAp
 export { patchTripApiV2TripsTripIdPatch } from "./clients/patchTripApiV2TripsTripIdPatch";
 export { promoteMemberApiV2TripsTripIdMembersUserIdPromotePost } from "./clients/promoteMemberApiV2TripsTripIdMembersUserIdPromotePost";
 export { recoverApiV2AuthRecoverPost } from "./clients/recoverApiV2AuthRecoverPost";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDelete } from "./clients/revokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./clients/rotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { signinApiV2AuthSigninPost } from "./clients/signinApiV2AuthSigninPost";
 export { signoutAllApiV2AuthSignoutAllPost } from "./clients/signoutAllApiV2AuthSignoutAllPost";
@@ -251,6 +254,9 @@ export { usePromoteMemberApiV2TripsTripIdMembersUserIdPromotePost } from "./hook
 export { recoverApiV2AuthRecoverPostMutationKey } from "./hooks/useRecoverApiV2AuthRecoverPost";
 export { recoverApiV2AuthRecoverPostMutationOptions } from "./hooks/useRecoverApiV2AuthRecoverPost";
 export { useRecoverApiV2AuthRecoverPost } from "./hooks/useRecoverApiV2AuthRecoverPost";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationKey } from "./hooks/useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
+export { revokeMemberApiV2TripsTripIdMembersUserIdDeleteMutationOptions } from "./hooks/useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
+export { useRevokeMemberApiV2TripsTripIdMembersUserIdDelete } from "./hooks/useRevokeMemberApiV2TripsTripIdMembersUserIdDelete";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePostMutationKey } from "./hooks/useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { rotateRecoveryCodeApiV2AuthRecoveryCodePostMutationOptions } from "./hooks/useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
 export { useRotateRecoveryCodeApiV2AuthRecoveryCodePost } from "./hooks/useRotateRecoveryCodeApiV2AuthRecoveryCodePost";
