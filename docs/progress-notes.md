@@ -2928,6 +2928,8 @@ DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside
 
 **Added AC (from t-am-queue-classification QA, triggered debt promoted here).** Once the queue posts to the v2 rider-write endpoints (which do send 401/429), a trigger during a 429 (the `again` loop, `visibilitychange`) runs the drain again immediately and skips the Retry-After wait. Make triggers respect a pending Retry-After (and the backoff) and test it.
 
+**DONE (472e46b).** Rider home shows a bottom "Add stop" bar for `rider`/`leader` only; `/trips/$tripId/add` shows a no-access notice to everyone else (pending users are told they need leader approval) and a sign-in notice when the account id is unknown. Payloads are `{tripId, data}` with `userId`. Queue waits are per entry and in memory: Retry-After ends only on its own timer; backoff ends early on `online`, `visibilitychange` or `drain()`; a drain stops at a waiting entry and skips held entries first. Tests: `riderAddStop.test.tsx` (15), `offline/queueTiming.test.tsx` (14); frontend 642. QA passed with 3 mutants killed. Debt: `t-am-fe-rider-add-stop-gaps`.
+
 ## t-am-fe-bikes-v2
 **Goal.** Part (b) of scrum change 21: bikes on v2.
 **Blockers.** `t-am-fe-discover-trip-detail` and `t-am-v2-rider-writes`.
