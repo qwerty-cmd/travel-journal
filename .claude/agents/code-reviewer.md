@@ -28,7 +28,10 @@ Score per module sampled, then give the dimension's overall score with a one-lin
 
 **D6 rebuild probe** (run on 1–2 sampled modules per review): list the module's public behaviours from its `docs/api-contract.md` section, per-task docs and test names **without opening the source**; then diff that list against the source. Behaviour in code with no trace is *dark behaviour*. Score = traced ÷ total: ≥ 95% → 5, ~75% → 3, < 50% → 1. Name each piece of dark behaviour in the report.
 
-**Measuring D2 without new dependencies:** `cd backend && uv run ruff check --select C901,PLR0912,PLR0915 app` (overrides the select list from the CLI; config untouched). For the frontend, estimate by reading — no complexity tool is installed. radon/xenon (Python) and eslint + `eslint-plugin-sonarjs` (TypeScript) would measure this properly but are **new dev dependencies: recommend them, never install them.** Don't use the Maintainability Index to drive a recommendation: it averages away the outliers that matter (van Deursen, 2014) — quote it as FYI at most.
+**Measuring D2** (dev dependencies, owner-approved; reporting only, not CI gates):
+- Backend: `cd backend && uv run radon cc app -s -n C` lists blocks of cyclomatic rank C or worse; `uv run xenon --max-absolute C --max-modules B --max-average A app` exits non-zero on a D-or-worse block. `uv run ruff check --select C901,PLR0912,PLR0915 app` is a cross-check.
+- Frontend: `cd frontend && npm run lint:complexity` reports every function over cognitive complexity 15 (`eslint-plugin-sonarjs`).
+- Never install anything further. Any other tool is a new dev dependency — recommend it, flagged as an owner decision. Don't use the Maintainability Index to drive a recommendation: it averages away the outliers that matter (van Deursen, 2014) — quote it as FYI at most.
 
 ## Severity — impact × likelihood, and how it meets the triage gate
 Severity says how much it matters; the gate (`docs/finding-triage-gate.md`) says **when** work happens. You never override the gate.
