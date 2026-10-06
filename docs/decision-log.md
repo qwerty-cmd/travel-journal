@@ -51,6 +51,7 @@ empirically disproves another.
 | 28 | Applying the probes: keep the hand-rolled `az rest` PATCH, reject `az containerapp update --yaml` | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1 | `--yaml` **does not wipe secrets** (it re-reads and repopulates via `list_secrets`) — that objection was wrong and is recorded so it is not re-raised. It lost on three other grounds: a temp YAML file breaks this repo's "az CLI blocks in the README, no YAML/Bicep/Terraform" convention, the `containerapp` module pins `CURRENT_API_VERSION = "2025-07-01"`, and its merge depth into the `containers` array could not be verified. Its one real advantage — the SDK polls `Azure-AsyncOperation`/`Location` to completion, which `az rest` cannot — was priced at ~6 lines of retry loop, not a convention change. **Correction 2026-09-30 appended: reopen condition tested, evidence went the other way** — the pin is still `2025-07-01`, merge depth still unverified, and `--yaml` would have hit the *identical* `revisionSuffix` collision (azure-cli#32272: a YAML `revisionSuffix` is dropped from the request), so the built-in poller would have polled a rejected update to a confident finish |
 | 29 | Public trips, local accounts, leader-gated membership (supersedes the two-link access model) | spec §2, `core/security.py`, `core/{passwords,sessions,csrf,ratelimit}.py`, `offline/queue.ts`, `0003_accounts_membership.sql`, `architecture-diagram.md` | **Architect ADR, accepted by the orchestrator under the owner's delegation, 2026-09-29.** Entry 21's per-person trigger fired. Username + argon2id password + one-time recovery code, with a `__Host-` cookie session (hash stored). Passkeys, magic links, OAuth, device tokens and bearer tokens lost. Authorization is session + an active `trip_members` row, read every request; **no slug is a write credential**. Trips are public by default with a 24 h delay; legacy trips migrate to private; private → 404. Join requests are per person; peer leaders can't remove each other. Revoked riders' queued items get 403 with no grace window. **The `ErrorCode` ruling Entries 6/14 require:** `UNAUTHENTICATED` 401 (queue pauses) and `RATE_LIMITED` 429 (retries). New dependency `argon2-cffi`. Invariants unchanged. Reopen on passkeys, or on max-replicas > 1 (rate limits to Postgres) |
 | 30 | Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7 | `frontend/src/styles/{tokens,base}.css`, `main.tsx`, `TripMap.{tsx,css}`, `vite.config.ts`, `frontend/src/icons/LICENSE`, `CLAUDE.md` Stack | **Architect ruling, accepted by the orchestrator under the owner's delegation, 2026-09-29.** `tokens.css` + `base.css` + one BEM-lite `Component.css` per component, with no new dependency. **CSS Modules lost on cost:** tokens and `.leaflet-*` overrides stay global anyway, and switching later is mechanical. **Tailwind lost:** it changes the locked stack, duplicates the tokens and gives nothing a DESIGN.md-driven spec needs. **No `@layer`**, because unlayered Leaflet CSS would beat it. D2 light only, D3 system fonts, D4 16 vendored MIT/ISC icons, D5 stock OSM, D6 56px bottom Add-stop bar, D7 Discover with "Your trips" on top and no redirect. Reopen: class collisions → CSS Modules |
+| 31 | Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted early) | `core/jpeg.py`, `api-contract.md` (Photo upload section), `test_jpeg_strip.py` | **Owner chose Option B, accepted by the orchestrator.** The pre-SOS-only strip let through APPn/COM between scans and everything after EOI (MPF, Motion Photo, gain maps). Now one forward walk to the first top-level EOI; malformed or EOI-less input is 422, never repaired. **Rejected:** Pillow re-encode (lossy, decompression bomb, new dep), `jpegtran -copy none` (subprocess, decode bomb), piexif (APP1 only), exiftool (Perl). ICC dropped; Adobe APP14 kept. Reopen if an original-bytes path ships and P3 colour matters |
 
 ---
 
@@ -2486,3 +2487,42 @@ Where the ADR was silent, `ba` chose these while writing the contract. The orche
 - **A brand font is wanted** reopens D3. Check the precache size and the licence first.
 - **More icons than the in-house set can sensibly carry**, or an icon from a source outside the D4 licence list, reopens D4.
 - **After the trip, or if OSM tile usage policy / attribution becomes a problem**, reopens D5.
+
+---
+
+## 31. Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted ahead of its trigger)
+
+**Ruling:** the owner chose Option B (strip the whole file); the orchestrator accepted the design. The task was filed as triggered debt (promotion event: an upload path that sends original bytes) and is promoted early by the owner. This is a choice among approaches, not an agent-vs-agent dispute.
+
+### Context
+The pre-SOS-only strip lets through APPn/COM between progressive scans and any data after EOI: MPF secondary images with their own EXIF, Motion Photo MP4 trailers, Ultra HDR gain maps. No consumer exercises this today, because `frontend/src/photo.ts` re-encodes on a canvas. The owner promoted it anyway.
+
+### Decision: one forward walk over the whole file, ending at the first top-level EOI
+1. **Segment rules at every top-level marker, before and between scans.**
+   - Drop: COM; APP1-APP13 and APP15; any APP0 that is not exactly `JFIF\0` with length 16 (JFXX and thumbnail-bearing JFIF are dropped); any APP14 that is not exactly `Adobe` with length 14.
+   - Keep: SOI, plain JFIF APP0, Adobe APP14 (decoders need its colour-transform flag; libjpeg-turbo `jdapimin.c`), DQT, SOF*, DHT, DAC, DRI, DNL, SOS headers, and any other length-bearing marker (lenient, as today). TEM and RSTn outside a scan are skipped, as today.
+2. **ICC (APP2) is dropped.** It is a fingerprinting surface, it was already dropped, and canvas output is sRGB. Reopen if an original-bytes path ships and P3 matters.
+3. **Entropy-coded data.** After each SOS header, one compiled search `re.compile(rb"\xff[^\x00\xd0-\xd7\xff]")` finds the next real marker. FF00 stuffing, RST0-7 and fill FFs never match, and there is no `\xff+` quantifier, so no quadratic backtracking. Fill bytes before the marker stay in the kept scan run (valid per T.81 B.1.1.2). The walk resumes the segment rules at the marker.
+4. **Termination.** The first EOI after at least one SOS ends the output. Everything after it is discarded.
+
+### Malformed input is 422 VALIDATION_ERROR, never best-effort repair
+Input ends before EOI (truncated scan, no EOI, only fill at the end); length < 2 or past the end (inside or after scans); SOI or FF00 at a marker position; TEM followed by non-marker bytes; EOI before any SOS.
+
+### Out of threat model
+Deliberate steganography in kept segments or entropy data. The goal is stripping device-added metadata the rider did not notice.
+
+### Rejected options
+- **Pillow re-encode:** lossy, decompression bomb at 65535 x 65535, native-library CVEs, new dependency.
+- **`jpegtran -copy none`:** subprocess, full-coefficient decode bomb, new dependency.
+- **piexif:** handles APP1 only.
+- **exiftool:** Perl.
+
+### Bounds and consequences
+- Linear time. Measured worst case at 15 MiB is 1.6 s (scans alternating with COM), in the existing worker thread. Memory is about 2x output at most. A marker-count cap stays in `t-am-jpeg-gaps` (1).
+- Canvas uploads are unchanged (byte-identical). Trailers, between-scan metadata and APP0 thumbnails are gone. RGB and CMYK JPEGs keep correct colour.
+- Truncated or EOI-less files that used to pass are now 422. No current client produces them.
+
+### What follows
+- `api-contract.md`, "Photo upload: JPEG only, metadata stripped, 15 MiB cap": first two bullets replaced.
+- `t-am-jpeg-after-sos` implements it in `backend/app/core/jpeg.py` and its tests. Scope, AC and validation are in `docs/progress-notes.md` under that ID.
+- **Rationale that must live beside code.** `dev` should put the marker-search regex rationale (why no `\xff+`, why `\xd0-\xd7` is excluded) and the Adobe APP14 keep-rule in the `core/jpeg.py` docstring, since those are the lines someone would "simplify".

@@ -536,8 +536,8 @@ Every `GET` also answers `HEAD` through a second, schema-excluded registration o
 
 This applies identically to the legacy and v2 upload routes, through one implementation (`core/jpeg.py`):
 
-- **Non-JPEG → `422 VALIDATION_ERROR`.** The file must start `FF D8 FF` and walk cleanly to a Start-of-Scan (`SOS`) marker. Anything truncated or malformed → `422`.
-- **Metadata stripped before storage.** A plain-Python walk over the JPEG segments drops APP1–APP15 (`FFE1`–`FFEF`, which include EXIF, XMP and ICC) and COM (`FFFE`). It keeps SOI, APP0/JFIF, DQT, SOF*, DHT, DRI and the SOS header, and copies the compressed image data after SOS unchanged.
+- **Non-JPEG → `422 VALIDATION_ERROR`.** The file must start `FF D8 FF` and walk cleanly through every segment and scan to an End-of-Image (`EOI`) marker that follows at least one Start-of-Scan (`SOS`). Anything truncated (including no `EOI`) or malformed → `422`.
+- **Metadata stripped before storage, across the whole file.** A plain-Python walk over every top-level segment, before and between scans, drops COM (`FFFE`) and APP1–APP15 (`FFE1`–`FFEF`: EXIF, XMP, ICC, MPF, Photoshop), except an Adobe APP14 of exactly 12 payload bytes, which is kept because decoders need its colour-transform flag. APP0 is kept only as a plain 16-byte JFIF header (no thumbnail); JFXX or thumbnail-bearing APP0 is dropped. Compressed scan data (with its `FF00` stuffing and RST markers) is copied unchanged. **Everything after the first `EOI` is discarded**: MPF secondary images, Motion Photo video and Ultra HDR gain maps are not stored. A JPEG with nothing to strip is stored byte-identical. See decision-log Entry 31.
 - **The stripped bytes are what goes to S3.** A replay performs no storage write, as before.
 - **Orientation.** Stripping removes the EXIF Orientation tag. The client's canvas re-encode already applies orientation to the pixels, so nothing changes visually.
 - **Size cap: 15 MiB (15,728,640 bytes) → `422 VALIDATION_ERROR`, not `413`.** Three reasons:
