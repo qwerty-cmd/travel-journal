@@ -363,10 +363,11 @@ async def _is_trip_create_replay(request: Request, db: SessionDep, user_id: str)
     return await trips_repo.creator_replay_role(db, trip_id, user_id) is not None
 
 
-# The dependencies routes declare. `join` is defined above and attached by the
-# task that builds its routes.
+# The dependencies routes declare. `limit_join` is on the join-request create
+# (and, when it lands, the legacy claim).
 limit_public_read = RateLimit(PUBLIC_READ)
 limit_signup = RateLimit(SIGNUP_IP, SIGNUP_GLOBAL)
 limit_signin = RateLimit(SIGNIN)
 limit_writes = UserRateLimit(WRITES)
 limit_trip_create = TripCreateRateLimit(TRIP_CREATE)
+limit_join = UserRateLimit(JOIN)

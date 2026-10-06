@@ -2913,6 +2913,269 @@
         }
       }
     },
+    "/api/v2/trips/{tripId}/join-requests": {
+      "post": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "Ask to join a trip",
+        "description": "**Context.** How a signed-in user asks a public trip's leaders to let them ride\n(decision-log Entry 29). A request never grants anything by itself; a leader\ndecides it.\n\n**How it works.** `limit_join` runs first (10 an hour per account), then\n`require_trip_join_requester`: a valid session (401, for every trip id alike),\nthen the trip (404 if it doesn't exist, or if it is private and the caller is\nnot an active member of it). Then, under a lock on the trip and on the caller's\naccount: a pending request already there is returned with `200`, unchanged.\nOtherwise `409` for an active member, a block, a rejection or a revocation by\nsomeone else less than 7 days ago, 20 pending requests of the caller's, or 100\npending on the trip. Otherwise a pending request is stored with the trimmed\n`message` (empty \u2192 null) and returned with `201`.\n\n**Related APIs.** `POST /api/v2/join-requests/{requestId}/cancel` withdraws it;\n`GET /api/v2/me/join-requests` lists the caller's requests;\n`GET /api/v2/trips/{tripId}` reports `viewer.role` `pending` meanwhile.",
+        "operationId": "create_join_request_api_v2_trips__tripId__join_requests_post",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Asking to join needs a signed-in account. No session is a 401 for every trip id, existing or not; a private trip the caller is not an active member of is a 404 identical to a trip id that doesn't exist. Private trips can't be joined by id.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Asking to join needs a signed-in account. No session is a 401 for every trip id, existing or not; a private trip the caller is not an active member of is a 404 identical to a trip id that doesn't exist. Private trips can't be joined by id."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinRequestCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new pending request (201).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "**Not a second request.** The caller already has a pending request on this trip, so nothing was created and that request is returned unchanged -- its `message` too, even where this request sent a different one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller is not an active member of it. The two are byte-identical, so a trip id can't be used to learn whether a private trip exists. Private trips can't be joined by id. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The caller may not ask to join this trip now: they are already an active member (leaders included); a leader blocked them, or rejected a request of theirs less than 7 days ago; someone else removed them from the trip less than 7 days ago (leaving on their own doesn't count); they already have 20 pending requests; or the trip already has 100. The message is written to be shown verbatim, and reports a block as a rejection. Nothing was written. Never-retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed validation: `message` is over 280 characters after trimming, or is not a string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `join` limit: 10 requests an hour per account, or per client address for a request with no session. Checked before the session and the trip, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/join-requests/{requestId}/cancel": {
+      "post": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "Cancel your join request",
+        "description": "**Context.** A requester can withdraw a request a leader hasn't decided yet\n(decision-log Entry 29).\n\n**How it works.** `limit_writes` runs first, then `require_session` (401). The\ncaller's own pending request becomes `cancelled`; one already cancelled is a\n`200` with nothing changed, so a retry is safe. A decided request is `409`.\nSomeone else's request and an unknown id are the same `404`. Cancelling starts\nno cooldown: the caller may ask again at once.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/join-requests` to ask again;\n`GET /api/v2/me/join-requests` lists the caller's requests.",
+        "operationId": "cancel_join_request_api_v2_join_requests__requestId__cancel_post",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The join request's id, as `MyJoinRequestOut.id` gives it. Must be one of the caller's own requests.",
+              "title": "Requestid"
+            },
+            "description": "The join request's id, as `MyJoinRequestOut.id` gives it. Must be one of the caller's own requests."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request, now cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No join request has this id, **or** it is someone else's. The two are identical. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A leader has already decided the request (approved, rejected or blocked), so it can't be cancelled. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/me/join-requests": {
+      "get": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "The caller's join requests",
+        "description": "**Context.** Where a requester sees how their requests stand (decision-log\nEntry 29): waiting, approved, not approved or cancelled.\n\n**How it works.** `limit_public_read` runs first, then `require_session` (401).\nLists every request the caller has made, in any state, newest `createdAt` first,\nat most 100, each with its trip's name. A request a leader blocked is reported\nas `rejected`, and no cooldown date is given. An account with no requests gets\n`200` with `[]`.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/join-requests` makes one;\n`POST /api/v2/join-requests/{requestId}/cancel` withdraws one;\n`GET /api/v2/me/trips` lists the trips the caller is already on.",
+        "operationId": "list_my_join_requests_api_v2_me_join_requests_get",
+        "responses": {
+          "200": {
+            "description": "The caller's join requests, newest first, at most 100.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MyJoinRequestOut"
+                  },
+                  "type": "array",
+                  "title": "Response List My Join Requests Api V2 Me Join Requests Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Health",
@@ -3239,6 +3502,38 @@
         ],
         "title": "ErrorEnvelope"
       },
+      "JoinRequestCreate": {
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 280
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "An optional note to the trip's leaders, e.g. who else is riding with you. Trimmed, then at most 280 characters, or the request is rejected with 422 / VALIDATION_ERROR. Omitted, null or empty after trimming are all stored as null. Ignored when a pending request already exists: that request keeps its message."
+          }
+        },
+        "type": "object",
+        "title": "JoinRequestCreate",
+        "description": "POST /api/v2/trips/{tripId}/join-requests body."
+      },
+      "JoinRequestState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected",
+          "cancelled",
+          "blocked"
+        ],
+        "title": "JoinRequestState",
+        "description": "Mirrors `join_requests_state_check`. Leaves `pending` exactly once."
+      },
       "LineStringGeometry": {
         "properties": {
           "type": {
@@ -3383,6 +3678,58 @@
         ],
         "title": "MemberRole",
         "description": "An active membership's role. Mirrors `trip_members_role_check` in migration 0003."
+      },
+      "MyJoinRequestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The join request's id, server-generated. Used to cancel it."
+          },
+          "tripId": {
+            "type": "string",
+            "title": "Tripid",
+            "description": "The id of the trip this request is to join."
+          },
+          "tripName": {
+            "type": "string",
+            "title": "Tripname",
+            "description": "The display name of the trip this request is to join."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JoinRequestState",
+            "description": "Where the request stands. A request a leader blocked is reported to the requester as 'rejected', so this is never 'blocked' here."
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "The note sent with the request, or null if none was sent."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "When the request was made, as a timezone-aware ISO 8601 instant. Lists are ordered by it, newest first."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "tripId",
+          "tripName",
+          "state",
+          "message",
+          "createdAt"
+        ],
+        "title": "MyJoinRequestOut",
+        "description": "One of the caller's own join requests, as the requester sees it."
       },
       "MyTripOut": {
         "properties": {

@@ -37,6 +37,9 @@ The gates built here:
 - ``require_trip_member_read`` — ``GET .../members``, by ``{tripId}``. The
   writer gate by trip id unchanged, declared on a read: only active members
   see who the members are.
+- ``require_trip_join_requester`` — ``POST .../join-requests``, by
+  ``{tripId}``. Session (``401``), then the reader's rule (``404``). Never
+  ``403``: a non-member is who may ask.
 
 **Why the legacy write order is slug → session → membership.** This is the ADR's
 order unchanged (Entry 29; contract, "Where the session check sits"). A trip
@@ -177,6 +180,18 @@ class TripWriterContext(TripContext):
 
     user: SessionUser
     role: MemberRole
+
+
+@dataclass(frozen=True, slots=True)
+class TripJoinRequesterContext:
+    """
+    What ``require_trip_join_requester`` hands the join-request create: the trip, and who asks.
+
+    ``trip`` carries both slugs and must not be serialised (see ``TripContext``).
+    """
+
+    trip: TripRecord
+    user: SessionUser
 
 
 def access_for_membership(membership: MembershipRecord | None) -> Access:
@@ -373,20 +388,75 @@ async def require_trip_reader(
     the trip's delay for anyone else.
     """
     user = await _optional_user(request, response, session)
-    trip = await get_by_id(session, trip_id)
-    # Keyed on the requested id, not on `trip`: one statement whether or not the
-    # trip exists (see "The same database round trips" above).
-    membership = await get_for_user(session, trip_id, user.user_id) if user else None
+    trip, membership = await _readable_trip(trip_id, user, session)
     member = membership is not None and membership.active
-
-    if trip is None or (trip.visibility != Visibility.PUBLIC and not member):
-        raise ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)
 
     return TripReaderContext(
         trip=trip,
         viewer_role=await _viewer_role_for(session, trip.id, user, membership),
         public_delay_hours=None if member else trip.public_delay_hours,
     )
+
+
+async def _readable_trip(
+    trip_id: str, user: SessionUser | None, session: AsyncSession
+) -> tuple[TripRecord, MembershipRecord | None]:
+    """
+    The reader's located trip and the caller's membership, or the byte-identical ``404``.
+
+    Shared by ``require_trip_reader`` and ``require_trip_join_requester`` so the
+    two cannot drift apart: the trip exists and is public, or ``user`` is an
+    active member, else one ``ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)`` raise
+    for a private trip and a nonexistent id alike. The membership is read keyed
+    on the *requested* id whether or not a trip has it, so both 404s cost
+    the same statements (see "The same database round trips" in
+    ``require_trip_reader``). ``None`` user (anonymous) reads no membership.
+    """
+    trip = await get_by_id(session, trip_id)
+    # Keyed on the requested id, not on `trip`: one statement whether or not the
+    # trip exists (see "The same database round trips" in `require_trip_reader`).
+    membership = await get_for_user(session, trip_id, user.user_id) if user else None
+    member = membership is not None and membership.active
+
+    if trip is None or (trip.visibility != Visibility.PUBLIC and not member):
+        raise ApiError.not_found(TRIP_NOT_FOUND_MESSAGE)
+    return trip, membership
+
+
+async def require_trip_join_requester(
+    trip_id: Annotated[
+        str,
+        Path(
+            alias="tripId",
+            description="The trip's id. Not a secret: it only names the trip. Asking to join "
+            "needs a signed-in account. No session is a 401 for every trip id, existing or "
+            "not; a private trip the caller is not an active member of is a 404 identical to "
+            "a trip id that doesn't exist. Private trips can't be joined by id.",
+        ),
+    ],
+    request: Request,
+    response: Response,
+    session: SessionDep,
+) -> TripJoinRequesterContext:
+    """
+    v2 join-request gate: session (``401``), then the reader's rule (``404``).
+
+    The contract's "session, then reader" for ``POST .../join-requests``.
+    **Session first**, as on every v2 unsafe route: an anonymous caller gets the
+    same ``401`` for every trip id. Then exactly ``require_trip_reader``'s rule
+    through ``_readable_trip``: public, or the caller is an *active* member,
+    else the byte-identical ``404`` with the same statements. Unlike the writer
+    gate, a revoked member of a private trip is *not* located here: the reader
+    rule hides a private trip from anyone not active on it, and private trips
+    can't be joined by id.
+
+    Never ``403``: a non-member is exactly who may ask. What the caller's rows
+    then allow (the 409s) is decided under lock in
+    ``app/data/repositories/join_requests.py``.
+    """
+    user = await _signed_in_user(request, response, session)
+    trip, _ = await _readable_trip(trip_id, user, session)
+    return TripJoinRequesterContext(trip=trip, user=user)
 
 
 async def require_trip_writer(

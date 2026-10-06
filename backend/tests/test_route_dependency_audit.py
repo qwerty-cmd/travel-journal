@@ -101,6 +101,7 @@ from fastapi import APIRouter, Depends
 from app.core.security import (
     require_session,
     require_trip_access,
+    require_trip_join_requester,
     require_trip_leader,
     require_trip_member_read,
     require_trip_reader,
@@ -118,6 +119,7 @@ GUARDS = (
     require_trip_writer_by_id,
     require_trip_leader,
     require_trip_member_read,
+    require_trip_join_requester,
     require_session,
 )
 
@@ -153,6 +155,15 @@ LEADER_ONLY = {"patch_trip", "promote_member", "step_down"}
 #
 #   list_members — GET/HEAD /api/v2/trips/{tripId}/members.
 MEMBER_READ = {"list_members"}
+
+# The one v2 trip write whose caller is, by design, not a member: asking to
+# join. By route name it must declare exactly `require_trip_join_requester`
+# (session, then the reader's rule; never 403), and no other route may declare
+# that gate, which would let any signed-in user past a write the public trip's
+# members own (t-am-join-requester).
+#
+#   create_join_request — POST /api/v2/trips/{tripId}/join-requests.
+JOIN_REQUESTER = {"create_join_request"}
 
 # Trip-scoped routes live under one of these (legacy slug routes, v2 trip-id routes).
 TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
@@ -197,6 +208,10 @@ ANONYMOUS_BY_DESIGN = {
 #   create_trip          — POST /api/v2/trips. Creates a trip rather than acting on
 #                          one, so there is no trip to gate yet (contract, "The
 #                          gates": `require_session`).
+#   list_my_join_requests — GET/HEAD /api/v2/me/join-requests, the caller's own requests.
+#   cancel_join_request  — POST /api/v2/join-requests/{requestId}/cancel. Located by
+#                          request id, and only the caller's own (contract, "The
+#                          gates": `require_session` for cancel).
 ACCOUNT_SCOPED = {
     "get_me",
     "signout_all",
@@ -204,6 +219,8 @@ ACCOUNT_SCOPED = {
     "rotate_recovery_code",
     "list_my_trips",
     "create_trip",
+    "list_my_join_requests",
+    "cancel_join_request",
 }
 
 
@@ -322,6 +339,14 @@ def _violation(method: str, route: Any) -> str | None:
             return (
                 f"{label} is a trip-scoped read and must declare exactly "
                 f"`{read_guard.__name__}`; it declares {_names(guards) or 'no trip guard'}"
+            )
+        return None
+
+    if route.name in JOIN_REQUESTER and route.path.startswith("/api/v2/"):
+        if guards != {require_trip_join_requester}:
+            return (
+                f"{label} is the join-request create and must declare exactly "
+                f"`require_trip_join_requester`; it declares {_names(guards) or 'no trip guard'}"
             )
         return None
 
@@ -599,6 +624,19 @@ def test_the_rules_reject_miswired_routes() -> None:
         "/api/v2/trips/{tripId}/members-gated", member_read, methods=["GET"], name="list_members"
     )
     scratch.add_api_route("/api/v2/trips/{tripId}/member-read", member_read, methods=["GET"])
+
+    # The join-request create behind the writer gate, behind its own gate, and
+    # its own gate on an ordinary write (t-am-join-requester).
+    async def join(guard: Annotated[Any, Depends(require_trip_join_requester)]) -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/join-writer", v2_write, methods=["POST"], name="create_join_request"
+    )
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/join-fine", join, methods=["POST"], name="create_join_request"
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/join-gated", join, methods=["POST"])
     routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
 
     must_fail = [
@@ -616,6 +654,8 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("PATCH", "/api/v2/trips/{tripId}/rider-gated"),
         ("GET", "/api/v2/trips/{tripId}/members-public"),
         ("GET", "/api/v2/trips/{tripId}/member-read"),
+        ("POST", "/api/v2/trips/{tripId}/join-writer"),
+        ("POST", "/api/v2/trips/{tripId}/join-gated"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
@@ -627,6 +667,7 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("POST", "/api/v2/trips/{tripId}/write-fine"),
         ("PATCH", "/api/v2/trips/{tripId}/leader-gated"),
         ("GET", "/api/v2/trips/{tripId}/members-gated"),
+        ("POST", "/api/v2/trips/{tripId}/join-fine"),
     ]:
         assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
 

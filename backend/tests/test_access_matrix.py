@@ -65,6 +65,11 @@ from jpeg_fixtures import minimal_jpeg
 from sqlalchemy import event, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.api.routes.v2.join_requests import (
+    ALREADY_A_MEMBER_MESSAGE,
+    JOIN_REQUEST_NOT_FOUND_MESSAGE,
+    REVOKED_RECENTLY_MESSAGE,
+)
 from app.core.security import (
     NO_LONGER_A_RIDER_MESSAGE,
     NOT_A_RIDER_MESSAGE,
@@ -2214,3 +2219,211 @@ async def test_a_private_trip_leadership_request_costs_the_same_statements_as_a_
     assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
     assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
     assert private_count == missing_count
+
+
+# --------------------------------------------------------------------------
+# 16. The requester routes: create and cancel a join request (t-am-join-requester)
+# --------------------------------------------------------------------------
+
+# POST /api/v2/trips/{tripId}/join-requests is "session, then reader": 401 for
+# anonymous on every trip id, the reader's byte-identical 404 for a private trip
+# the caller isn't active on, and never 403 -- a non-member is who may ask. On a
+# located trip the caller's rows decide: 201 new, 200 the pending request
+# already there, 409 for an active member, and 409 for the cast's revoked rider
+# (revoked just now with `revoked_by` NULL: someone else, inside the 7 days).
+_JOIN_409_MEMBER = (HTTPStatus.CONFLICT, ErrorCode.CONFLICT, ALREADY_A_MEMBER_MESSAGE)
+_JOIN_409_REVOKED = (HTTPStatus.CONFLICT, ErrorCode.CONFLICT, REVOKED_RECENTLY_MESSAGE)
+EXPECTED_JOIN_CREATE = {
+    ("anonymous", "public"): EXPECTED_WRITE["anonymous"],
+    ("anonymous", "private"): EXPECTED_WRITE["anonymous"],
+    ("non_member", "public"): HTTPStatus.CREATED,
+    ("non_member", "private"): _NOT_FOUND,
+    ("pending", "public"): HTTPStatus.OK,
+    ("pending", "private"): _NOT_FOUND,
+    ("rider", "public"): _JOIN_409_MEMBER,
+    ("rider", "private"): _JOIN_409_MEMBER,
+    ("revoked", "public"): _JOIN_409_REVOKED,
+    ("revoked", "private"): _NOT_FOUND,
+    ("leader", "public"): _JOIN_409_MEMBER,
+    ("leader", "private"): _JOIN_409_MEMBER,
+}
+
+# POST /api/v2/join-requests/{requestId}/cancel on the cast's pending request is
+# account-scoped: only its requester cancels it (200); anyone else signed in
+# gets the 404 a random request id gets; the trip's visibility plays no part.
+_JOIN_REQUEST_404 = (HTTPStatus.NOT_FOUND, ErrorCode.NOT_FOUND, JOIN_REQUEST_NOT_FOUND_MESSAGE)
+EXPECTED_JOIN_CANCEL = {
+    "anonymous": EXPECTED_WRITE["anonymous"],
+    "non_member": _JOIN_REQUEST_404,
+    "pending": HTTPStatus.OK,
+    "rider": _JOIN_REQUEST_404,
+    "revoked": _JOIN_REQUEST_404,
+    "leader": _JOIN_REQUEST_404,
+}
+
+
+async def request_rows(engine: AsyncEngine, trip_id: str) -> set[tuple[Any, ...]]:
+    """Every ``join_requests`` row on the trip: (id, user, state, message)."""
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            select(
+                tables.join_requests.c.id,
+                tables.join_requests.c.user_id,
+                tables.join_requests.c.state,
+                tables.join_requests.c.message,
+            ).where(tables.join_requests.c.trip_id == trip_id)
+        )
+        return {tuple(row) for row in rows}
+
+
+async def pending_request_id(engine: AsyncEngine, cast: Cast) -> str:
+    """The id of the cast's ``pending`` identity's request on the trip."""
+    async with engine.connect() as conn:
+        return await conn.scalar(
+            select(tables.join_requests.c.id).where(
+                tables.join_requests.c.trip_id == cast.trip.id,
+                tables.join_requests.c.user_id == cast.accounts["pending"].user_id,
+            )
+        )
+
+
+async def ask_to_join(client: AsyncClient, trip_id: str, headers: dict[str, str]) -> Response:
+    return await client.post(
+        f"/api/v2/trips/{trip_id}/join-requests", json={"message": "Matrix"}, headers=headers
+    )
+
+
+def assert_refusal(response: Response, expected: tuple[Any, Any, str], identity: str) -> None:
+    status, code, message = expected
+    assert response.status_code == status, response.text
+    assert response.json() == {"error": {"code": code.value, "message": message}}
+    assert session_cookies(response) == []
+    if identity == "anonymous":
+        assert response.headers.get("www-authenticate") == WWW_AUTHENTICATE
+
+
+def assert_same_404(response: Response, other: Response) -> None:
+    assert other.status_code == HTTPStatus.NOT_FOUND
+    assert response.content == other.content
+    assert {k: v for k, v in response.headers.items() if k != "date"} == {
+        k: v for k, v in other.headers.items() if k != "date"
+    }
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_join_request_create_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    visibility: str,
+    identity: str,
+) -> None:
+    """
+    The matrix cell for asking to join, on both visibilities: status, whole body, table.
+
+    A private trip's 404 is compared byte for byte (headers too, all but
+    ``date``) with the same request to a random trip id, and a refusal must
+    leave ``join_requests`` unchanged.
+    """
+    before = await request_rows(migrated_engine, cast.trip.id)
+    response = await ask_to_join(client, cast.trip.id, cast.headers(identity))
+    after = await request_rows(migrated_engine, cast.trip.id)
+    expected = EXPECTED_JOIN_CREATE[(identity, visibility)]
+
+    if expected == HTTPStatus.CREATED:
+        assert response.status_code == HTTPStatus.CREATED, response.text
+        body = response.json()
+        assert body["state"] == "pending"
+        assert body["tripId"] == cast.trip.id
+        caller = cast.accounts[identity].user_id
+        assert after == before | {(body["id"], caller, "pending", "Matrix")}
+        return
+    if expected == HTTPStatus.OK:
+        assert response.status_code == HTTPStatus.OK, response.text
+        assert response.json()["id"] == await pending_request_id(migrated_engine, cast)
+        assert response.json()["message"] is None  # unchanged, not this request's
+        assert after == before
+        return
+
+    assert_refusal(response, expected, identity)
+    if expected[0] == HTTPStatus.NOT_FOUND:
+        assert_same_404(response, await ask_to_join(client, str(uuid4()), cast.headers(identity)))
+    assert after == before
+
+
+async def test_v2_anonymous_join_request_is_the_same_401_for_every_trip_id(
+    client: AsyncClient, cast: Cast
+) -> None:
+    """Session first: anonymous gets one 401 for the cast's trip and a random id alike."""
+    trip = await ask_to_join(client, cast.trip.id, {})
+    missing = await ask_to_join(client, str(uuid4()), {})
+    assert trip.status_code == missing.status_code == HTTPStatus.UNAUTHORIZED
+    assert trip.content == missing.content
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("identity", ["non_member", "pending", "revoked"])
+async def test_a_private_trip_join_request_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+) -> None:
+    """No timing oracle on the join-request create: the private-trip 404 runs as many statements."""
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await ask_to_join(client, trip_id, cast.headers(identity))
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count
+
+
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_join_request_cancel_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    visibility: str,
+    identity: str,
+) -> None:
+    """
+    The matrix cell for cancelling the cast's pending request, on both visibilities.
+
+    Only its requester cancels it. Anyone else's 404 is byte-identical to a
+    random request id's, and a refusal leaves ``join_requests`` unchanged.
+    """
+    request_id = await pending_request_id(migrated_engine, cast)
+    before = await request_rows(migrated_engine, cast.trip.id)
+    headers = cast.headers(identity)
+    response = await client.post(f"/api/v2/join-requests/{request_id}/cancel", headers=headers)
+    after = await request_rows(migrated_engine, cast.trip.id)
+    expected = EXPECTED_JOIN_CANCEL[identity]
+
+    if expected == HTTPStatus.OK:
+        assert response.status_code == HTTPStatus.OK, response.text
+        assert response.json()["state"] == "cancelled"
+        pending = cast.accounts["pending"].user_id
+        assert after == (before - {(request_id, pending, "pending", None)}) | {
+            (request_id, pending, "cancelled", None)
+        }
+        return
+
+    assert_refusal(response, expected, identity)
+    if expected[0] == HTTPStatus.NOT_FOUND:
+        other = await client.post(f"/api/v2/join-requests/{uuid4()}/cancel", headers=headers)
+        assert_same_404(response, other)
+    assert after == before

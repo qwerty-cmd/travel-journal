@@ -12,6 +12,7 @@ The rules, from ``docs/api-contract.md`` "Rate limits and lockout":
 - signup: ``limit_signup`` (``signup-ip`` and ``signup-global``, one dependency);
 - signin, recover, password change, recovery-code rotation: ``limit_signin``;
 - ``POST /api/v2/trips``: ``limit_trip_create`` (``trip-create``);
+- ``POST /api/v2/trips/{tripId}/join-requests``: ``limit_join`` (``join``);
 - every other ``GET``/``HEAD``: ``limit_public_read``;
 - every other unsafe method: ``limit_writes``.
 
@@ -25,6 +26,7 @@ from typing import Any
 
 from app.core.ratelimit import (
     RateLimit,
+    limit_join,
     limit_public_read,
     limit_signin,
     limit_signup,
@@ -41,6 +43,7 @@ BY_NAME = {
     "change_password": limit_signin,
     "rotate_recovery_code": limit_signin,
     "create_trip": limit_trip_create,
+    "create_join_request": limit_join,
 }
 READ_METHODS = {"GET", "HEAD"}
 
@@ -92,6 +95,7 @@ def test_audit_is_not_vacuous() -> None:
     expected = {_expected(method, route) for method, route in AUDITED}
     assert expected == {
         None,
+        limit_join,
         limit_public_read,
         limit_signin,
         limit_signup,
