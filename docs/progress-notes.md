@@ -2968,6 +2968,8 @@ DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside
 No slug or credential values.
 **Validation.** `git diff --stat` shows `docs/` only.
 
+**DONE.** `docs/user-guide.md` rewritten from the built screens (signup/recover, public/private + delay, create trip, join request, leader tools, legacy notice, queue notices, installed app). The two-link and typed-name sections are gone. Production address stays a TODO. Not built, so not described: notifications, email, display-name edit, invites to private trips.
+
 ## t-am-legacy-removal
 TRIGGERED DEBT (Entry 29 §12). Filed with its promotion trigger only. **Not scoped.** Trigger: at least 120 days since release **and** no legacy trip still `private` **and** 14 consecutive days of zero hits to `/api/trips/<redacted>` in the redacted access logs.
 
