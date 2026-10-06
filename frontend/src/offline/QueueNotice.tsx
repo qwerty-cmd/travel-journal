@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { dismiss, isPaused, subscribe, type QueueRecord } from "./queue";
+import { dismiss, isHeld, isPaused, subscribe, type QueueRecord } from "./queue";
 
 const label = (e: QueueRecord) => (e.kind === "photo" ? `Photo for ${e.payload.stopName}` : e.payload.data.name);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -33,6 +33,10 @@ function savePhoto(e: QueueRecord & { kind: "photo" }) {
  * section labelled "Unsent stops" with:
  * - "Waiting to send: N stops, M photos" — every non-failed entry; while the
  *   queue is paused by a 401 this line reads "Sign in to send N items" instead;
+ * - "N items were saved by another account on this phone. Sign in as that
+ *   account to send them." — non-failed entries held for another account
+ *   (`isHeld`), counted apart from the line above (DESIGN.md "Held for another
+ *   account"); never names the account;
  * - per failed entry: "<label> could not be sent: <lastError>" and a Dismiss
  *   button (the only way a failed entry leaves the queue); a failed photo also
  *   gets "Save photo to this device", which downloads its stored JPEG;
@@ -50,7 +54,8 @@ export function QueueNotice() {
   useEffect(() => subscribe((entries) => setState({ entries, paused: isPaused() })), []);
 
   const failed = entries.filter((e) => e.failed);
-  const pending = entries.filter((e) => !e.failed);
+  const held = entries.filter((e) => !e.failed && isHeld(e));
+  const pending = entries.filter((e) => !e.failed && !isHeld(e));
   const stuck = pending.filter((e) => e.attempts >= 10);
   if (entries.length === 0) return null;
 
@@ -62,6 +67,12 @@ export function QueueNotice() {
     <section aria-label="Unsent stops" style={{ padding: 16 }}>
       {pending.length > 0 &&
         (paused ? <p>Sign in to send {plural(pending.length, "item")}</p> : <p>Waiting to send: {waiting.join(", ")}</p>)}
+      {held.length > 0 && (
+        <p>
+          {plural(held.length, "item")} {held.length === 1 ? "was" : "were"} saved by another account on this phone. Sign in
+          as that account to send them.
+        </p>
+      )}
       <ul>
         {failed.map((e) => (
           <li key={e.key}>

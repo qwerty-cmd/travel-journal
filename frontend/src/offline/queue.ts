@@ -25,9 +25,17 @@
  * in the tab that holds the lock. Every send is aborted after 30s (stop) or
  * 120s (photo), so a hung request can't hold that lock forever.
  *
- * APIs called: POST /api/trips/{slug}/stops and
- * POST /api/trips/{slug}/stops/{stop_id}/photos (multipart, one request per
- * photo, retried whole under the same client id). After a successful send it
+ * Hold (same contract section): an entry stamped with a `userId` is sent only
+ * while that account is signed in (cached `btj.me`, re-read before every
+ * send). Otherwise it is held — skipped, not failed, attempts unchanged — and
+ * the drain moves on to the next entry. Entries without a `userId` are sent
+ * under whatever session is current.
+ *
+ * APIs called: `{tripId}` entries go to POST /api/v2/trips/{tripId}/stops and
+ * POST /api/v2/trips/{tripId}/stops/{stopId}/photos; slug entries to
+ * POST /api/trips/{slug}/stops and POST /api/trips/{slug}/stops/{stop_id}/photos
+ * (multipart, one request per photo, retried whole under the same client
+ * id). After a successful send it
  * invalidates the stops and map queries (stop) or that stop's photos query
  * (photo) so open screens refetch.
  */
@@ -41,22 +49,46 @@ import { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from '../api/gen/clients
 import { listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey } from '../api/gen/hooks/useListPhotosApiTripsSlugStopsStopIdPhotosGet'
 import type { StopCreate } from '../api/gen/types/StopCreate'
 import type { BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost } from '../api/gen/types/BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost'
+import { createStopApiV2TripsTripIdStopsPost } from '../api/gen/clients/createStopApiV2TripsTripIdStopsPost'
+import { uploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost } from '../api/gen/clients/uploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost'
+import { listStopsApiV2TripsTripIdStopsGetQueryKey } from '../api/gen/hooks/useListStopsApiV2TripsTripIdStopsGet'
+import { getMapApiV2TripsTripIdMapGetQueryKey } from '../api/gen/hooks/useGetMapApiV2TripsTripIdMapGet'
+import { listPhotosApiV2TripsTripIdStopsStopIdPhotosGetQueryKey } from '../api/gen/hooks/useListPhotosApiV2TripsTripIdStopsStopIdPhotosGet'
+import type { BodyUploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost } from '../api/gen/types/BodyUploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost'
+import { getCachedMe } from '../localStore'
 
-export type QueueItem = { kind: 'stop'; payload: { slug: string; data: StopCreate } }
-type PhotoPayload = {
+type LegacyPhotoPayload = {
   slug: string
   stopId: string
   stopName: string
   data: Omit<BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost, 'file'>
 }
-/** A photo as handed to `enqueue`: `file` is the processed JPEG. */
-export type PhotoItem = { kind: 'photo'; payload: PhotoPayload; file: Blob }
+type V2PhotoPayload = {
+  tripId: string
+  stopId: string
+  stopName: string
+  data: Omit<BodyUploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost, 'file'>
+}
+/** A legacy stop, sent to /api/trips/{slug}/stops. */
+export type QueueItem = { kind: 'stop'; payload: { slug: string; data: StopCreate } }
+/** A legacy photo as handed to `enqueue`: `file` is the processed JPEG. */
+export type PhotoItem = { kind: 'photo'; payload: LegacyPhotoPayload; file: Blob }
+/** A v2 stop, sent to /api/v2/trips/{tripId}/stops; enqueued only with a `userId`. */
+export type V2StopItem = { kind: 'stop'; payload: { tripId: string; data: StopCreate } }
+/** A v2 photo, sent to /api/v2/trips/{tripId}/stops/{stopId}/photos; enqueued only with a `userId`. */
+export type V2PhotoItem = { kind: 'photo'; payload: V2PhotoPayload; file: Blob }
+type PhotoPayload = LegacyPhotoPayload | V2PhotoPayload
 /**
  * A photo is stored with its bytes as an ArrayBuffer (always image/jpeg), not a
  * Blob — Blob-in-IndexedDB is unreliable in old Safari and in jsdom.
+ *
+ * `userId` is the account the entry was captured under (an identifier, not a
+ * secret). Absent on entries from before the upgrade and from the legacy add
+ * route; those are sent under whatever session is current. Optional, so the
+ * store needs no schema change.
  */
-type Meta = { attempts: number; lastError: string | null; failed: boolean }
-export type QueueEntry = (QueueItem | { kind: 'photo'; payload: PhotoPayload; blob: ArrayBuffer }) & Meta
+type Meta = { attempts: number; lastError: string | null; failed: boolean; userId?: string }
+export type QueueEntry = (QueueItem | V2StopItem | { kind: 'photo'; payload: PhotoPayload; blob: ArrayBuffer }) & Meta
 export type QueueRecord = QueueEntry & { key: number }
 
 const DB_NAME = 'btj-queue'
@@ -227,12 +259,21 @@ async function withDrainLock(fn: () => Promise<void>): Promise<void> {
 
 // --- enqueue / dismiss ---------------------------------------------------
 
+type Items<T> = T | T[]
+
 /**
  * Stores the item(s) in one transaction — so a stop and its photos land
  * together — and resolves once it has committed, then starts one drain.
+ * `userId` (the signed-in account's id) is stamped on every item; it is
+ * required for `{tripId}` items and optional only for legacy slug items.
  */
-export async function enqueue(items: QueueItem | PhotoItem | (QueueItem | PhotoItem)[]): Promise<void> {
-  const meta: Meta = { attempts: 0, lastError: null, failed: false }
+export async function enqueue(items: Items<QueueItem | PhotoItem>, userId?: string): Promise<void>
+export async function enqueue(items: Items<QueueItem | PhotoItem | V2StopItem | V2PhotoItem>, userId: string): Promise<void>
+export async function enqueue(
+  items: Items<QueueItem | PhotoItem | V2StopItem | V2PhotoItem>,
+  userId?: string,
+): Promise<void> {
+  const meta: Meta = { attempts: 0, lastError: null, failed: false, ...(userId === undefined ? {} : { userId }) }
   // Bytes are read before the transaction opens: an await inside it would let it auto-commit.
   const entries: QueueEntry[] = await Promise.all(
     [items].flat().map(async (item): Promise<QueueEntry> => {
@@ -288,21 +329,59 @@ function trigger(): void {
   drain().catch(console.error)
 }
 
+/**
+ * Held: the entry carries a `userId` and it isn't the signed-in account's — a
+ * different account, or nobody signed in. Read from the cached `btj.me` on every
+ * call, never stored, so the hold follows sign-in/sign-out and survives a reload.
+ */
+export function isHeld(entry: QueueEntry): boolean {
+  return entry.userId !== undefined && entry.userId !== getCachedMe()?.id
+}
+
+/** Sends one entry through the v2 client (`tripId` payload) or the legacy one (`slug` payload). */
+function send(entry: QueueRecord): Promise<unknown> {
+  if (entry.kind === 'stop') {
+    const p = entry.payload
+    return withTimeout(STOP_TIMEOUT_MS, (signal) =>
+      'tripId' in p
+        ? createStopApiV2TripsTripIdStopsPost({ tripId: p.tripId, data: p.data }, { signal })
+        : createStopApiTripsSlugStopsPost({ slug: p.slug, data: p.data }, { signal }),
+    )
+  }
+  const p = entry.payload
+  const file = new Blob([entry.blob], { type: 'image/jpeg' })
+  return withTimeout(PHOTO_TIMEOUT_MS, (signal) =>
+    'tripId' in p
+      ? uploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost(
+          { tripId: p.tripId, stopId: p.stopId, data: { ...p.data, file } },
+          { signal },
+        )
+      : uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ slug: p.slug, stop_id: p.stopId, data: { ...p.data, file } }, { signal }),
+  )
+}
+
+/** After a successful send, the open screens showing that entry refetch. */
+function invalidate(entry: QueueRecord): void {
+  const p = entry.payload
+  const keys =
+    entry.kind === 'photo'
+      ? [
+          'tripId' in p
+            ? listPhotosApiV2TripsTripIdStopsStopIdPhotosGetQueryKey({ tripId: p.tripId, stopId: entry.payload.stopId })
+            : listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ slug: p.slug, stop_id: entry.payload.stopId }),
+        ]
+      : 'tripId' in p
+        ? [listStopsApiV2TripsTripIdStopsGetQueryKey({ tripId: p.tripId }), getMapApiV2TripsTripIdMapGetQueryKey({ tripId: p.tripId })]
+        : [listStopsApiTripsSlugStopsGetQueryKey({ slug: p.slug }), getMapApiTripsSlugMapGetQueryKey({ slug: p.slug })]
+  for (const queryKey of keys) queryClient?.invalidateQueries({ queryKey })
+}
+
 async function drainOnce(): Promise<void> {
   for (const entry of await readAll()) {
-    if (entry.failed) continue
-    const { slug } = entry.payload
+    // Held entries are skipped untouched (not sent, not failed, attempts unchanged); later entries still go.
+    if (entry.failed || isHeld(entry)) continue
     try {
-      if (entry.kind === 'stop') {
-        const { data } = entry.payload
-        await withTimeout(STOP_TIMEOUT_MS, (signal) => createStopApiTripsSlugStopsPost({ slug, data }, { signal }))
-      } else {
-        const { stopId, data } = entry.payload
-        const file = new Blob([entry.blob], { type: 'image/jpeg' })
-        await withTimeout(PHOTO_TIMEOUT_MS, (signal) =>
-          uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ slug, stop_id: stopId, data: { ...data, file } }, { signal }),
-        )
-      }
+      await send(entry)
     } catch (err) {
       const code = errorCode(err)
       if (code === 'UNAUTHENTICATED') {
@@ -346,14 +425,7 @@ async function drainOnce(): Promise<void> {
     if (isPaused()) setPaused(false)
     await deleteEntry(entry.key)
     await changed()
-    if (entry.kind === 'photo') {
-      queryClient?.invalidateQueries({
-        queryKey: listPhotosApiTripsSlugStopsStopIdPhotosGetQueryKey({ slug, stop_id: entry.payload.stopId }),
-      })
-      continue
-    }
-    queryClient?.invalidateQueries({ queryKey: listStopsApiTripsSlugStopsGetQueryKey({ slug }) })
-    queryClient?.invalidateQueries({ queryKey: getMapApiTripsSlugMapGetQueryKey({ slug }) })
+    invalidate(entry)
   }
 }
 
@@ -367,9 +439,12 @@ export function startQueue(client: QueryClient): void {
       emit().catch(console.error)
       if (e.data === 'enqueued') trigger()
     }
-    // A sign-in in any tab (this one included: auth.ts posts from its own channel object) lifts the 401 pause.
+    // A sign-in in any tab (this one included: auth.ts posts from its own channel object) lifts the 401 pause
+    // and re-evaluates which entries are held. A sign-out only refreshes the notice: `btj.me` is already
+    // cleared, so the drain's per-entry `isHeld` check stops sending entries that carry a `userId`.
     const auth = new BroadcastChannel(AUTH_CHANNEL)
     auth.onmessage = (e: MessageEvent<AuthMessage>) => {
+      if (e.data?.type === 'signout') emit().catch(console.error)
       if (e.data?.type !== 'signin') return
       setPaused(false)
       emit().catch(console.error)
