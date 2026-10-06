@@ -46,6 +46,7 @@ A finding from task X is not work for task X — one task → one patch → veri
 | `docs` | Writes per-task docs, closes out progress.json, owns decision-log | Read/Write/Edit — `docs/`, plus doc comments co-located with code |
 | `designer` | Front-end UI/visual design: design system (tokens), per-screen specs, static HTML mockups in Figma/Canva handoff terms; generates with Google Stitch (owner's user-level Stitch MCP + stitch-skills); reviews built UI against specs. `dev` implements its specs | Read/Grep/Glob/Write/Edit + WebSearch/WebFetch + Skill (+ `mcp__stitch__*` once listed) — writes `docs/design/` only (hook-enforced) |
 | `token-auditor` | Token-budget guardrail: trims briefs before dispatch, audits finished pipelines' transcripts for waste, audits agent/skill definitions for bloat. Recommends cuts; never weakens a gate | Read-only (Read/Grep/Glob/Bash) |
+| `code-reviewer` | External consultant, **not yet in the pipeline**: after implementation and QA, at story/milestone boundaries, scores maintainability, readability and re-implementability on a 7-dimension 1–5 rubric and returns severity-ranked (S1–S4) recommendations; the team decides each one | Read-only (Read/Grep/Glob/Bash) |
 
 Skills (`.claude/skills/`): `add-endpoint` (the full recipe from contract entry to shipped endpoint), `deploy` (Container Apps deploy/rollback).
 
