@@ -2855,6 +2855,8 @@ DONE 2026-10-06. `components/JoinRequest.tsx`: `JoinRequestPanel` on the trip sh
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+DONE 2026-10-06. Route `/trips/$tripId/members` (`view` = requests | members | blocked; members falls back to requests until t-am-fe-members), leader-only on `viewerRole()`; `components/LeaderReview.tsx`: approve / reject / reject & block (confirm dialog), sequential multi-select with per-row outcomes (409/404 → "Already handled", 429/401/403 stop), Blocked tab with Unblock, per-row in-flight dedupe, display names only. Leader-only Requests link on the trip shell. Tests: leaderReview 18; frontend 541 + build. QA PASS. Debt: t-am-fe-ui-primitives.
+
 ## t-am-fe-members
 **Goal.** Members management, per `docs/design/screens/members.md` (scrum change 20).
 **Blockers.** `t-am-fe-leader-review` (it creates the shared route), `t-am-trip-leadership` and `t-am-member-revoke`.
@@ -3159,3 +3161,7 @@ ORDINARY DEBT (dev + QA on t-am-fe-discover-trip-detail). Deferred spec extras: 
 ## t-am-fe-join-gaps
 
 ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$tripId/join` route and its extras ("A leader didn't approve your last request" notice, already-member redirect, quoted message with Sent date, Back to the trip); `/account` row timestamps; legacy page signed-out and member variants; a 401 on create/claim redirecting to sign-in; "Request cancelled" as a toast. Missing tests: an emoji against the 280 counter; the slug absent from DOM/console/storage.
+
+## t-am-fe-ui-primitives
+
+ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders.
