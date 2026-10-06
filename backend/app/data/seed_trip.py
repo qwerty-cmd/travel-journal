@@ -90,7 +90,8 @@ from sqlalchemy.sql.dml import Insert
 
 from app.core.config import get_settings
 from app.data.db import normalize_database_url
-from app.data.tables import trips
+from app.data.tables import trip_members, trips, users
+from app.models.member import MemberRole
 
 # Bounded because a UNIQUE collision on a 256-bit token is not a condition that
 # clears itself — see the module docstring. Three attempts distinguishes "an
@@ -196,6 +197,17 @@ class DatabaseNotReadyError(SeedTripError):
         super().__init__(
             f"{detail} Nothing was inserted and no slugs were generated, so running this again "
             "once the database is reachable costs nothing."
+        )
+
+
+class UnknownLeaderError(SeedTripError):
+    """``--leader-username`` names no account, so nothing was inserted."""
+
+    def __init__(self, username: str) -> None:
+        self.username = username
+        super().__init__(
+            f"no account with username {username!r} for --leader-username. Nothing was "
+            "inserted and no slugs were generated."
         )
 
 
@@ -369,9 +381,15 @@ async def seed_trip(
     *,
     name: str,
     start_date: date,
+    leader_username: str | None = None,
 ) -> SeededTripResult:
     """
     Insert the one trip row with two freshly generated slugs and return it.
+
+    With ``leader_username``, the named account also gets an active leader
+    membership, inserted in the same transaction as the trip, so neither exists
+    without the other. The account is looked up before any slug is generated;
+    an unknown one raises ``UnknownLeaderError`` with nothing inserted.
 
     Takes an **injected connection** and never builds an engine: the caller owns
     the transaction, so the test suite can run a real seed and roll it back, and
@@ -407,6 +425,10 @@ async def seed_trip(
             name=existing_name,
             start_date=existing_start_date,
         )
+
+    leader_id = None
+    if leader_username is not None:
+        leader_id = await _leader_id(conn, leader_username)
 
     last_unique_constraint: str | None = None
 
@@ -486,6 +508,9 @@ async def seed_trip(
                 "here because it would contain the generated slugs. Nothing was inserted."
             ) from None
 
+        if leader_id is not None:
+            await _insert_leader(conn, trip_id=trip_id, user_id=leader_id)
+
         return SeededTripResult(
             id=trip_id,
             name=name,
@@ -495,6 +520,48 @@ async def seed_trip(
         )
 
     raise SlugCollisionError(_MAX_INSERT_ATTEMPTS, last_unique_constraint)
+
+
+async def _leader_id(conn: AsyncConnection, username: str) -> str:
+    """The id of the ``--leader-username`` account; ``UnknownLeaderError`` if there is none."""
+    # Stored usernames are lowercase ASCII; non-ASCII input names no account.
+    try:
+        user_id = (
+            None
+            if not username.isascii()
+            else await conn.scalar(select(users.c.id).where(users.c.username == username.lower()))
+        )
+    except SQLAlchemyError as exc:
+        # No slug exists yet, but rule 3 holds module-wide: no str(exc).
+        _, sqlstate = _classify(exc)
+        raise SeedTripError(
+            f"the leader account could not be looked up ({type(exc).__name__}, SQLSTATE "
+            f"{sqlstate or 'unknown'}). Nothing was inserted."
+        ) from None
+    if user_id is None:
+        raise UnknownLeaderError(username)
+    return user_id
+
+
+async def _insert_leader(conn: AsyncConnection, *, trip_id: str, user_id: str) -> None:
+    """Insert the new trip's active leader membership, in the caller's transaction."""
+    try:
+        await conn.execute(
+            trip_members.insert().values(
+                id=str(uuid.uuid4()),
+                trip_id=trip_id,
+                user_id=user_id,
+                role=MemberRole.LEADER.value,
+            )
+        )
+    except SQLAlchemyError as exc:
+        # Rule 3 again: the caller's transaction holds the slugs, and this
+        # failure aborts it, so the trip is not inserted either.
+        _, sqlstate = _classify(exc)
+        raise SeedTripError(
+            f"the leader membership insert failed with {type(exc).__name__} (SQLSTATE "
+            f"{sqlstate or 'unknown'}). Nothing was inserted."
+        ) from None
 
 
 def _print_result(result: SeededTripResult) -> int:
@@ -549,6 +616,7 @@ async def _seed_with_new_engine(
     name: str,
     start_date: date,
     emit: Callable[[SeededTripResult], int],
+    leader_username: str | None = None,
 ) -> int:
     """
     Build an engine for this one call, seed in a single transaction, commit,
@@ -575,7 +643,9 @@ async def _seed_with_new_engine(
     engine = create_async_engine(normalize_database_url(get_settings().database_url))
     try:
         async with engine.begin() as conn:
-            result = await seed_trip(conn, name=name, start_date=start_date)
+            result = await seed_trip(
+                conn, name=name, start_date=start_date, leader_username=leader_username
+            )
 
         # Committed by the context manager above, and only then printed: slugs
         # that reached the terminal from a transaction that then rolled back
@@ -628,6 +698,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="YYYY-MM-DD",
         help="The day the trip starts, as an ISO date (YYYY-MM-DD).",
     )
+    parser.add_argument(
+        "--leader-username",
+        default=None,
+        help=(
+            "Optional. An existing account to make the trip's first active leader, "
+            "in the same transaction as the trip. Without it no membership is created."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -636,6 +714,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 name=args.name,
                 start_date=args.start_date,
                 emit=_print_result,
+                leader_username=args.leader_username,
             )
         )
     except TripAlreadyExistsError as exc:

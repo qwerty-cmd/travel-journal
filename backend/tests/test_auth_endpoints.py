@@ -58,6 +58,7 @@ from app.api.routes.v2 import auth as auth_routes
 from app.core import passwords
 from app.data import tables
 from app.data.db import get_session
+from app.data.reset_account import reset_account
 from tests.conftest import make_async_client
 
 SIGNUP = "/api/v2/auth/signup"
@@ -533,6 +534,32 @@ async def fail_times(client: AsyncClient, username: str, times: int) -> None:
     for attempt in range(times):
         response = await signin(client, username, WRONG_PASSWORD)
         assert response.status_code == 401, f"failure #{attempt + 1} was {response.status_code}"
+
+
+async def test_an_account_locked_then_disabled_by_the_operator_gets_the_identical_401(
+    client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
+) -> None:
+    """
+    ``reset_account --disable`` clears the lockout, so a disabled account never answers 429.
+
+    Signin checks a lock in force before ``disabled_at``; an account locked and
+    then disabled would otherwise get ``429`` + ``Retry-After`` instead of the
+    one identical ``401`` every disabled account must get.
+    """
+    username = accounts.name()
+    assert (await signup(client, username)).status_code == 201
+    await fail_times(client, username, auth_routes.LOCKOUT_THRESHOLD)
+    assert (await signin(client, username, PASSWORD)).status_code == 429
+
+    async with AsyncSession(migrated_engine) as session, session.begin():
+        assert await reset_account(session, username=username, disable=True) is None
+
+    reference = await signin(client, new_username(), PASSWORD)
+    for password in (PASSWORD, WRONG_PASSWORD):
+        response = await signin(client, username, password)
+        assert_envelope(response, 401, "UNAUTHENTICATED", BAD_CREDENTIALS)
+        assert response.content == reference.content
+        assert sorted(response.headers.multi_items()) == sorted(reference.headers.multi_items())
 
 
 def assert_locked(response: httpx.Response, retry_after: int) -> None:

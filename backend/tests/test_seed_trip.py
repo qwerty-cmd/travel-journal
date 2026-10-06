@@ -74,6 +74,7 @@ from app.data.seed_trip import (
     SeededTripResult,
     SeedTripError,
     TripAlreadyExistsError,
+    UnknownLeaderError,
     _print_result,
     _seed_with_new_engine,
     _trip_insert,
@@ -189,6 +190,119 @@ async def test_seeds_exactly_one_trip_and_rolls_back(migrated_engine: AsyncEngin
     # was empty or holding the real trip.
     async with migrated_engine.connect() as conn:
         assert await _trip_count(conn) == rows_before_delete
+
+
+async def _insert_user(conn: AsyncConnection) -> tuple[str, str]:
+    """An account inside the caller's (rolled-back) transaction: ``(id, username)``."""
+    user_id = str(uuid.uuid4())
+    username = f"seed-{secrets.token_hex(6)}"
+    await conn.execute(
+        tables.users.insert().values(
+            id=user_id, username=username, display_name="Seed leader", password_hash="x"
+        )
+    )
+    return user_id, username
+
+
+async def _members_of(conn: AsyncConnection, trip_id: str) -> list[tuple[str, str, object]]:
+    rows = await conn.execute(
+        select(
+            tables.trip_members.c.user_id,
+            tables.trip_members.c.role,
+            tables.trip_members.c.revoked_at,
+        ).where(tables.trip_members.c.trip_id == trip_id)
+    )
+    return [tuple(row) for row in rows]
+
+
+async def test_leader_username_creates_the_leader_in_the_same_transaction(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """``--leader-username`` adds one active leader row, rolled back with the trip."""
+    async with migrated_engine.begin() as conn:
+        await conn.execute(tables.trips.delete())
+        user_id, username = await _insert_user(conn)
+
+        result = await seed_trip(
+            conn, name="Seed leader trip", start_date=date(2026, 6, 1), leader_username=username
+        )
+
+        assert await _members_of(conn, result.id) == [(user_id, "leader", None)]
+        await conn.rollback()
+
+    async with migrated_engine.connect() as conn:
+        assert await _members_of(conn, result.id) == []
+
+
+async def test_leader_username_is_matched_case_insensitively(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.begin() as conn:
+        await conn.execute(tables.trips.delete())
+        user_id, username = await _insert_user(conn)
+
+        result = await seed_trip(
+            conn,
+            name="Seed leader trip",
+            start_date=date(2026, 6, 1),
+            leader_username=username.upper(),
+        )
+
+        assert await _members_of(conn, result.id) == [(user_id, "leader", None)]
+        await conn.rollback()
+
+
+async def test_an_unknown_leader_username_inserts_nothing(migrated_engine: AsyncEngine) -> None:
+    """An unknown account is refused before any slug or row exists."""
+    async with migrated_engine.begin() as conn:
+        await conn.execute(tables.trips.delete())
+
+        with pytest.raises(UnknownLeaderError):
+            await seed_trip(
+                conn,
+                name="Seed leader trip",
+                start_date=date(2026, 6, 1),
+                leader_username=f"nobody-{secrets.token_hex(6)}",
+            )
+
+        assert await _trip_count(conn) == 0
+        await conn.rollback()
+
+
+async def test_without_leader_username_no_membership_is_created(
+    migrated_engine: AsyncEngine,
+) -> None:
+    async with migrated_engine.begin() as conn:
+        await conn.execute(tables.trips.delete())
+        result = await seed_trip(conn, name="Seed trip", start_date=date(2026, 6, 1))
+        assert await _members_of(conn, result.id) == []
+        await conn.rollback()
+
+
+def test_main_reports_an_unknown_leader_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``main()`` turns the refusal into exit 1 and a message, and passes the flag through."""
+    seen: list[str | None] = []
+
+    async def _refuse(
+        *, name: str, start_date: date, emit: object, leader_username: str | None = None
+    ) -> int:
+        seen.append(leader_username)
+        raise UnknownLeaderError(leader_username or "")
+
+    monkeypatch.setattr(seed_trip_module, "_seed_with_new_engine", _refuse)
+
+    exit_code = main(
+        ["--name", "T", "--start-date", "2026-07-01", "--leader-username", "ghost-rider"]
+    )
+
+    assert exit_code == 1
+    assert seen == ["ghost-rider"]
+    captured = capsys.readouterr()
+    assert "ghost-rider" in captured.out
+    assert "Traceback" not in captured.out + captured.err
 
 
 async def test_format_slug_output_carries_both_slugs_and_says_it_is_the_only_copy(
@@ -517,7 +631,9 @@ def test_the_already_exists_refusal_names_the_recovery_select(
     here opens a connection.
     """
 
-    async def _refuse(*, name: str, start_date: date, emit: object) -> int:
+    async def _refuse(
+        *, name: str, start_date: date, emit: object, leader_username: str | None = None
+    ) -> int:
         raise TripAlreadyExistsError(
             trip_id="existing-trip-id",
             name="An existing trip",
