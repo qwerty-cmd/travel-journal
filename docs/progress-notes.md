@@ -2589,6 +2589,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-10-06. Leader list (GET/HEAD, `state` pending|blocked, oldest first, display names only), decision (approve / reject / reject_and_block) and unblock in `routes/v2/join_requests.py`. Lock order: trip row → caller re-check (`_leader_check`) → request FOR UPDATE filtered by trip. Approve adds the rider membership in the same transaction (skipped if already active). Same decision → 200, different → 409; unblock → rejected keeping `decided_at`. Audits: `LEADER_READ`. Tests: test_join_requests 77 (incl. a re-check-under-lock test QA asked for) + matrix §17; suite 3072; frontend 385 + build. QA PASS, 4/4 mutants, no deadlock under 22 mixed concurrent calls. Debt: t-am-join-leader-gaps.
+
 ## t-am-member-revoke
 **Goal.** A leader revokes a rider, effective on the next request.
 **Scope.**
@@ -3073,3 +3075,7 @@ ORDINARY DEBT (dev + test-writer on t-am-trip-leadership). (1) The last-leader 4
 ## t-am-join-copy-review
 
 ORDINARY DEBT (dev on t-am-join-requester). (1) The join 409 messages were written by dev; DESIGN.md X5 says the designer reviews them. (2) Cancel declares a 422 for its path parameter that the contract row doesn't list (existing pattern, keeps FastAPI's HTTPValidationError out of the client). (3) The `join` limiter spends a token on a duplicate-pending 200 — the contract gives no exemption.
+
+## t-am-join-leader-gaps
+
+ORDINARY DEBT (dev + QA on t-am-join-leader). (1) A pending request whose requester has since become an active member (e.g. via claim once it lands) can still be rejected/blocked: 200 "blocked" with the membership untouched — an active member marked blocked. Contract is silent; consider 409 or auto-cancel. (2) The `state=blocked` list is unbounded (pending is capped at 100). (3) Unblock declares a 422 for its path parameter not in the contract row.
