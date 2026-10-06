@@ -4,10 +4,18 @@
  * which iOS lacks — and never gated on `navigator.onLine`; a send attempt is the
  * only reliable connectivity test.
  *
- * Retry classification is docs/api-contract.md, Error envelope: a never-retry
- * failure marks the entry `failed` and keeps it (never auto-deleted) until the
- * rider dismisses it; anything else counts an attempt and stops the drain, which
- * resumes on the next trigger or after a 5s → 300s doubling backoff.
+ * Retry classification is docs/api-contract.md, "Offline-queue classification
+ * (Entry 29)":
+ * - a never-retry failure marks the entry `failed` and keeps it, photo bytes
+ *   included (never auto-deleted), until the rider dismisses it;
+ * - `UNAUTHENTICATED` pauses the queue: the entry is left exactly as it was (not
+ *   failed, attempt not counted) and the drain stops. The pause is kept in
+ *   localStorage so it survives a reload; a successful send or a `signin` on
+ *   the BroadcastChannel `auth` clears it, and the usual triggers still try;
+ * - `RATE_LIMITED` counts the attempt and retries after the response's
+ *   `Retry-After` seconds, without advancing the doubling backoff;
+ * - anything else counts an attempt and stops the drain, which resumes on the
+ *   next trigger or after a 5s → 300s doubling backoff.
  *
  * Several tabs share the one store. Where the Web Locks API exists only the tab
  * holding the `btj-queue-drain` lock drains, so two tabs never send the same
@@ -25,6 +33,7 @@
  */
 import type { QueryClient } from '@tanstack/react-query'
 import { ApiError } from '../api/client'
+import { AUTH_CHANNEL, type AuthMessage } from '../auth'
 import { createStopApiTripsSlugStopsPost } from '../api/gen/clients/createStopApiTripsSlugStopsPost'
 import { listStopsApiTripsSlugStopsGetQueryKey } from '../api/gen/hooks/useListStopsApiTripsSlugStopsGet'
 import { getMapApiTripsSlugMapGetQueryKey } from '../api/gen/hooks/useGetMapApiTripsSlugMapGet'
@@ -52,6 +61,14 @@ export type QueueRecord = QueueEntry & { key: number }
 
 const DB_NAME = 'btj-queue'
 const STORE = 'entries'
+/**
+ * `FORBIDDEN` stays never-retry on purpose (decision-log Entry 29, "no grace"):
+ * once a rider is revoked, every queued item of theirs — including items
+ * captured before the revocation — fails with 403 and is surfaced, never sent
+ * and never dropped. A grace window for pre-revocation captures was rejected
+ * because `arrivedAt`/`takenAt` are client-asserted and could be backdated; the
+ * rider can still keep a failed photo via "Save photo to this device".
+ */
 const NEVER_RETRY = new Set(['VALIDATION_ERROR', 'METHOD_NOT_ALLOWED', 'CONFLICT', 'FORBIDDEN', 'NOT_FOUND'])
 const BACKOFF_START_MS = 5_000
 const BACKOFF_CAP_MS = 300_000
@@ -79,6 +96,36 @@ async function withTimeout<T>(ms: number, send: (signal: AbortSignal) => Promise
 /** True only for the five contract never-retry codes; no envelope, or an unknown code, retries. */
 export function isNeverRetry(err: unknown): boolean {
   return err instanceof ApiError && NEVER_RETRY.has(err.envelope?.error.code as string)
+}
+
+const errorCode = (err: unknown) => (err instanceof ApiError ? err.envelope?.error.code : undefined)
+
+// --- 401 pause ------------------------------------------------------------
+
+/**
+ * Set by a `401 UNAUTHENTICATED` send, cleared by a successful send or a
+ * sign-in. localStorage rather than IndexedDB, so the store's schema (version 1,
+ * entries only) is unchanged; every access is wrapped because storage can throw
+ * (Safari private mode, disabled), which then reads as "not paused".
+ */
+const PAUSED_KEY = 'btj.queue.paused'
+
+/** True while the queue is paused for sign-in (see the module comment). */
+export function isPaused(): boolean {
+  try {
+    return localStorage.getItem(PAUSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function setPaused(paused: boolean): void {
+  try {
+    if (paused) localStorage.setItem(PAUSED_KEY, '1')
+    else localStorage.removeItem(PAUSED_KEY)
+  } catch {
+    // Storage unavailable: the pause just won't survive a reload.
+  }
 }
 
 let dbPromise: Promise<IDBDatabase> | undefined
@@ -257,7 +304,24 @@ async function drainOnce(): Promise<void> {
         )
       }
     } catch (err) {
+      const code = errorCode(err)
+      if (code === 'UNAUTHENTICATED') {
+        // Pause: the entry is untouched (not failed, attempt not counted) and no backoff is scheduled.
+        setPaused(true)
+        clearTimeout(timer)
+        await changed()
+        return
+      }
       const attempts = entry.attempts + 1
+      const retryAfter = code === 'RATE_LIMITED' ? (err as ApiError).retryAfter : undefined
+      if (retryAfter !== undefined) {
+        // The server's wait replaces the doubling backoff, which is left where it was.
+        await putEntry({ ...entry, attempts, lastError: (err as ApiError).message })
+        await changed()
+        clearTimeout(timer)
+        timer = setTimeout(trigger, retryAfter * 1000)
+        return
+      }
       if (isNeverRetry(err)) {
         const failedEntry = { ...entry, attempts, failed: true, lastError: (err as ApiError).envelope!.error.message }
         if (failedEntry.kind === 'photo') {
@@ -279,6 +343,7 @@ async function drainOnce(): Promise<void> {
       return
     }
     failures = 0
+    if (isPaused()) setPaused(false)
     await deleteEntry(entry.key)
     await changed()
     if (entry.kind === 'photo') {
@@ -301,6 +366,14 @@ export function startQueue(client: QueryClient): void {
     channel.onmessage = (e: MessageEvent<Broadcast>) => {
       emit().catch(console.error)
       if (e.data === 'enqueued') trigger()
+    }
+    // A sign-in in any tab (this one included: auth.ts posts from its own channel object) lifts the 401 pause.
+    const auth = new BroadcastChannel(AUTH_CHANNEL)
+    auth.onmessage = (e: MessageEvent<AuthMessage>) => {
+      if (e.data?.type !== 'signin') return
+      setPaused(false)
+      emit().catch(console.error)
+      trigger()
     }
   }
   window.addEventListener('online', () => {
