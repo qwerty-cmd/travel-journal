@@ -143,3 +143,9 @@
   line-height: var(--font-line-height-heading);
   font-weight: var(--font-weight-semibold);
 }
+
+.trip__leader-link {
+  align-self: flex-start;
+  margin: var(--space-3) var(--space-4) 0;
+  text-decoration: none;
+}

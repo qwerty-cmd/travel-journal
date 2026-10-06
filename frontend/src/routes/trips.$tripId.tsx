@@ -24,7 +24,8 @@ import "./trips.$tripId.css";
 //     TripOut extension (no `viewer` / `visibility`) just omits those badges.
 //   - any other error with nothing persisted: "Can't reach the server…" + Try again.
 //   - otherwise: header skeleton (+ "Waking up the server…" after 3 s).
-//     Under the header, JoinRequestPanel (join flow, gated on viewerRole() alone).
+//     Under the header, a leader-only "Requests" link (gated on viewerRole() alone) to
+//     /trips/$tripId/members, then JoinRequestPanel (join flow, gated on viewerRole() alone).
 // APIs called: GET /api/v2/trips/{tripId} via useTripV2 (src/tripV2.ts), seeded
 // from the per-trip-id persisted TripOut; GET /api/v2/auth/me (useMe) for the
 // 404 copy only. Child routes read the same cache entry with refetchOnMount: false.
@@ -61,6 +62,11 @@ function TripShell() {
             {roleBadge && <Badge variant={roleBadge} />}
           </div>
         </header>
+        {role === "leader" && (
+          <Link to="/trips/$tripId/members" params={{ tripId }} search={{ view: "requests" }} className="btn btn--secondary btn--md trip__leader-link">
+            Requests
+          </Link>
+        )}
         <JoinRequestPanel tripId={tripId} role={role} />
         <Outlet />
       </div>
