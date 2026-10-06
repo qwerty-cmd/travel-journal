@@ -503,35 +503,3 @@ The job is a separate resource from the app:
 Nothing here is a hard Azure dependency for the *app* — see spec Section 4
 "Portability principle." This directory is the one place that's allowed to be
 Azure-specific, since it's the deploy target, not the app.
-
-## Image publishing (GitHub Actions to GHCR)
-
-`.github/workflows/ci.yml` builds the repo-root `Dockerfile` (`linux/amd64`)
-and pushes it to GHCR on every push to `main`, and on a manual
-`workflow_dispatch` run on `main`. It publishes only after the `backend` and
-`frontend` jobs pass. Pull requests run those checks but never publish.
-
-- **Tag.** Exactly one tag per image, the full commit SHA:
-  `ghcr.io/<owner>/<repo>:<full-sha>`, lower-cased. Never `latest`, never a
-  floating tag. The run's summary shows the image reference and digest.
-  The deploy step (`docs/deploy-cutover-runbook.md` §6) uses that tag for
-  both the app and the OneDrive sync Job.
-- **Build only.** The workflow never logs in to Azure, runs `az`, changes a
-  revision or traffic, or updates the Job. Its only credential is the per-run
-  `GITHUB_TOKEN`, with `packages: write` in the publish job alone. Deploying
-  stays manual, per the runbook §6. Building and pushing by hand is now the
-  fallback there.
-- **Package visibility.** The first push creates the GHCR package as
-  **private**. Choose one of these:
-  - **Public.** On GitHub, open the package, then Package settings → Change
-    visibility → Public. The app and Job then need no registry credential:
-    drop the three `--registry-*` flags above.
-  - **Private.** Keep it private and give the app and the Job a separate
-    GitHub **classic PAT with `read:packages` only** as their registry
-    credential (`--registry-*` above). Never use the workflow's
-    `GITHUB_TOKEN` for this: it expires when the run ends.
-- **403 on a later push.** If a publish run fails with `403 Forbidden` on
-  push, the package is not linked to this repository, or the repository lacks
-  write access to it. This happens, for example, if the package was first
-  created by a manual push. Open Package settings → Manage Actions access, add
-  this repository, and give it the **Write** role. Then re-run the workflow.

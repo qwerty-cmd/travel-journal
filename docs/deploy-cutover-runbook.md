@@ -263,8 +263,8 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 **Images are built by CI, not by hand.** `.github/workflows/ci.yml` publishes
 `ghcr.io/<owner>/<repo>:<full-commit-sha>` on every merge to `main`, after the backend and frontend
-checks pass. It never deploys: every step below stays manual. See `infra/azure/README.md`,
-"Image publishing (GitHub Actions to GHCR)", for package visibility and access.
+checks pass. It never deploys: every step below stays manual. See "Image publishing (GitHub Actions to GHCR)"
+at the end of this section for package visibility and access.
 
 - [ ] **devops. Pick the tag.** Use the full 40-character SHA of the `main` commit being deployed. Its
   CI run must be green, and that run's summary shows the image and digest. `$TAG` is used by every
@@ -323,6 +323,38 @@ checks pass. It never deploys: every step below stays manual. See `infra/azure/R
   `az containerapp job show --name <job-name> --resource-group <resource-group> --query "properties.template.containers[0].image" -o tsv`
 - [ ] Write down the new revision name (`<app-name>--rel-<tag>`) and the previous one from the
   "rollback target" step. The previous one is what step 8 rolls back to.
+
+### Image publishing (GitHub Actions to GHCR)
+
+`.github/workflows/ci.yml` builds the repo-root `Dockerfile` (`linux/amd64`)
+and pushes it to GHCR on every push to `main`, and on a manual
+`workflow_dispatch` run on `main`. It publishes only after the `backend` and
+`frontend` jobs pass. Pull requests run those checks but never publish.
+
+- **Tag.** Exactly one tag per image, the full commit SHA:
+  `ghcr.io/<owner>/<repo>:<full-sha>`, lower-cased. Never `latest`, never a
+  floating tag. The run's summary shows the image reference and digest.
+  The deploy steps in this section use that tag for
+  both the app and the OneDrive sync Job.
+- **Build only.** The workflow never logs in to Azure, runs `az`, changes a
+  revision or traffic, or updates the Job. Its only credential is the per-run
+  `GITHUB_TOKEN`, with `packages: write` in the publish job alone. Deploying
+  stays manual, per this section. Building and pushing by hand is now the
+  fallback there.
+- **Package visibility.** The first push creates the GHCR package as
+  **private**. Choose one of these:
+  - **Public.** On GitHub, open the package, then Package settings → Change
+    visibility → Public. The app and Job then need no registry credential:
+    drop the three `--registry-*` flags (`infra/azure/README.md`, app and Job create commands).
+  - **Private.** Keep it private and give the app and the Job a separate
+    GitHub **classic PAT with `read:packages` only** as their registry
+    credential (the `--registry-*` flags in `infra/azure/README.md`). Never use the workflow's
+    `GITHUB_TOKEN` for this: it expires when the run ends.
+- **403 on a later push.** If a publish run fails with `403 Forbidden` on
+  push, the package is not linked to this repository, or the repository lacks
+  write access to it. This happens, for example, if the package was first
+  created by a manual push. Open Package settings → Manage Actions access, add
+  this repository, and give it the **Write** role. Then re-run the workflow.
 
 ## 7. Post-deploy checks
 
