@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useGetTripApiV2TripsTripIdGet } from "../api/gen/hooks/useGetTripApiV2TripsTripIdGet";
+import { MembersView } from "../components/MembersView";
 import { LeaderReview, type ReviewView } from "../components/LeaderReview";
 import { StatusNotice } from "../components/StatusNotice";
 import { viewerRole } from "../tripV2";
 
 // Design feature: the leader area at /trips/$tripId/members?view=requests|members
 // (docs/design/screens/leader-review.md; DESIGN.md §13 ruling X1). This task ships the
-// requests view (plus Blocked, `view=blocked`); the read-only members view and
-// /settings are later tasks, so `view=members` shows the requests view for now.
+// requests view (plus Blocked, `view=blocked`) and the members view (`view=members`,
+// leader or rider; riders get it read-only plus "Leave"). /settings is a later task.
 // Design format: leaders get LeaderReview; any other role, including a persisted trip
 // with no `viewer`, gets a "Leaders only" notice and NOTHING is requested (UI gate; the
 // server enforces). Gated on `viewerRole()` alone, never `isMember`/`access`.
@@ -25,7 +26,11 @@ function Members() {
   const { view } = Route.useSearch();
   const trip = useGetTripApiV2TripsTripIdGet({ tripId }, { query: { refetchOnMount: false } });
   if (!trip.data) return null;
-  if (viewerRole(trip.data) !== "leader") {
+  const role = viewerRole(trip.data);
+  if (view === "members" && (role === "leader" || role === "rider")) {
+    return <MembersView tripId={tripId} role={role} tripName={trip.data.name} />;
+  }
+  if (role !== "leader") {
     return (
       <section className="review" style={{ padding: "var(--space-4)" }}>
         <StatusNotice tone="info" title="Leaders only" detail="Only the leaders of this trip can review join requests." />

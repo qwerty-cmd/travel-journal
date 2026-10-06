@@ -192,6 +192,9 @@ export function LeaderReview({ tripId, view }: { tripId: string; view: ReviewVie
         <Link to="/trips/$tripId/members" params={{ tripId }} search={{ view: "requests" }} className={`review__tab${view === "requests" ? " review__tab--active" : ""}`} aria-current={view === "requests" ? "page" : undefined}>
           Requests{view === "requests" && list.data && list.data.length > 0 ? ` ${list.data.length}` : ""}
         </Link>
+        <Link to="/trips/$tripId/members" params={{ tripId }} search={{ view: "members" }} className="review__tab">
+          Members
+        </Link>
         <Link to="/trips/$tripId/members" params={{ tripId }} search={{ view: "blocked" }} className={`review__tab${view === "blocked" ? " review__tab--active" : ""}`} aria-current={view === "blocked" ? "page" : undefined}>
           Blocked
         </Link>
