@@ -124,6 +124,9 @@ function SignIn() {
         </Button>
       </form>
       <div className="auth-links">
+        <Link to="/recover" search={{ username: username.trim() || undefined, next: search.next }}>
+          Forgot your password? Use your recovery code
+        </Link>
         <Link to="/signup" search={{ next: search.next }}>
           New here? Create an account
         </Link>
