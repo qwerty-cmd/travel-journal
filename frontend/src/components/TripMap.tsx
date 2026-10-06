@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "./TripMap.css";
 import iconUrl from "leaflet/dist/images/marker-icon.png";
 import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
 import shadowUrl from "leaflet/dist/images/marker-shadow.png";
@@ -92,5 +93,5 @@ export function TripMap({
     };
   }, [onMapClick]);
 
-  return <div ref={containerRef} style={{ height: "50vh" }} />;
+  return <div ref={containerRef} className="trip-map" />;
 }

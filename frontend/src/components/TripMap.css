@@ -1,0 +1,17 @@
+/* Overrides for Leaflet. This file must be imported AFTER
+   "leaflet/dist/leaflet.css" in TripMap.tsx: our .leaflet-* rules win over
+   Leaflet's by source order at equal specificity.
+   Do NOT wrap anything here in @layer. Leaflet's CSS is unlayered, and
+   unlayered rules beat layered ones, so layered overrides would lose.
+   (decision-log Entry 30, D1) */
+
+.trip-map {
+  height: 50vh;
+  /* Keeps Leaflet's internal z-indexes (up to 1000) beneath bars, toasts and dialogs. */
+  isolation: isolate;
+  background: var(--color-map-empty);
+}
+
+.trip-map .leaflet-control-attribution {
+  background: var(--color-map-attribution-bg);
+}

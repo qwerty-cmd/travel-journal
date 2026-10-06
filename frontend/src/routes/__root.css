@@ -1,0 +1,5 @@
+.app-shell {
+  min-height: 100vh;
+  background: var(--color-surface-page);
+  color: var(--color-text-primary);
+}
