@@ -2776,6 +2776,8 @@ DONE 2026-10-06. `styles/tokens.css` (86 tokens, exact match to DESIGN.md Append
 - `package.json` gains no dependency.
 **Validation.** `cd frontend && npm test && npm run build`; `git diff --stat -- frontend/package.json` is empty.
 
+DONE 2026-10-06. `frontend/src/icons/`: shared `Icon.tsx` (size md/sm → `--size-icon-*`, aria-hidden unless titled, then role=img + <title>), 22 icon components (21 Lucide paths vendored verbatim from lucide-static 1.52.0, 8 of them Feather-derived; `pin-approx` in-house), `index.ts`, `LICENSE` (ISC + Feather MIT), 45 tests. No dependency added. Frontend 430 + build. QA PASS (all 21 paths match upstream). Debt: t-am-icon-count-doc.
+
 ## t-am-fe-auth-screens
 **AC.**
 - `/signup` validates with the contract's rules client-side and shows the server's `message` on 409 / 422 / 429.
@@ -3107,3 +3109,7 @@ ORDINARY DEBT (QA on t-am-operator-clis). (1) No test pins that DB-error output 
 ## t-am-reenable-account
 
 TRIGGERED DEBT (docs on t-am-runbook-accounts). `reset_account --disable` is one-way: there is no CLI to clear `disabled_at`, and a plain reset leaves the account disabled. Promotion trigger: the first time the owner needs to re-enable an account. Fix then: a `reset_account --enable` (or separate CLI) that clears `disabled_at` and issues a fresh code in one transaction.
+
+## t-am-icon-count-doc
+
+ORDINARY DEBT (dev + QA on t-am-fe-icons). DESIGN.md §4.5, Entry 30 D4 and this tracker say 16 icons but §4.5 lists 22; all 22 were built. Correct the count. Also the icons LICENSE drops upstream's "(for the icons listed above)" from the MIT heading — cosmetic.
