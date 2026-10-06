@@ -3172,6 +3172,8 @@ ORDINARY DEBT (QA on t-am-fe-auth-screens). (1) No test asserts the recovery cod
 
 ORDINARY DEBT (dev on t-am-fe-auth-screens). `npm run lint` fails because the frontend has no `eslint.config.*`, so no frontend lint gate runs.
 
+
+**DONE.** Closed by the owner-approved complexity tooling: `frontend/eslint.config.js` (recommended JS + typescript-eslint + sonarjs cognitive-complexity 15 as warn + react-hooks) makes `npm run lint` run with 0 errors; `npm run lint:complexity` reports only the complexity rule. Backend gained radon and xenon (dev group). Neither is a CI gate. Debt: `t-tooling-complexity-gaps`.
 ## t-am-fe-discover-gaps
 
 ORDINARY DEBT (dev + QA on t-am-fe-discover-trip-detail). Deferred spec extras: onboarding card, Create-a-trip entry on Discover, pending-requests and member continue cards, tabs, "You see stops live" notice, "Public from" chips, "Who can see this trip?" dialog, 429 countdown on Try again. `components/README.md` is stale. `/t/$slug/stops/$stopId` still has an inline gallery (use PhotoGallery). Timeline rows are `div role=link` (design wants `<a>`).
