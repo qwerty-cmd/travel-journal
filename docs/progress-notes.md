@@ -3016,6 +3016,34 @@ ORDINARY DEBT (test-writer + QA on t-am-identity-core). (1) `models/account.py` 
 
 ORDINARY DEBT (test-writer + QA on t-am-auth-sessions). (1) Contract Me note says Me is the only response containing a username; signup/signin also return `MeOut` per the table — fix the note. (2) `core/security.py` docstring still says no route declares `require_session`. (3) `SessionCreate.username` / `AccountRecover.username` have no `max_length` (see t-am-json-body-limit). (4) Audit self-test never feeds an account route outside `/api/v2` or one declaring two guards (live rule enforces both). (5) With 10 verifies in flight a correct password gets 429 and the account locks — deliberate, keeps the ≤ 10 bound and self-heals stranded slots; QA agrees it's within the contract.
 
+## t-am-session-confirm-limit
+
+Decision-log Entry 33; contract text already written (`api-contract.md` "Rate limits and lockout", "Sessions", "Migration 0004"). Promoted from `t-am-auth-account-gaps` item (1); item (2) (contract lockout text) is now moot. Gate: currently_broken (a stolen session can lock the owner out).
+
+**Goal.** Wrong passwords on `POST /auth/password` and `POST /auth/recovery-code` are counted per session and revoke it at 10, and never touch the account lockout.
+
+**Scope.**
+1. Migration `backend/migrations/0004_session_confirm_failures.sql`: `sessions.failed_confirmations integer NOT NULL DEFAULT 0` plus a `DO $$`-guarded CHECK `sessions_failed_confirmations_check` (>= 0), same style as 0003. Threshold 10 stays in code. Mirror in `data/tables.py`.
+2. `data/repositories/sessions.py`: `reserve_confirmation(db, token_hash, *, threshold) -> int | None` (conditional `UPDATE ... WHERE failed_confirmations < :threshold RETURNING`), `reset_confirmations(db, token_hash) -> bool`; reuse `delete`. No commit inside, same pattern as `users.py`.
+3. `core/sessions.py`: add internal `token_hash: bytes` to `SessionUser` (never serialised).
+4. `routes/v2/auth.py` (`_confirm_own_password`, `_hand_back_claim`): claim before argon2; `None` claim, or a 10th wrong, deletes the session and returns 401 UNAUTHENTICATED with cleared cookie and `WWW-Authenticate` ("Signed out after too many wrong passwords. Sign in again."); 1-9 wrong is 403; correct resets to 0 in the working transaction, and a reset that finds no row rolls back with 401. Remove all use of `reserve_login_attempt`, `lock_if_saturated`, `reset_lockout` from these two routes. Per-IP `signin` bucket unchanged.
+5. Update the route "How it works" text in `auth.py` (about lines 643-662 and 707-724) and the `currentPassword`/`password` descriptions in `models/account.py` (about lines 165 and 178); 403 and 429 response texts.
+6. Regenerate OpenAPI and Kubb.
+
+**AC.**
+- 20 parallel wrong attempts on one session: at most 10 argon2 calls (spy), nine 403, the rest 401, row deleted.
+- Sequential: 9 wrong are 403; the 10th is 401 with `Max-Age=0` and `WWW-Authenticate`; the 11th is 401.
+- After revocation the right password signs in (no 429); `failed_logins` and `locked_until` unchanged.
+- Another session of the same user stays valid with counter 0.
+- 9 wrong, a correct rotation, then 9 wrong: session still live. A correct password change gives a new session at 0.
+- An account locked by 10 signin failures: signed-in password change with the right password succeeds; a wrong one is 403, not 429.
+- Race where the reset finds the row deleted: 401, nothing written.
+- Migration test modelled on `tests/test_migration_0003.py`: migrate to 0003, seed sessions, migrate to 0004, existing rows read 0, CHECK rejects -1 by constraint name and allows 0, second run applies nothing.
+
+**Validation.** `cd backend && uv run pytest -q tests/test_auth_session_confirm.py tests/test_migration_0004.py`; full suite once; `uv run ruff check . && uv run ruff format --check .`; regenerate OpenAPI and Kubb per CLAUDE.md "Commands". test-writer is mandatory (access control) and writes tests contract-first.
+
+**Rollback.** Additive column with default; redeploy the old image, the column can stay.
+
 ## t-am-auth-account-gaps
 
 ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stolen session and no password, 10 wrong password-change/rotation attempts lock the owner out of signin and recover for 15 min, repeatable; contract-conformant (the contract counts these failures). Should session-authenticated failures count toward the signin/recover lock? (2) The contract's per-account lockout text names only signin/recover for the 429 and the reset; record that password change and rotation also 429 while locked and reset on success. (3) Recover/signin timing: unknown/disabled ~35 ms vs wrong code ~40 ms (extra lockout round-trips); bodies/headers identical, and the lockout already reveals existence. Fix both together if enumeration resistance is tightened. Also: `AccountRecover.username` has no `max_length` (see t-am-auth-sessions-gaps 3).

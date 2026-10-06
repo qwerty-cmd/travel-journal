@@ -104,6 +104,7 @@ Membership is read from Postgres on every request, with no cache. A revocation t
   - `signout` deletes the current row.
   - `signout-all`, a password change, a successful recovery, an operator reset and an account disable each delete **all** of that user's rows.
   - A password change and a recovery then issue one fresh session to the device that made the request.
+  - The 10th wrong password confirmation on a session (`POST /auth/password` or `/auth/recovery-code`) deletes that row only (Entry 33; see "Per-session confirmation limit").
 - **Missing, unknown, expired or deleted token.** The answer is `401 UNAUTHENTICATED`. If a cookie was sent, the response also clears it with `Max-Age=0`.
 - **`WWW-Authenticate`.** RFC 9110 requires it on a `401`, so every 401 carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`. This scheme does not trigger a browser login dialog.
 - **Recovery code.** 128 random bits, shown **once**: at signup, after a recovery, and after a rotation.
@@ -144,11 +145,20 @@ Like `405`, the CSRF `403` is middleware-level. It is reachable on every unsafe 
 `/api/health`, the `/api` catch-all and `signout` have no limiter.
 
 **Per-account lockout (persisted in Postgres, so it survives restarts):**
-- Each failed signin, failed recovery, wrong current password and wrong recovery-code rotation password increments `users.failed_logins`.
+- Each failed signin and failed recovery increments `users.failed_logins`.
 - At 10 failures, `locked_until = now() + 15 min` and the counter resets.
 - A successful signin or recovery resets the counter.
 - While the account is locked, signin and recover return `429 RATE_LIMITED`, with `Retry-After` equal to the seconds left, **even for correct credentials**.
 - For an unknown username, signin still runs argon2 verification against a fixed dummy hash, so response timing doesn't reveal whether the account exists.
+- Wrong passwords on the signed-in routes (`POST /auth/password`, `POST /auth/recovery-code`) are **not** counted here. They have their own per-session limit, below (Entry 33).
+
+**Per-session confirmation limit (persisted in `sessions.failed_confirmations`, migration 0004; decision-log Entry 33):**
+- A wrong `currentPassword` (`POST /auth/password`) or wrong rotation `password` (`POST /auth/recovery-code`) increments `sessions.failed_confirmations` for the session that made the request. The attempt is **claimed before argon2 verification** (conditional `UPDATE ... WHERE failed_confirmations < 10`), so parallel wrong requests cause at most 10 argon2 checks.
+- Attempts 1-9 are `403 FORBIDDEN`.
+- The 10th wrong attempt deletes the session in the same commit and returns `401 UNAUTHENTICATED` ("Signed out after too many wrong passwords. Sign in again."), with the cookie cleared (`Max-Age=0`) and `WWW-Authenticate`. A request that finds the session already at 10 gets the same `401` without an argon2 check. The next request fails in `require_session`, because the row is gone.
+- A correct password resets the counter to 0 in the transaction that does the work. If that reset finds the row gone (a concurrent 10th failure revoked it), the request rolls back and returns `401`.
+- The counter belongs to one session: other sessions of the same user are unaffected. A password change deletes every session, so the fresh session starts at 0.
+- These two routes never read or write `users.failed_logins` or `locked_until`, and the account lockout never refuses them. The only `429` they can return is the per-IP `signin` bucket, with `Retry-After` unchanged.
 
 ### Idempotency — client-generated ids
 
@@ -213,7 +223,7 @@ Every non-2xx response uses one shape:
 
 | `code` | Meaning |
 |---|---|
-| `UNAUTHENTICATED` | No valid session where one is required, or the signin/recover credentials are wrong |
+| `UNAUTHENTICATED` | No valid session where one is required, or the signin/recover credentials are wrong. Also the 10th wrong password confirmation on a session, which deletes it (Entry 33). |
 | `FORBIDDEN` | Signed in, but not permitted: a non-member or revoked member writing, a non-leader doing a leader action, a leader removing another leader, a wrong current password. Also a cross-site unsafe request blocked by CSRF. |
 | `NOT_FOUND` | No such trip, slug, stop, bike, request or member — **or** a private trip the caller may not see |
 | `VALIDATION_ERROR` | The request failed validation. This includes a non-JPEG photo and a photo over 15 MiB. |
@@ -450,16 +460,16 @@ Every `GET` also answers `HEAD` through a second, schema-excluded registration o
 **Signout-all** deletes every session row for the user, including this one, and clears the cookie.
 
 **Recover** (`username`, `recoveryCode`, `newPassword`)
-- Wrong code or username → `401`, counted against the lockout.
+- Wrong code or username → `401`, counted against the account lockout (`users.failed_logins`).
 - On success, in one transaction: set the new password, revoke every session, issue a new recovery code, reset the lockout. Then sign this device in.
 - It works for operator reset codes too (`reset_account` writes the same column).
 
 **Password change** (`currentPassword`, `newPassword`)
-- Wrong current password → `403`, counted against the lockout.
+- Wrong current password → `403`, counted per session (`sessions.failed_confirmations`), never against the account lockout. The 10th wrong one on a session → `401` and the session is deleted (Entry 33). The account lockout never refuses this route; `429` only from the per-IP `signin` bucket.
 - `newPassword` equal to the current one → `422`.
 - On success: revoke every session, then issue a fresh one for this device.
 
-**Recovery-code rotation** (`password`): wrong password → `403`, counted against the lockout. On success the old code stops working and the new one is shown once.
+**Recovery-code rotation** (`password`): wrong password → `403`, counted per session like the password change (10th → `401`, session deleted; never against the account lockout; Entry 33). On success the old code stops working and the new one is shown once.
 
 **Me** returns the caller's own `id`, `username`, `displayName` and `createdAt`. This is the only response that ever contains a username.
 
@@ -724,6 +734,23 @@ COMMENT ON COLUMN photos.uploaded_by IS
 ```
 
 The `COMMENT ON COLUMN` for `rider_slug` replaces 0001's comment ("Possession of this value is the whole write authorisation"), which is false after Entry 29.
+
+### Migration 0004: per-session confirmation counter (Entry 33)
+
+`backend/migrations/0004_session_confirm_failures.sql`, built by `t-am-session-confirm-limit`. Forward-only, additive, in the style of 0003:
+
+```sql
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS failed_confirmations integer NOT NULL DEFAULT 0;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_failed_confirmations_check' AND conrelid = 'sessions'::regclass) THEN
+        ALTER TABLE sessions ADD CONSTRAINT sessions_failed_confirmations_check CHECK (failed_confirmations >= 0);
+    END IF;
+END
+$$;
+```
+
+Existing rows read 0. The threshold (10) lives in code, not in the CHECK. `tables.py` mirrors the column and constraint. The pre-0004 image ignores the column and its inserts get 0, so rollback is a redeploy of the old image; the column can stay.
 
 ---
 
