@@ -2763,6 +2763,8 @@ DONE 2026-09-29. The ruling is decision-log Entry 30: plain CSS with custom prop
 - The build output stays one artifact.
 **Validation.** `cd frontend && npm test && npm run build`
 
+DONE 2026-10-06. `styles/tokens.css` (86 tokens, exact match to DESIGN.md Appendix A), `styles/base.css` (reset, type, focus ring, `.visually-hidden`, reduced-motion zeroing — moved here from the appendix per Entry 30), imports in `main.tsx`, `TripMap.css` after leaflet.css (no `@layer`), `__root.css` `.app-shell`. Rationale comments in place. Focus ring 6.17:1 on page. Frontend 385 + build. QA PASS. Note: `QueueNotice.tsx` still has an inline style — for a later restyle.
+
 ## t-am-fe-icons
 **Goal.** The Entry 30 D4 icon set. Nobody owned it before pre-flight (scrum change 18).
 **Scope.** `frontend/src/icons/` (16 in-house SVG icon components) and `frontend/src/icons/LICENSE`. No runtime icon package, no new dependency, no screen changes.
