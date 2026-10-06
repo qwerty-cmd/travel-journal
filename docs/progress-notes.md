@@ -2570,6 +2570,8 @@ cd backend && uv run python -c "import json,pathlib; from app.main import app; p
 cd frontend && npm run generate:api && npm test && npm run build
 ```
 
+DONE 2026-10-06. `routes/v2/join_requests.py`: create (`require_trip_join_requester` = session + reader rule; `join` limiter first), cancel, GET/HEAD `/me/join-requests`. `join_requests.create` locks trip then user, then pending → member → blocked → rejected (< 7 d) → revoked by another (< 7 d, NULL counts) → caps 20/100, insert ON CONFLICT on the partial index with a literal predicate (a bound one broke after 5 executions — test-writer caught it). Blocked reported as `rejected`. Reader lookup shared via `_readable_trip`. Tests: test_join_requests 39 + matrix §16; suite 2975; frontend 385 + build. QA PASS, 4/4 mutants, no deadlock, no private-trip oracle. Debt: t-am-join-copy-review; /me private-name question routed to t-am-legacy-claim.
+
 ## t-am-join-leader
 **Goal.** The leader's side: review, decide, unblock. This is part of the scrum change 11 split.
 **Scope.** `routes/v2/join_requests.py` (leader list, decision, unblock), `data/repositories/join_requests.py`, tests, Kubb regen.
@@ -2638,6 +2640,8 @@ cd backend && uv run pytest tests/test_legacy_claim.py && uv run pytest && uv ru
 cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
 cd frontend && npm run generate:api && npm test && npm run build
 ```
+
+**Added AC (from t-am-join-requester, triggered debt promoted here).** (1) Any claim path that creates a join request must take the same lock order as `join_requests.create` — trip row, then user row — or risk deadlocks. (2) `/me/join-requests` shows a private trip's *current* name to the requester (renames included); claims create requests on private trips by design, so get an architect ruling before this ships: freeze the name at request time, hide it, or accept it, and record the answer in the contract.
 
 ## t-am-operator-clis
 **Goal.** The only ways to make a legacy leader, reset an account or remove a rogue leader.
@@ -3065,3 +3069,7 @@ TRIGGERED DEBT (test-writer + QA on t-am-trip-create). A trip create with no sto
 ## t-am-leadership-contract-wording
 
 ORDINARY DEBT (dev + test-writer on t-am-trip-leadership). (1) The last-leader 409 message "Promote another rider to leader first" has no full stop, unlike every other message — the code copies the contract verbatim. (2) The promote note says the target "must be an active rider, else 404" but the same bullet says promoting an existing leader returns 200; code and tests follow the 200.
+
+## t-am-join-copy-review
+
+ORDINARY DEBT (dev on t-am-join-requester). (1) The join 409 messages were written by dev; DESIGN.md X5 says the designer reviews them. (2) Cancel declares a 422 for its path parameter that the contract row doesn't list (existing pattern, keeps FastAPI's HTTPValidationError out of the client). (3) The `join` limiter spends a token on a duplicate-pending 200 — the contract gives no exemption.
