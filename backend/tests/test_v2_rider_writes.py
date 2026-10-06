@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
@@ -306,12 +307,35 @@ async def state(engine: AsyncEngine, trip: SeededTrip) -> tuple[Any, Any]:
     return await snapshot(engine, trip.id), s3_state(trip)
 
 
+def presigned_target(url: str) -> tuple[str, str, str]:
+    """
+    A presigned URL's scheme, host and path -- the object it points at.
+
+    The query (``X-Amz-Date``, ``X-Amz-Credential``'s date scope,
+    ``X-Amz-Signature``) is signed per request, so two responses straddling a
+    second boundary differ there for the same object. The path still carries
+    the bucket and the object key, so a replay pointing at another object
+    fails. The URL's SigV4 shape is ``test_photo_upload_storage.py``'s job.
+    """
+    parts = urlsplit(url)
+    return parts.scheme, parts.netloc, parts.path
+
+
 def as_instants(body: dict[str, Any]) -> dict[str, Any]:
-    """The body with its timestamps parsed: the contract promises an instant, not a spelling."""
-    return {
-        k: datetime.fromisoformat(v) if k in {"arrivedAt", "takenAt"} else v
-        for k, v in body.items()
-    }
+    """
+    The body as compared across two requests: timestamps parsed (the contract
+    promises an instant, not a spelling) and a photo's presigned ``url`` reduced
+    to the object it points at. Every other field is compared exactly.
+    """
+    normalised: dict[str, Any] = {}
+    for k, v in body.items():
+        if k in {"arrivedAt", "takenAt"}:
+            normalised[k] = datetime.fromisoformat(v)
+        elif k == "url":
+            normalised[k] = presigned_target(v)
+        else:
+            normalised[k] = v
+    return normalised
 
 
 def without_date(response: Response) -> dict[str, str]:
@@ -519,6 +543,10 @@ async def test_a_legacy_create_replayed_on_v2_is_a_200_replay(
     replay = await v2(client, write, place.trip.id, place, rider, record_id=record_id, variant=3)
     assert replay.status_code == 200, replay.text
     assert as_instants(replay.json()) == as_instants(legacy.json())
+    if write == "upload_photo":
+        key = f"{place.trip.id}/{place.stop_id}/{record_id}"
+        assert presigned_target(replay.json()["url"])[2].endswith(f"/{key}")
+        assert stored_bytes(key) == minimal_jpeg(), "the v2 replay overwrote the stored object"
 
 
 @pytest.mark.parametrize("visibility", ["public", "private"])
