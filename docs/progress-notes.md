@@ -2679,6 +2679,8 @@ cd backend && uv run pytest tests/test_operator_clis.py tests/test_seed_trip.py 
 
 **Added AC (from t-am-auth-sessions QA, triggered debt promoted here).** Signin checks the lock before the disabled flag, so an account locked before being disabled answers 429 + Retry-After instead of the identical 401. Once `--disable` exists, disabling must also clear `locked_until`/`failed_logins` (or signin checks disabled first while keeping equal timing); test that a disabled account always gets the identical 401.
 
+DONE 2026-10-06. `app/data/grant_leader.py`, `reset_account.py`, `revoke_member.py` (one transaction each, injected-session cores, `main()` → `_run`; errors print class + SQLSTATE only), `seed_trip --leader-username` (trip + leader in one transaction; no flag = unchanged). reset_account deletes all sessions, clears the lockout, prints the code once after commit; `--disable` sets disabled_at, clears the lock, issues no code. revoke_member locks the trip, refuses the last leader, `revoked_by` NULL. Tests: test_operator_clis 24 + test_seed_trip 5 + one auth test; suite 3232. QA PASS. Debt: t-am-cli-gaps; reset-on-disabled routed to t-am-runbook-accounts.
+
 ## t-am-runbook-accounts
 **AC.** `docs/deploy-cutover-runbook.md` covers:
 - migration 0003;
@@ -2687,6 +2689,8 @@ cd backend && uv run pytest tests/test_operator_clis.py tests/test_seed_trip.py 
 - an explicit warning that rolling back the image restores slug-bearer writes (Entry 29 §12) and is security-degrading;
 - the `TRUSTED_PROXY_HOPS` check.
 **Validation.** `git diff --stat` shows `docs/` only.
+
+**Added AC (from t-am-operator-clis QA, triggered debt promoted here).** `reset_account` without `--disable` on a disabled account prints a recovery code that can't be used (the account stays disabled; recover → 401). The runbook must say plainly that reset does not re-enable an account, and how to re-enable one (today: no CLI — say so, or file it).
 
 ## t-am-owner-deploy
 
@@ -3091,3 +3095,7 @@ TRIGGERED DEBT (QA on t-am-member-revoke). (1) `matrix_row_problem` checks only 
 ## t-am-revoke-prior-rows-test
 
 ORDINARY DEBT (QA on t-am-member-revoke). Dropping the `revoked_at IS NULL` filter in `memberships.revoke` would rewrite an earlier self-leave row of a re-joined rider; no shipped test catches it (QA's probe did). The code is correct; add a left → rejoined → revoked test.
+
+## t-am-cli-gaps
+
+ORDINARY DEBT (QA on t-am-operator-clis). (1) No test pins that DB-error output omits `str(exc)` — mutating `describe_db_error` to return `str(exc)` passes all tests and would print bound parameters. (2) An unreachable Postgres makes all three CLIs (and seed_trip) print a traceback: asyncpg's ConnectionRefusedError is an OSError, not caught. No secret appears in it.
