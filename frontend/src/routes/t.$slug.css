@@ -1,0 +1,74 @@
+/* Legacy trip shell (docs/design/screens/legacy-link.md). Tokens only; mirrors trips.$tripId.css. */
+.legacy__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface-card);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.legacy__name {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+  font-weight: var(--font-weight-bold);
+}
+
+.legacy__meta {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.legacy__status {
+  padding: var(--space-4);
+}
+
+.legacy__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.legacy__h2 {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.legacy__photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.legacy__thumb {
+  padding: 0;
+  border: 0;
+  width: var(--size-thumb-min);
+  height: var(--size-thumb-min);
+}
+
+.legacy__thumb-img {
+  display: block;
+  width: var(--size-thumb-min);
+  height: var(--size-thumb-min);
+  object-fit: cover;
+}
+
+.legacy__viewer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-scrim);
+  z-index: var(--z-viewer);
+}
+
+.legacy__viewer-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}

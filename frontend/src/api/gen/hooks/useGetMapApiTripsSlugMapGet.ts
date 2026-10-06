@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
+import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422, GetMapApiTripsSlugMapGet429 } from "../types/GetMapApiTripsSlugMapGet";
 import type { QueryKey, QueryClient, QueryObserverOptions, UseQueryResult } from "@tanstack/react-query";
-import type { GetMapApiTripsSlugMapGetQueryResponse, GetMapApiTripsSlugMapGetPathParams, GetMapApiTripsSlugMapGet404, GetMapApiTripsSlugMapGet422 } from "../types/GetMapApiTripsSlugMapGet";
-import { queryOptions, useQuery } from "@tanstack/react-query";
 import { getMapApiTripsSlugMapGet } from "../clients/getMapApiTripsSlugMapGet";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const getMapApiTripsSlugMapGetQueryKey = ({ slug }: { slug: GetMapApiTripsSlugMapGetPathParams["slug"] | undefined }) => [{ url: '/api/trips/:slug/map', params: {slug:slug} }] as const
 
@@ -16,7 +16,7 @@ export type GetMapApiTripsSlugMapGetQueryKey = ReturnType<typeof getMapApiTripsS
 export function getMapApiTripsSlugMapGetQueryOptions({ slug }: { slug: GetMapApiTripsSlugMapGetPathParams["slug"] | undefined }, config: Partial<RequestConfig> & { client?: Client } = {}) {
 
         const queryKey = getMapApiTripsSlugMapGetQueryKey({ slug })
-        return queryOptions<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422>, GetMapApiTripsSlugMapGetQueryResponse, typeof queryKey>({
+        return queryOptions<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422 | GetMapApiTripsSlugMapGet429>, GetMapApiTripsSlugMapGetQueryResponse, typeof queryKey>({
          enabled: !!(slug),
          queryKey,
          queryFn: async ({ signal }) => {
@@ -44,7 +44,7 @@ export function getMapApiTripsSlugMapGetQueryOptions({ slug }: { slug: GetMapApi
  */
 export function useGetMapApiTripsSlugMapGet<TData = GetMapApiTripsSlugMapGetQueryResponse, TQueryData = GetMapApiTripsSlugMapGetQueryResponse, TQueryKey extends QueryKey = GetMapApiTripsSlugMapGetQueryKey>({ slug }: { slug: GetMapApiTripsSlugMapGetPathParams["slug"] | undefined }, options: 
 {
-  query?: Partial<QueryObserverOptions<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
+  query?: Partial<QueryObserverOptions<GetMapApiTripsSlugMapGetQueryResponse, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422 | GetMapApiTripsSlugMapGet429>, TData, TQueryData, TQueryKey>> & { client?: QueryClient },
   client?: Partial<RequestConfig> & { client?: Client }
 }
  = {}) {
@@ -58,7 +58,7 @@ export function useGetMapApiTripsSlugMapGet<TData = GetMapApiTripsSlugMapGetQuer
           ...getMapApiTripsSlugMapGetQueryOptions({ slug }, config),
           ...resolvedOptions,
           queryKey,
-         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422>> & { queryKey: TQueryKey }
+         } as unknown as QueryObserverOptions, queryClient) as UseQueryResult<TData, ResponseErrorConfig<GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422 | GetMapApiTripsSlugMapGet429>> & { queryKey: TQueryKey }
 
          query.queryKey = queryKey as TQueryKey
 

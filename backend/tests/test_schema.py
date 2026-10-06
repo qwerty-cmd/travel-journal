@@ -9,7 +9,11 @@ Two things are being protected here:
    a column and nobody updates the Core metadata (or vice versa), every query
    still compiles and the failure only surfaces as a runtime error from a real
    request. Reflecting the live database and comparing it to the metadata turns
-   that into a test failure at the point the mistake is made.
+   that into a test failure at the point the mistake is made. Columns, CHECK
+   and UNIQUE constraint names, indexes (partial predicates included), foreign
+   keys and server defaults are all compared, because migration 0003 leans on
+   every one of them (a partial unique index is the whole "one active
+   membership" rule).
 2. **The CHECK constraints.** The Pydantic models guard the API edge, but the
    database is reachable from seed scripts and repositories that don't go
    through it. A constraint is what makes a rule true of the *data* rather than
@@ -36,6 +40,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Text,
+    UniqueConstraint,
     exc,
     text,
 )
@@ -45,7 +50,22 @@ from sqlalchemy.types import REAL, VARCHAR, TypeEngine
 
 from app.data import tables
 
-EXPECTED_TABLES = ["trips", "stops", "photos", "bikes"]
+EXPECTED_TABLES = [
+    "trips",
+    "stops",
+    "photos",
+    "bikes",
+    # migrations/0003_accounts_membership.sql
+    "users",
+    "sessions",
+    "trip_members",
+    "join_requests",
+]
+
+# Every table keyed by a text ``id``. ``sessions`` is the one exception: its key
+# is ``token_hash``, the SHA-256 of the cookie token (docs/api-contract.md,
+# "Data model: migration 0003"), asserted separately below.
+ID_KEYED_TABLES = [name for name in EXPECTED_TABLES if name != "sessions"]
 
 # asyncpg binds typed parameters, so date/timestamptz columns need real
 # date/datetime objects rather than ISO strings.
@@ -173,10 +193,132 @@ async def test_primary_keys_are_text_not_uuid(migrated_engine: AsyncEngine) -> N
     id into a raw driver error instead of something a route can map to a 4xx.
     """
     reflected = await _reflect(migrated_engine)
-    for name in EXPECTED_TABLES:
+    for name in ID_KEYED_TABLES:
         pk_columns = list(reflected.tables[name].primary_key.columns)
         assert [c.name for c in pk_columns] == ["id"], f"{name}: primary key is not (id)"
         assert pk_columns[0].type.python_type is str, f"{name}.id is not a text column"
+
+
+async def test_sessions_are_keyed_by_token_hash(migrated_engine: AsyncEngine) -> None:
+    """Only the SHA-256 of the session cookie is stored, and it is the key."""
+    reflected = await _reflect(migrated_engine)
+    pk_columns = list(reflected.tables["sessions"].primary_key.columns)
+    assert [c.name for c in pk_columns] == ["token_hash"]
+    assert _postgres_ddl(pk_columns[0].type) == "BYTEA"
+
+
+def _normalize_sql(expression: str) -> str:
+    """
+    Postgres's rendering of a default or predicate, reduced to how tables.py spells it.
+
+    Postgres adds ``::text`` casts to string literals and wraps index predicates
+    in one pair of parentheses; neither changes the meaning, and nothing else is
+    rewritten, so a different literal or column still compares different.
+    """
+    normalized = expression.replace("::text", "").strip()
+    if normalized.startswith("(") and normalized.endswith(")"):
+        normalized = normalized[1:-1]
+    return normalized
+
+
+@pytest.mark.parametrize("table_name", EXPECTED_TABLES)
+async def test_server_defaults_match_metadata(
+    migrated_engine: AsyncEngine, table_name: str
+) -> None:
+    """
+    Column defaults agree. The 0003 backfill *is* two of them — existing trips
+    became private with a 24h delay through ``visibility`` and
+    ``public_delay_hours`` defaults — so a mismatch here is a behaviour change,
+    not cosmetics.
+    """
+    reflected = await _reflect(migrated_engine)
+    live = reflected.tables[table_name]
+    for column in tables.metadata.tables[table_name].columns:
+        live_default = live.columns[column.name].server_default
+        declared = None if column.server_default is None else str(column.server_default.arg)
+        found = None if live_default is None else _normalize_sql(str(live_default.arg))
+        assert declared == found, (
+            f"{table_name}.{column.name}: declared default {declared!r}, database has {found!r}"
+        )
+
+
+@pytest.mark.parametrize("table_name", EXPECTED_TABLES)
+async def test_indexes_match_metadata(migrated_engine: AsyncEngine, table_name: str) -> None:
+    """
+    Every index, by name: columns, uniqueness and partial predicate.
+
+    The predicate is load-bearing. ``ux_trip_members_active`` without its
+    ``WHERE revoked_at IS NULL`` forbids ever re-adding a revoked member, and
+    ``ux_join_requests_one_pending`` without ``WHERE state = 'pending'`` forbids
+    a second request after a rejection — both still "unique indexes on
+    (trip_id, user_id)".
+    """
+
+    def describe(index: Any) -> tuple[tuple[str, ...], bool, str | None]:
+        where = index.dialect_options["postgresql"]["where"]
+        return (
+            tuple(c.name for c in index.columns),
+            bool(index.unique),
+            None if where is None else _normalize_sql(str(where)),
+        )
+
+    reflected = await _reflect(migrated_engine)
+    declared = {i.name: describe(i) for i in tables.metadata.tables[table_name].indexes}
+    live = {i.name: describe(i) for i in reflected.tables[table_name].indexes}
+    assert declared == live
+
+
+@pytest.mark.parametrize("table_name", EXPECTED_TABLES)
+async def test_check_constraint_names_match_metadata(
+    migrated_engine: AsyncEngine, table_name: str
+) -> None:
+    """Every CHECK in the database is declared in tables.py under the same name, and vice versa."""
+    async with migrated_engine.connect() as conn:
+        rows = await conn.execute(text(_CHECK_CONSTRAINTS_SQL), {"table": table_name})
+        live = {row[0] for row in rows}
+    declared = {
+        constraint.name
+        for constraint in tables.metadata.tables[table_name].constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert declared == live
+
+
+@pytest.mark.parametrize("table_name", EXPECTED_TABLES)
+async def test_unique_constraints_match_metadata(
+    migrated_engine: AsyncEngine, table_name: str
+) -> None:
+    """UNIQUE constraints (not indexes) cover the same column sets in both descriptions."""
+
+    def column_sets(table: Any) -> set[tuple[str, ...]]:
+        return {
+            tuple(c.name for c in constraint.columns)
+            for constraint in table.constraints
+            if isinstance(constraint, UniqueConstraint)
+        }
+
+    reflected = await _reflect(migrated_engine)
+    declared_table = tables.metadata.tables[table_name]
+    assert column_sets(declared_table) == column_sets(reflected.tables[table_name])
+
+
+@pytest.mark.parametrize("table_name", EXPECTED_TABLES)
+async def test_foreign_keys_match_metadata(migrated_engine: AsyncEngine, table_name: str) -> None:
+    """
+    Same references, same ``ON DELETE``. The delete rules are the account
+    lifecycle: sessions cascade with a user, memberships and join requests
+    RESTRICT a user delete, authorship columns SET NULL so no photo or stop is
+    lost with an account.
+    """
+
+    def describe(table: Any) -> set[tuple[str, str, str | None]]:
+        return {
+            (fk.parent.name, fk.target_fullname, (fk.ondelete or "NO ACTION").upper())
+            for fk in table.foreign_keys
+        }
+
+    reflected = await _reflect(migrated_engine)
+    assert describe(tables.metadata.tables[table_name]) == describe(reflected.tables[table_name])
 
 
 async def test_photos_has_no_url_or_archived_column(migrated_engine: AsyncEngine) -> None:

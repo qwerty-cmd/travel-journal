@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
+import type { ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams, ListPhotosApiTripsSlugStopsStopIdPhotosGet404, ListPhotosApiTripsSlugStopsStopIdPhotosGet422, ListPhotosApiTripsSlugStopsStopIdPhotosGet429 } from "../types/ListPhotosApiTripsSlugStopsStopIdPhotosGet";
 
 function getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }: { stop_id: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["stop_id"]; slug: ListPhotosApiTripsSlugStopsStopIdPhotosGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}/stops/${stop_id}/photos` as const }
@@ -20,8 +20,8 @@ function getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }: { s
  * accepted). `{stop_id}` is then verified to belong to the resolved trip -- a 404
  * if it does not. Photos are fetched by `data/repositories/photos.list_by_stop`.
  * **Related APIs.** `GET /api/trips/{slug}/stops` for the stop list,
- * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (rider slug
- * only).
+ * `POST /api/trips/{slug}/stops/{stop_id}/photos` to upload a photo (active
+ * members only).
  * @summary List a stop's photos
  * {@link /api/trips/:slug/stops/:stop_id/photos}
  */
@@ -30,6 +30,6 @@ export async function listPhotosApiTripsSlugStopsStopIdPhotosGet({ stop_id, slug
 
 
 
-  const res = await request<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422>, unknown>({ method : "GET", url : getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }).url.toString(), ... requestConfig })
+  const res = await request<ListPhotosApiTripsSlugStopsStopIdPhotosGetQueryResponse, ResponseErrorConfig<ListPhotosApiTripsSlugStopsStopIdPhotosGet404 | ListPhotosApiTripsSlugStopsStopIdPhotosGet422 | ListPhotosApiTripsSlugStopsStopIdPhotosGet429>, unknown>({ method : "GET", url : getListPhotosApiTripsSlugStopsStopIdPhotosGetUrl({ stop_id, slug }).url.toString(), ... requestConfig })
   return res.data
 }

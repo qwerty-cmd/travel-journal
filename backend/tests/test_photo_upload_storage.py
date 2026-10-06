@@ -20,6 +20,15 @@ Against the real app, the local Postgres and the local MinIO; nothing mocked.
    trip's prefix, not in the table.
 6. **``PhotoOut.url`` is a SigV4 presigned GET** for the deterministic key,
    valid for an hour, and it actually serves the uploaded bytes.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -37,8 +46,9 @@ from uuid import uuid4
 import httpx
 import pytest
 from botocore.exceptions import ClientError
-from conftest import SeededTrip
-from httpx import ASGITransport, AsyncClient
+from conftest import SeededTrip, SignedInAccount, make_async_client
+from httpx import AsyncClient
+from jpeg_fixtures import jpeg_with_scan, minimal_jpeg
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -57,7 +67,7 @@ ABOVE_MULTIPART_THRESHOLD = 8 * 1024 * 1024 + 1
 
 
 async def _app_client(
-    engine: AsyncEngine, *, raise_app_exceptions: bool
+    engine: AsyncEngine, account: SignedInAccount, *, raise_app_exceptions: bool
 ) -> AsyncIterator[AsyncClient]:
     import app.main
 
@@ -70,22 +80,30 @@ async def _app_client(
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application, raise_app_exceptions=raise_app_exceptions)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        # Every request acts as `account` (the `rider_session`, an active member of
+        # both seeded trips): since decision-log Entry 29 the slug only locates the
+        # trip and the write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(
+            application, headers=account.headers, raise_app_exceptions=raise_app_exceptions
+        ) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, on the test database."""
-    async for http_client in _app_client(migrated_engine, raise_app_exceptions=True):
+    async for http_client in _app_client(migrated_engine, rider_session, raise_app_exceptions=True):
         yield http_client
 
 
 @pytest.fixture
-async def quiet_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def quiet_client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """
     The same app, but an unhandled exception comes back as the ``500`` a phone sees.
 
@@ -93,7 +111,9 @@ async def quiet_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClien
     ``ASGITransport`` would surface the re-raise instead of the response -- which
     is the thing under test.
     """
-    async for http_client in _app_client(migrated_engine, raise_app_exceptions=False):
+    async for http_client in _app_client(
+        migrated_engine, rider_session, raise_app_exceptions=False
+    ):
         yield http_client
 
 
@@ -162,7 +182,7 @@ async def test_stored_object_is_the_uploaded_bytes_under_the_deterministic_key(
     photo_id = str(uuid4())
     key = f"{trip.id}/{stop_id}/{photo_id}"
     created_keys.append(key)
-    content = os.urandom(size)
+    content = jpeg_with_scan(os.urandom(size))
 
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
@@ -184,12 +204,12 @@ async def test_replay_does_not_touch_the_stored_object(
     created_keys.append(key)
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
-    first = await client.post(url, data=form(photo_id), files=upload(b"original-bytes"))
-    replay = await client.post(url, data=form(photo_id), files=upload(b"different-bytes"))
+    first = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg(1)))
+    replay = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg(2)))
 
     assert first.status_code == HTTPStatus.CREATED, first.text
     assert replay.status_code == HTTPStatus.OK, replay.text
-    assert stored_bytes(key) == b"original-bytes"
+    assert stored_bytes(key) == minimal_jpeg(1)
 
 
 async def test_created_and_replayed_bodies_are_identical(
@@ -205,8 +225,8 @@ async def test_created_and_replayed_bodies_are_identical(
     created_keys.append(f"{trip.id}/{stop_id}/{photo_id}")
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
-    created = await client.post(url, data=form(photo_id), files=upload(b"bytes"))
-    replay = await client.post(url, data=form(photo_id), files=upload(b"bytes"))
+    created = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg()))
+    replay = await client.post(url, data=form(photo_id), files=upload(minimal_jpeg()))
 
     assert created.status_code == HTTPStatus.CREATED, created.text
     assert replay.status_code == HTTPStatus.OK, replay.text
@@ -296,23 +316,26 @@ async def test_cross_stop_conflict_writes_nothing_under_the_other_stop(
     first = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"original-bytes"),
+        files=upload(minimal_jpeg(1)),
     )
     conflict = await client.post(
         PHOTOS_PATH.format(slug=other_trip.rider_slug, stop_id=other_stop_id),
         data=form(photo_id),
-        files=upload(b"conflicting-bytes"),
+        files=upload(minimal_jpeg(2)),
     )
 
     assert first.status_code == HTTPStatus.CREATED, first.text
     assert conflict.status_code == HTTPStatus.CONFLICT, conflict.text
     assert keys_under(conflicting_prefix) == []
     # And the original object is still the original.
-    assert stored_bytes(f"{trip.id}/{stop_id}/{photo_id}") == b"original-bytes"
+    assert stored_bytes(f"{trip.id}/{stop_id}/{photo_id}") == minimal_jpeg(1)
 
 
 async def test_viewer_slug_writes_nothing_to_storage(
-    client: AsyncClient, stop: tuple[SeededTrip, str], swept_prefixes: list[str]
+    client: AsyncClient,
+    stop: tuple[SeededTrip, str],
+    swept_prefixes: list[str],
+    non_member_session: SignedInAccount,
 ) -> None:
     """A ``403`` on the viewer slug leaves no object under the stop's key."""
     trip, stop_id = stop
@@ -323,7 +346,8 @@ async def test_viewer_slug_writes_nothing_to_storage(
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"viewer-bytes"),
+        files=upload(minimal_jpeg()),
+        headers=non_member_session.headers,
     )
 
     assert response.status_code == HTTPStatus.FORBIDDEN, response.text
@@ -348,7 +372,7 @@ async def test_unknown_slug_writes_nothing_to_storage(
     response = await client.post(
         PHOTOS_PATH.format(slug=f"no-such-slug-{secrets.token_urlsafe(8)}", stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"unknown-slug-bytes"),
+        files=upload(minimal_jpeg()),
     )
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
@@ -421,7 +445,7 @@ async def test_a_storage_failure_is_a_500_that_writes_no_row_and_leaks_no_slug(
     response = await quiet_client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id),
         data=form(photo_id),
-        files=upload(b"never-stored"),
+        files=upload(minimal_jpeg()),
     )
 
     assert_internal_error_leaks_nothing(
@@ -464,12 +488,12 @@ async def test_an_insert_failure_after_upload_is_a_500_and_a_retry_lands_the_ret
 
     monkeypatch.setattr(photos_route, "insert", insert_failing_once)
 
-    failed = await quiet_client.post(url, data=form(photo_id), files=upload(b"first-attempt"))
+    failed = await quiet_client.post(url, data=form(photo_id), files=upload(minimal_jpeg(1)))
 
     assert_internal_error_leaks_nothing(failed, trip.rider_slug, trip.viewer_slug, key)
     assert await photo_rows(migrated_engine, photo_id) == []
 
-    retry = await quiet_client.post(url, data=form(photo_id), files=upload(b"retry-attempt"))
+    retry = await quiet_client.post(url, data=form(photo_id), files=upload(minimal_jpeg(2)))
 
     assert retry.status_code == HTTPStatus.CREATED, retry.text
     assert retry.json()["id"] == photo_id
@@ -478,7 +502,7 @@ async def test_an_insert_failure_after_upload_is_a_500_and_a_retry_lands_the_ret
     assert len(rows) == 1
     assert rows[0]["stop_id"] == stop_id
     assert rows[0]["object_key"] == key
-    assert stored_bytes(key) == b"retry-attempt"
+    assert stored_bytes(key) == minimal_jpeg(2)
 
 
 # --------------------------------------------------------------------------
@@ -506,7 +530,7 @@ async def test_a_stop_on_another_trip_is_404_and_writes_nothing_under_either_tri
     response = await client.post(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=other_stop_id),
         data=form(photo_id),
-        files=upload(b"cross-trip-bytes"),
+        files=upload(minimal_jpeg()),
     )
 
     assert response.status_code == HTTPStatus.NOT_FOUND, response.text
@@ -545,7 +569,8 @@ async def assert_presigned_get(url: str, key: str, content: bytes) -> None:
     assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
     assert query["X-Amz-Expires"] == ["3600"]
 
-    # Straight to the object store, not through the agent proxy.
+    # Straight to the object store, not through the agent proxy. Not our app, so
+    # not the shared app-client factory.
     async with httpx.AsyncClient(trust_env=False) as s3_http:
         fetched = await s3_http.get(url)
     assert fetched.status_code == HTTPStatus.OK, fetched.text
@@ -560,7 +585,7 @@ async def test_photo_url_is_a_sigv4_presigned_get_that_serves_the_uploaded_bytes
     photo_id = str(uuid4())
     key = f"{trip.id}/{stop_id}/{photo_id}"
     created_keys.append(key)
-    content = os.urandom(4096)
+    content = jpeg_with_scan(os.urandom(4096))
     url = PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop_id)
 
     created = await client.post(url, data=form(photo_id), files=upload(content))

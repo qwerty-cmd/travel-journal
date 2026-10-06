@@ -8,7 +8,7 @@ import type { StopOut } from "./StopOut";
 
 export type ListStopsApiTripsSlugStopsGetPathParams = {
     /**
-     * @description The trip\'s rider or viewer slug — the unguessable link the trip was shared with. Read endpoints accept either one.
+     * @description The trip\'s rider or viewer slug — the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.
      * @type string
     */
     slug: string;
@@ -32,10 +32,16 @@ export type ListStopsApiTripsSlugStopsGet404 = ErrorEnvelope;
 */
 export type ListStopsApiTripsSlugStopsGet422 = ErrorEnvelope;
 
+/**
+ * ErrorEnvelope
+ * @description The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.
+*/
+export type ListStopsApiTripsSlugStopsGet429 = ErrorEnvelope;
+
 export type ListStopsApiTripsSlugStopsGetQueryResponse = ListStopsApiTripsSlugStopsGet200;
 
 export type ListStopsApiTripsSlugStopsGetQuery = {
     Response: ListStopsApiTripsSlugStopsGet200;
     PathParams: ListStopsApiTripsSlugStopsGetPathParams;
-    Errors: ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422;
+    Errors: ListStopsApiTripsSlugStopsGet404 | ListStopsApiTripsSlugStopsGet422 | ListStopsApiTripsSlugStopsGet429;
 };

@@ -94,7 +94,9 @@ async def list_by_trip(session: AsyncSession, trip_id: str) -> list[BikeOut]:
     ]
 
 
-async def create(session: AsyncSession, trip_id: str, bike: BikeCreate) -> tuple[BikeOut, bool]:
+async def create(
+    session: AsyncSession, trip_id: str, bike: BikeCreate, *, created_by: str
+) -> tuple[BikeOut, bool]:
     """
     Store one bike under this trip — or recognise that it is already stored.
 
@@ -102,6 +104,9 @@ async def create(session: AsyncSession, trip_id: str, bike: BikeCreate) -> tuple
     was already on this trip and the **stored** row is handed back unchanged.
     Raises ``BikeIdOnAnotherTrip`` when the id belongs to a bike on another
     trip. Same three-way branch as ``stops.create`` (decision-log Entry 14).
+
+    ``created_by`` is the writing account's id, from the session the write gate
+    resolved (decision-log Entry 29). A replay keeps the original author.
     """
     stored = (
         await session.execute(
@@ -141,6 +146,7 @@ async def create(session: AsyncSession, trip_id: str, bike: BikeCreate) -> tuple
             model=bike.model,
             year=bike.year,
             specs=bike.specs,
+            created_by=created_by,
         )
     )
     await session.commit()

@@ -10,6 +10,8 @@
  *    parseable `ErrorEnvelope`; the offline queue classifies on
  *    `envelope.error.code` and retries anything without an envelope
  *    (docs/api-contract.md, Error envelope). An `AbortError` is re-thrown as is.
+ *    `retryAfter` carries a `429`'s `Retry-After` (whole seconds) so a form can
+ *    show its countdown (contract "Rate limits and lockout").
  */
 import type { ErrorEnvelope } from './gen/types/ErrorEnvelope'
 
@@ -43,12 +45,15 @@ export type ResponseConfig<TData = unknown> = {
 export class ApiError extends Error {
   readonly status?: number
   readonly envelope?: ErrorEnvelope
+  /** Seconds from the `Retry-After` header, when the response carried a valid one. */
+  readonly retryAfter?: number
 
-  constructor(message: string, status?: number, envelope?: ErrorEnvelope, options?: ErrorOptions) {
+  constructor(message: string, status?: number, envelope?: ErrorEnvelope, options?: ErrorOptions & { retryAfter?: number }) {
     super(message, options)
     this.name = 'ApiError'
     this.status = status
     this.envelope = envelope
+    this.retryAfter = options?.retryAfter
   }
 }
 
@@ -136,7 +141,10 @@ const request = async <TData, _TError = unknown, TVariables = unknown>(paramsCon
       if (isAbort(e)) throw e
     }
     const envelope = parseEnvelope(text)
-    throw new ApiError(envelope ? envelope.error.message : `HTTP ${response.status} ${response.statusText}`.trim(), response.status, envelope)
+    const retryAfter = Number.parseInt(response.headers.get('Retry-After') ?? '', 10)
+    throw new ApiError(envelope ? envelope.error.message : `HTTP ${response.status} ${response.statusText}`.trim(), response.status, envelope, {
+      retryAfter: Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : undefined,
+    })
   }
 
   const data = [204, 205, 304].includes(response.status) || !response.body ? {} : await response.json()

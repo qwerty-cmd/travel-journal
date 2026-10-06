@@ -10,14 +10,16 @@ import { routeTree } from "./routeTree.gen";
 import { parseTripLink } from "./trip";
 import type { TripOut } from "./api/gen/types/TripOut";
 
-// t-frontend-slug-routing: `/` → last trip or paste screen, and the /t/$slug
-// shell's pending / cached / not-found / unreachable states (decision-log
-// Entries 18 and 19). Driven through the real route tree and generated client,
-// with only globalThis.fetch mocked.
+// t-frontend-slug-routing: the /t/$slug shell's pending / cached / not-found /
+// unreachable states (decision-log Entries 18 and 19), and the old-link paste
+// field on `/`. Driven through the real route tree and generated client, with
+// only globalThis.fetch mocked. `/` itself is Discover since
+// t-am-fe-discover-trip-detail (discoverTripDetail.test.tsx); AC1 here now pins
+// that the Entry 18 auto-redirect is gone.
 
 const fetchMock = vi.fn<typeof fetch>();
 
-const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "rider" };
+const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "rider", visibility: "private", publicDelayHours: 24, riderCount: 1, lastPublicStopAt: null, viewer: { role: "rider" } };
 const CACHED: TripOut = { ...TRIP, name: "Cached name" };
 
 const json = (status: number, body: unknown) =>
@@ -46,15 +48,19 @@ const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 beforeEach(() => {
   localStorage.clear();
   fetchMock.mockReset();
-  // The trip home also requests GET /api/trips/{slug}/map and /stops; answer them empty
-  // so fetchMock (and its call counts) sees trip requests only.
-  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
-    String(input).endsWith("/map")
+  // The trip home also requests GET /api/trips/{slug}/map and /stops, and Discover
+  // requests /api/v2/auth/me and /api/v2/trips; answer them (signed out, no public
+  // trips) so fetchMock (and its call counts) sees legacy trip requests only.
+  vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith("/api/v2/auth/me")) return Promise.resolve(json(401, envelope("UNAUTHENTICATED")));
+    if (url.startsWith("/api/v2/trips")) return Promise.resolve(json(200, { items: [], nextCursor: null }));
+    return url.endsWith("/map")
       ? Promise.resolve(json(200, { type: "FeatureCollection", features: [] }))
-      : String(input).endsWith("/stops")
+      : url.endsWith("/stops")
         ? Promise.resolve(json(200, []))
-        : fetchMock(input, init),
-  );
+        : fetchMock(input, init);
+  });
   vi.stubGlobal("scrollTo", () => {}); // jsdom lacks it; the router calls it on navigation
 });
 afterEach(() => {
@@ -62,19 +68,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("AC1: / redirect", () => {
-  test("with btj.lastSlug, / replaces itself with /t/<slug>", async () => {
+// Was "/ replaces itself with /t/<slug>" (Entry 18). Replaced by Discover per
+// Entry 29 and DESIGN.md D7 (ba C10): `/` never auto-redirects; a remembered
+// lastSlug becomes a "Continue: last trip link" card instead.
+describe("AC1: / no longer redirects", () => {
+  test("with btj.lastSlug, / stays put and links the last trip instead", async () => {
     localStorage.setItem("btj.lastSlug", "abc");
-    fetchMock.mockImplementation(async () => json(200, TRIP));
     const router = renderAt("/");
-    await waitFor(() => expect(router.state.location.pathname).toBe("/t/abc"));
-    expect(router.history.length).toBe(1); // replace, not push
-    expect(await screen.findByRole("heading", { name: TRIP.name })).toBeTruthy();
+    const card = await screen.findByRole("link", { name: "Continue: last trip link" });
+    expect(card.getAttribute("href")).toBe("/t/abc");
+    await settle();
+    expect(router.state.location.pathname).toBe("/");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("without btj.lastSlug, / shows the paste screen and fetches nothing", async () => {
+  test("without btj.lastSlug, / shows Discover with no continue card", async () => {
     const router = renderAt("/");
-    expect(await screen.findByLabelText("Paste your trip link")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Public trips" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Continue: last trip link" })).toBeNull();
     expect(router.state.location.pathname).toBe("/");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -94,9 +105,10 @@ describe("AC2: parseTripLink", () => {
   });
 });
 
-describe("AC3: paste screen", () => {
+describe("AC3: old-link paste field on /", () => {
   async function submit(value: string) {
-    const input = await screen.findByLabelText("Paste your trip link");
+    fireEvent.click(await screen.findByRole("button", { name: "Have an old trip link?" }));
+    const input = await screen.findByLabelText("Paste your old trip link");
     fireEvent.change(input, { target: { value } });
     fireEvent.click(screen.getByRole("button", { name: "Open trip" }));
   }
@@ -111,7 +123,7 @@ describe("AC3: paste screen", () => {
   test("an invalid link shows an inline message and stays on /", async () => {
     const router = renderAt("/");
     await submit("https://x.app/foo");
-    expect((await screen.findByRole("alert")).textContent).toBe("That doesn't look like a trip link.");
+    expect(await screen.findByText("That doesn't look like a trip link.")).toBeTruthy();
     await settle();
     expect(router.state.location.pathname).toBe("/");
     expect(fetchMock).not.toHaveBeenCalled();

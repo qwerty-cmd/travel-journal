@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422 } from "../types/CreateBikeApiTripsSlugBikesPost";
+import type { CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams, CreateBikeApiTripsSlugBikesPost401, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422, CreateBikeApiTripsSlugBikesPost429 } from "../types/CreateBikeApiTripsSlugBikesPost";
 
 function getCreateBikeApiTripsSlugBikesPostUrl({ slug }: { slug: CreateBikeApiTripsSlugBikesPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/bikes` as const }
@@ -14,12 +14,15 @@ function getCreateBikeApiTripsSlugBikesPostUrl({ slug }: { slug: CreateBikeApiTr
 
 /**
  * @description **Context.** Bikes are registered per trip so the journal records who is riding
- * what. Rider slug only -- a viewer link can read bikes (via `GET /trips/{slug}`)
- * but not add one. Task `t-bikes-create-endpoint`.
+ * what. Only a signed-in, active member of the trip can add one; either slug just
+ * locates the trip (decision-log Entry 29, contract default 21). The server sets
+ * `created_by` from the session. Tasks `t-bikes-create-endpoint`,
+ * `t-am-write-gate-legacy`.
  * **How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`
  * (decision-log Entry 14): unseen id creates the bike (201), id already on this
  * trip is a replay (200, stored record returned unchanged), id on a different trip
- * is a 409 with nothing disclosed about the conflicting record.
+ * is a 409 with nothing disclosed about the conflicting record. `require_trip_writer`
+ * runs first: slug (404), session (401), active membership (403).
  * **Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,
  * `PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.
  * @summary Add a bike to a trip
@@ -30,6 +33,6 @@ export async function createBikeApiTripsSlugBikesPost({ slug, data }: { slug: Cr
 
   const requestData = data
 
-  const res = await request<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422>, CreateBikeApiTripsSlugBikesPostMutationRequest>({ method : "POST", url : getCreateBikeApiTripsSlugBikesPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
+  const res = await request<CreateBikeApiTripsSlugBikesPostMutationResponse, ResponseErrorConfig<CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422 | CreateBikeApiTripsSlugBikesPost429>, CreateBikeApiTripsSlugBikesPostMutationRequest>({ method : "POST", url : getCreateBikeApiTripsSlugBikesPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
   return res.data
 }

@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useListPhotosApiTripsSlugStopsStopIdPhotosGet } from "../api/gen/hooks/useListPhotosApiTripsSlugStopsStopIdPhotosGet";
 import { useListStopsApiTripsSlugStopsGet } from "../api/gen/hooks/useListStopsApiTripsSlugStopsGet";
 import { formatInstant } from "../format";
+import "./t.$slug.css";
 
 // Design feature: stop detail (spec Section 6, screen 3). One stop with its
 // photos; same for rider and viewer, read-only.
@@ -29,7 +30,6 @@ export const Route = createFileRoute("/t/$slug/stops/$stopId")({
   component: StopDetail,
 });
 
-const THUMB = 96;
 
 function StopDetail() {
   const { slug, stopId } = Route.useParams();
@@ -63,25 +63,25 @@ function StopDetail() {
     return () => document.removeEventListener("keydown", onKey);
   }, [openId]);
 
-  if (stops.isPending) return <p style={{ padding: 16 }}>Loading stops…</p>;
+  if (stops.isPending) return <p className="legacy__status">Loading stops…</p>;
   if (stops.isError)
-    return <p style={{ padding: 16 }}>{stops.error.envelope?.error.message ?? "Couldn't load stops"}</p>;
+    return <p className="legacy__status">{stops.error.envelope?.error.message ?? "Couldn't load stops"}</p>;
   if (!stop)
     return (
-      <main style={{ padding: 16 }}>
+      <main className="legacy__panel">
         <p>Stop not found</p>
-        <Link to="/t/$slug" params={{ slug }}>
+        <Link to="/t/$slug" params={{ slug }} className="btn btn--tertiary btn--md">
           Back to trip
         </Link>
       </main>
     );
 
   return (
-    <main style={{ padding: 16 }}>
-      <Link to="/t/$slug" params={{ slug }}>
+    <main className="legacy__panel">
+      <Link to="/t/$slug" params={{ slug }} className="btn btn--tertiary btn--md">
         Back to trip
       </Link>
-      <h2>{stop.name}</h2>
+      <h2 className="legacy__h2">{stop.name}</h2>
       <p>
         {formatInstant(stop.arrivedAt)}
         {stop.locationSource === "manual" && " · approximate location"}
@@ -95,20 +95,20 @@ function StopDetail() {
       ) : photos.data.length === 0 ? (
         <p>No photos yet</p>
       ) : (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div className="legacy__photos">
           {photos.data.map((photo) => (
             <button
               key={photo.id}
               type="button"
               onClick={() => setOpenId(photo.id)}
-              style={{ padding: 0, border: 0, width: THUMB, height: THUMB }}
+              className="legacy__thumb"
             >
               <img
                 src={photo.url}
                 alt="Stop photo"
                 loading="lazy"
                 onError={onPhotoError}
-                style={{ width: THUMB, height: THUMB, objectFit: "cover", display: "block" }}
+                className="legacy__thumb-img"
               />
             </button>
           ))}
@@ -121,21 +121,13 @@ function StopDetail() {
           aria-modal="true"
           aria-label="Photo"
           onClick={() => setOpenId(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.9)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 1000,
-          }}
+          className="legacy__viewer"
         >
           <img
             src={open.url}
             alt="Stop photo"
             onError={onPhotoError}
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            className="legacy__viewer-img"
           />
         </div>
       )}

@@ -5,10 +5,12 @@
 
 import type { Access } from "./Access";
 import type { BikeOut } from "./BikeOut";
+import type { ViewerOut } from "./ViewerOut";
+import type { Visibility } from "./Visibility";
 
 /**
  * TripOut
- * @description GET /trips/{slug} response. Works with either slug.
+ * @description One trip: `GET /api/trips/{slug}` (either slug) and `GET /api/v2/trips/{tripId}`.\n\nCarries no slug, no username and no user id -- a non-member can receive it.
 */
 export type TripOut = {
     /**
@@ -32,8 +34,32 @@ export type TripOut = {
     */
     bikes: BikeOut[];
     /**
-     * @description Which kind of slug was used to make this request — \'rider\' or \'viewer\'. The frontend uses this, not a stored user role, to decide whether to show write UI (Add stop, upload photo, edit bikes).
+     * @description Deprecated; kept for clients from before accounts. \'rider\' when the caller is signed in with an active membership on this trip (rider or leader), \'viewer\' otherwise — anonymous, a signed-in non-member, a pending requester or a revoked member. Which slug was used plays no part. A UI hint for whether to show write UI (Add stop, upload photo, edit bikes); the server enforces access on every write regardless.
      * @type string
     */
     access: Access;
+    /**
+     * @description Who can read a trip. Mirrors `trips_visibility_check` in migration 0003.
+     * @type string
+    */
+    visibility: Visibility;
+    /**
+     * @description How many hours a stop stays hidden from non-members after its `arrivedAt`, from 0 to 168. Members see every stop at once, whatever this says.
+     * @type integer
+    */
+    publicDelayHours: number;
+    /**
+     * @description How many people are on the trip: its active members, leaders included. A count only; who they are is never in this response.
+     * @type integer
+    */
+    riderCount: number;
+    /**
+     * @description The latest `arrivedAt` among the stops visible to the public, i.e. with the public delay applied, as a timezone-aware ISO 8601 instant. The same value for every caller, members included. Null when no stop is visible to the public yet.
+    */
+    lastPublicStopAt: (string | null);
+    /**
+     * @description What the caller is to this trip. Tells the UI what to show; never what is allowed.
+     * @type object
+    */
+    viewer: ViewerOut;
 };

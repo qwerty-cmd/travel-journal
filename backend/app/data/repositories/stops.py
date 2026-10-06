@@ -32,7 +32,7 @@ ORM" note.
 
 from __future__ import annotations
 
-from sqlalchemy import exists, select
+from sqlalchemy import ColumnElement, exists, func, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.data.tables import stops
@@ -61,7 +61,26 @@ class StopIdOnAnotherTrip(Exception):
     """
 
 
-async def list_by_trip(session: AsyncSession, trip_id: str) -> list[StopOut]:
+def public_visibility(public_delay_hours: int | None) -> ColumnElement[bool]:
+    """
+    The public-delay filter on ``stops``: ``arrived_at <= now() - public_delay_hours``.
+
+    ``None`` means no filter at all -- the caller is an active member, or the
+    route is a legacy read, which stays undelayed (``docs/api-contract.md``,
+    "Public delay"). A number is the trip's ``public_delay_hours``, applied for a
+    non-member. ``now()`` is the database clock at statement time, the same
+    clock ``trips._last_public_stop_at`` uses, so the stops a non-member sees
+    and ``lastPublicStopAt`` always agree. A stop in the future is never
+    visible to a non-member, even at a delay of 0.
+    """
+    if public_delay_hours is None:
+        return true()
+    return stops.c.arrived_at <= func.now() - func.make_interval(0, 0, 0, 0, public_delay_hours)
+
+
+async def list_by_trip(
+    session: AsyncSession, trip_id: str, *, public_delay_hours: int | None = None
+) -> list[StopOut]:
     """
     Every stop belonging to this trip, and — the part that matters — no other trip's.
 
@@ -92,6 +111,9 @@ async def list_by_trip(session: AsyncSession, trip_id: str) -> list[StopOut]:
     ``notes`` is nullable in the schema, unlike ``bikes.specs`` — a stop with no
     notes written comes back as ``null``, not ``""``, and that round-trips
     through ``StopOut.notes``.
+
+    ``public_delay_hours`` applies the public delay (``public_visibility``);
+    ``None``, the default, lists every stop.
     """
     statement = (
         select(
@@ -103,7 +125,7 @@ async def list_by_trip(session: AsyncSession, trip_id: str) -> list[StopOut]:
             stops.c.arrived_at,
             stops.c.notes,
         )
-        .where(stops.c.trip_id == trip_id)
+        .where(stops.c.trip_id == trip_id, public_visibility(public_delay_hours))
         .order_by(stops.c.arrived_at, stops.c.id)
     )
 
@@ -123,7 +145,9 @@ async def list_by_trip(session: AsyncSession, trip_id: str) -> list[StopOut]:
     ]
 
 
-async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple[StopOut, bool]:
+async def create(
+    session: AsyncSession, trip_id: str, stop: StopCreate, *, created_by: str
+) -> tuple[StopOut, bool]:
     """
     Store one stop under this trip — or recognise that it is already stored.
 
@@ -136,6 +160,9 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
     ``trip_id`` is the id the slug dependency resolved, never anything the caller
     typed — the same rule ``list_by_trip`` holds, and here it is also what the
     replay lookup is keyed on.
+
+    ``created_by`` is the writing account's id, from the session the write gate
+    resolved (decision-log Entry 29). A replay keeps the original author.
 
     **Why this is two statements and not one insert.** The whole of decision-log
     Entry 14 lives in the shape below, and this is the file where someone
@@ -211,6 +238,7 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
             location_source=stop.locationSource,
             arrived_at=stop.arrivedAt,
             notes=stop.notes,
+            created_by=created_by,
         )
     )
     await session.commit()
@@ -229,7 +257,9 @@ async def create(session: AsyncSession, trip_id: str, stop: StopCreate) -> tuple
     )
 
 
-async def map_features(session: AsyncSession, trip_id: str) -> MapFeatureCollection:
+async def map_features(
+    session: AsyncSession, trip_id: str, *, public_delay_hours: int | None = None
+) -> MapFeatureCollection:
     """
     The GeoJSON FeatureCollection for ``GET /trips/{slug}/map``.
 
@@ -240,6 +270,10 @@ async def map_features(session: AsyncSession, trip_id: str) -> MapFeatureCollect
 
     Building the response models here rather than in the route keeps the
     handler a one-liner and keeps every column name in ``data/``.
+
+    ``public_delay_hours`` applies the public delay (``public_visibility``)
+    before anything is built, so the pins *and* the trail come from visible
+    stops only, and the trail is drawn only when 2 or more are visible.
     """
     statement = (
         select(
@@ -249,7 +283,7 @@ async def map_features(session: AsyncSession, trip_id: str) -> MapFeatureCollect
             stops.c.lng,
             stops.c.arrived_at,
         )
-        .where(stops.c.trip_id == trip_id)
+        .where(stops.c.trip_id == trip_id, public_visibility(public_delay_hours))
         .order_by(stops.c.arrived_at, stops.c.id)
     )
 

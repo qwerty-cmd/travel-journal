@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mockup: Request to join + pending (docs/design/screens/join-request.md)</title>
+<!-- Illustration only. Sample content only. No external requests. -->
+<style>
+:root{
+  --color-brand-primary:#1f5c40;--color-brand-primary-subtle:#e3efe8;--color-brand-on-primary:#ffffff;
+  --color-surface-page:#f4f6f3;--color-surface-card:#ffffff;--color-surface-sunken:#eceeeb;
+  --color-text-primary:#17201b;--color-text-muted:#4d5a52;
+  --color-border-strong:#6b776f;--color-border-subtle:#d5dbd6;
+  --color-status-warning-text:#7a4b00;--color-status-warning-subtle:#fdf0d5;
+  --color-focus-ring:#1d4ed8;
+  --font-family-base:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;
+  --elevation-2:0 4px 12px rgba(23,32,27,.16);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:var(--space-6);background:var(--color-border-subtle);font-family:var(--font-family-base);color:var(--color-text-primary);font-size:17px;line-height:24px}
+.canvas{display:flex;gap:var(--space-8);flex-wrap:wrap;align-items:flex-start}
+.frame-label{font-size:15px;font-weight:600;margin:0 0 var(--space-2)}
+.frame{width:390px;min-height:844px;background:var(--color-surface-page);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--elevation-2)}
+.icon{width:24px;height:24px;flex:none}.icon--sm{width:18px;height:18px}
+.topbar{height:56px;display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-2);background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.topbar .t{flex:1;font-weight:600}
+.iconbtn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--color-text-primary);border-radius:var(--radius-md)}
+.form{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
+.h1{font-size:24px;line-height:30px;font-weight:700;margin:0}
+.title{font-size:20px;line-height:26px;font-weight:600;margin:0}
+.p{margin:0}
+.meta{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.row{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);height:24px;padding:0 var(--space-2);border-radius:var(--radius-sm);font-size:15px;font-weight:600}
+.badge--public{background:var(--color-brand-primary-subtle);color:var(--color-brand-primary)}
+.badge--pending{background:var(--color-status-warning-subtle);color:var(--color-status-warning-text)}
+.field{display:flex;flex-direction:column;gap:var(--space-2)}
+.label{font-weight:600}
+.helper{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.textarea{min-height:96px;border:2px solid var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-surface-card);padding:var(--space-3);font:17px/24px var(--font-family-base);color:var(--color-text-primary);width:100%;resize:vertical}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:48px;padding:0 var(--space-4);border-radius:var(--radius-md);font:600 17px/24px var(--font-family-base);border:2px solid transparent;text-decoration:none}
+.btn--primary{background:var(--color-brand-primary);color:var(--color-brand-on-primary)}
+.btn--secondary{background:var(--color-surface-card);color:var(--color-brand-primary);border-color:var(--color-border-strong)}
+.btn--tertiary{background:transparent;color:var(--color-brand-primary);text-decoration:underline;padding:0 var(--space-2)}
+.btn--lg{min-height:56px}.btn--full{width:100%}
+.btn:focus-visible,.iconbtn:focus-visible,textarea:focus-visible{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.steps{margin:0;padding-left:22px;font-size:15px;line-height:20px;color:var(--color-text-muted)}
+.notice{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);background:var(--color-brand-primary-subtle);align-items:flex-start}
+.notice p{margin:0}
+.quote{border-left:3px solid var(--color-border-subtle);padding:var(--space-2) var(--space-3);background:var(--color-surface-card);border-radius:0 var(--radius-sm) var(--radius-sm) 0;margin:0}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</defs></svg>
+
+<div class="canvas">
+
+<div>
+<p class="frame-label">Ask to join (signed in, not a member)</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Back to the trip"><svg class="icon"><use href="#i-back"/></svg></button><span class="t">Join trip</span></header>
+  <form class="form" onsubmit="return false">
+    <div class="row"><p class="title">Desert Loop (sample)</p><span class="badge badge--public"><svg class="icon icon--sm"><use href="#i-globe"/></svg>Public</span></div>
+    <h1 class="h1">Ask to join this trip</h1>
+    <p class="p">A leader of this trip will see your display name, <strong>Sam</strong>, and your message. Once they approve you, you can add stops and photos.</p>
+    <ol class="steps"><li>Create an account, or sign in.</li><li>Open your trip and tap Request to join.</li><li>A leader approves you. Then Add stop appears on the trip.</li></ol>
+    <div class="field">
+      <label class="label" for="msg">Message to the leaders (optional)</label>
+      <p class="helper" id="msg-h">Say who you are, e.g. which bike you ride.</p>
+      <textarea class="textarea" id="msg" aria-describedby="msg-h msg-c">Riding the blue dual-sport, travelling with Alex and Jo.</textarea>
+      <p class="helper" id="msg-c" style="text-align:right">55 / 280</p>
+    </div>
+    <button class="btn btn--primary btn--lg btn--full" type="submit">Send request</button>
+  </form>
+</div>
+</div>
+
+<div>
+<p class="frame-label">Pending (same route; also mirrored in the trip header)</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Back to the trip"><svg class="icon"><use href="#i-back"/></svg></button><span class="t">Join trip</span></header>
+  <div class="form">
+    <div class="row"><p class="title">Desert Loop (sample)</p><span class="badge badge--pending"><svg class="icon icon--sm"><use href="#i-clock"/></svg>Pending</span></div>
+    <h1 class="h1">Request sent</h1>
+    <div class="notice" role="status"><svg class="icon" style="color:#1f5c40"><use href="#i-clock"/></svg>
+      <p>Waiting for a leader to approve you. You'll see <strong>Add stop</strong> on the trip once you're approved. Nothing to do until then.</p></div>
+    <p class="quote">Riding the blue dual-sport, travelling with Alex and Jo.</p>
+    <p class="meta">Sent Fri 10 Oct, 9:12 am ACST</p>
+    <div class="row"><a class="btn btn--secondary" href="#">Back to the trip</a><button class="btn btn--tertiary">Cancel request</button></div>
+    <p class="meta">Approval isn't instant. Leaders may be riding. Check back later.</p>
+  </div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,41 @@
+/* RecoveryCodeStep (screens/signup.md step 2). Tokens only. */
+.recovery-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.recovery-step__tips {
+  padding-left: var(--space-5);
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.recovery-step__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--size-target-min);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.recovery-step__check input {
+  width: var(--size-icon-md);
+  height: var(--size-icon-md);
+  margin: 0;
+  accent-color: var(--color-brand-primary);
+}
+
+.recovery-step__submit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.recovery-step__reason {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}

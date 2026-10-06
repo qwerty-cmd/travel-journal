@@ -10,6 +10,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.routes import api_router
 from app.core.config import get_settings
+from app.core.csrf import CSRFMiddleware
 from app.core.errors import ApiError, register_exception_handlers
 from app.core.headers import SECURITY_HEADERS
 
@@ -38,6 +39,10 @@ class SecurityHeadersMiddleware:
 
 
 app = FastAPI(title="Bike Trip Journal API")
+# Order matters: Starlette's `add_middleware` makes the most recent addition the
+# outermost layer. CSRF is added first so SecurityHeadersMiddleware wraps it, and
+# the CSRF 403 carries the same security headers as every other response.
+app.add_middleware(CSRFMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router)

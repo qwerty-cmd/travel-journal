@@ -1,0 +1,37 @@
+/* BottomActionBar (DESIGN.md §5.13). Tokens only. */
+.action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-bar);
+  padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  background: var(--color-surface-card);
+  box-shadow: var(--elevation-2);
+}
+
+.action-bar__inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: var(--size-form-max);
+  margin: 0 auto;
+}
+
+.action-bar__helper {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+/* Same height as the bar: the action plus the bar's padding and the safe area. */
+.action-bar__spacer {
+  height: calc(var(--size-target-primary) + 2 * var(--space-3) + env(safe-area-inset-bottom));
+}
+
+.action-bar__spacer--helper {
+  height: calc(
+    var(--size-target-primary) + 2 * var(--space-3) + var(--space-2) + var(--font-line-height-small) +
+      env(safe-area-inset-bottom)
+  );
+}

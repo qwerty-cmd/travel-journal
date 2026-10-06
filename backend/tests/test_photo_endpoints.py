@@ -21,6 +21,15 @@ What the contract promises:
 9. **POST — `takenAt` is an offset-aware instant.** A naive value (no UTC
    offset) is 422 / ``VALIDATION_ERROR`` and writes nothing; an offset-carrying
    one is stored as the instant the device sent, whatever zone the API runs in.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips), and the "viewer slug" tests send a ``non_member_session`` instead, so
+their ``403`` now comes from the membership gate rather than from the slug. The
+assertions are unchanged. A viewer slug with a member's session is a successful
+write (contract default 21); ``test_access_matrix.py`` covers that and the rest
+of the identity matrix.
 """
 
 from __future__ import annotations
@@ -35,8 +44,9 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from conftest import SeededTrip
-from httpx import ASGITransport, AsyncClient
+from conftest import SeededTrip, SignedInAccount, make_async_client
+from httpx import AsyncClient
+from jpeg_fixtures import minimal_jpeg
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.data import tables
@@ -71,7 +81,9 @@ class SeededStop:
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     """The real application, talking to the test database on this test's event loop."""
     import app.main
 
@@ -84,8 +96,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)
@@ -180,9 +194,9 @@ def upload_form(
     }
 
 
-def fake_file(content: bytes = b"fake-jpeg-bytes", filename: str = "photo.jpg"):
-    """A minimal file-like object for multipart upload."""
-    return {"file": (filename, io.BytesIO(content), "image/jpeg")}
+def fake_file(content: bytes | None = None, filename: str = "photo.jpg"):
+    """A minimal valid JPEG as a multipart file part."""
+    return {"file": (filename, io.BytesIO(content or minimal_jpeg()), "image/jpeg")}
 
 
 async def photo_rows_for_id(engine: AsyncEngine, photo_id: str) -> list[Any]:
@@ -231,6 +245,7 @@ class TestListPhotos:
         seeded_stops: list[SeededStop],
         created_photo_ids: list[str],
         s3_bucket: None,
+        rider_session: SignedInAccount,
     ) -> None:
         """After uploading a photo, GET returns it with a presigned URL."""
         trip = seeded_trips[0]
@@ -253,7 +268,9 @@ class TestListPhotos:
         photo = next(p for p in photos if p["id"] == form["id"])
         assert set(photo.keys()) == CONTRACT_KEYS
         assert photo["stopId"] == stop.id
-        assert photo["uploadedBy"] == "Alice"
+        # The form sent "Alice"; the stored name is the uploading account's
+        # display name whatever the form says (contract default 23).
+        assert photo["uploadedBy"] == rider_session.display_name
         assert photo["archived"] is False
         # URL is a presigned S3 URL
         assert photo["url"].startswith("http")
@@ -334,6 +351,25 @@ class TestListPhotos:
 
         assert response.status_code == HTTPStatus.NOT_FOUND
 
+    async def test_nul_stop_id_returns_the_unknown_stop_404(
+        self,
+        client: AsyncClient,
+        seeded_trips: list[SeededTrip],
+    ) -> None:
+        """
+        ``%00`` decodes to a NUL byte Postgres ``text`` can't hold: still the unknown-stop 404.
+
+        Before the guard in ``photos.stop_belongs_to_trip`` the driver raised and
+        this was a ``500`` / ``INTERNAL_ERROR``.
+        """
+        trip = seeded_trips[0]
+        unknown = await client.get(PHOTOS_PATH.format(slug=trip.rider_slug, stop_id="no-such-stop"))
+
+        response = await client.get(PHOTOS_PATH.format(slug=trip.rider_slug, stop_id="%00"))
+
+        assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+        assert response.content == unknown.content
+
     async def test_head_on_get_route_works(
         self,
         client: AsyncClient,
@@ -366,6 +402,7 @@ class TestUploadPhoto:
         seeded_stops: list[SeededStop],
         created_photo_ids: list[str],
         s3_bucket: None,
+        rider_session: SignedInAccount,
     ) -> None:
         """Happy path: rider slug, unseen id -> 201 with PhotoOut."""
         trip = seeded_trips[0]
@@ -382,7 +419,9 @@ class TestUploadPhoto:
         assert set(body.keys()) == CONTRACT_KEYS
         assert body["id"] == form["id"]
         assert body["stopId"] == stop.id
-        assert body["uploadedBy"] == "Alice"
+        # The form sent "Alice"; the stored name is the uploading account's
+        # display name whatever the form says (contract default 23).
+        assert body["uploadedBy"] == rider_session.display_name
         assert body["archived"] is False
         assert body["url"].startswith("http")
 
@@ -407,7 +446,7 @@ class TestUploadPhoto:
         assert first.status_code == HTTPStatus.CREATED
 
         # Replay -> 200
-        second = await client.post(url, data=form, files=fake_file(b"different-bytes"))
+        second = await client.post(url, data=form, files=fake_file(minimal_jpeg(2)))
         assert second.status_code == HTTPStatus.OK
 
         # The stored photo is returned, not a new one
@@ -487,6 +526,7 @@ class TestUploadPhoto:
         client: AsyncClient,
         seeded_trips: list[SeededTrip],
         seeded_stops: list[SeededStop],
+        non_member_session: SignedInAccount,
     ) -> None:
         """Viewer slug on POST -> 403 FORBIDDEN."""
         trip = seeded_trips[0]
@@ -494,7 +534,9 @@ class TestUploadPhoto:
         url = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
 
         form = upload_form()
-        response = await client.post(url, data=form, files=fake_file())
+        response = await client.post(
+            url, data=form, files=fake_file(), headers=non_member_session.headers
+        )
 
         assert response.status_code == HTTPStatus.FORBIDDEN
         error = parse_envelope(response)
@@ -506,6 +548,7 @@ class TestUploadPhoto:
         seeded_trips: list[SeededTrip],
         seeded_stops: list[SeededStop],
         migrated_engine: AsyncEngine,
+        non_member_session: SignedInAccount,
     ) -> None:
         """A rejected 403 must not write a row."""
         trip = seeded_trips[0]
@@ -513,7 +556,7 @@ class TestUploadPhoto:
         url = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
 
         form = upload_form()
-        await client.post(url, data=form, files=fake_file())
+        await client.post(url, data=form, files=fake_file(), headers=non_member_session.headers)
 
         rows = await photo_rows_for_id(migrated_engine, form["id"])
         assert rows == []
@@ -766,7 +809,9 @@ class TestTakenAtIsOffsetAware:
         photo = next(p for p in listed if p["id"] == form["id"])
         assert datetime.fromisoformat(photo["takenAt"]) == submitted
 
-    @pytest.mark.parametrize("missing", ["id", "uploadedBy", "takenAt"])
+    # `uploadedBy` is not here: since t-am-write-gate-legacy it is optional and
+    # ignored (the stored name comes from the account), so omitting it is a 201.
+    @pytest.mark.parametrize("missing", ["id", "takenAt"])
     async def test_missing_form_field_still_returns_422_validation_error(
         self,
         client: AsyncClient,
@@ -834,6 +879,7 @@ async def test_the_access_guard_runs_before_body_validation(
     seeded_trips: list[SeededTrip],
     seeded_stops: list[SeededStop],
     case: str,
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     Viewer slug -> 403 and unknown slug -> 404, whatever the form looks like.
@@ -859,7 +905,10 @@ async def test_the_access_guard_runs_before_body_validation(
         PHOTOS_PATH.format(slug=trip.rider_slug, stop_id=stop.id), data=data, files=fresh()
     )
     viewer = await client.post(
-        PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id), data=data, files=fresh()
+        PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id),
+        data=data,
+        files=fresh(),
+        headers=non_member_session.headers,
     )
     unknown = await client.post(
         PHOTOS_PATH.format(slug=UNKNOWN_SLUG, stop_id=stop.id), data=data, files=fresh()
@@ -871,3 +920,75 @@ async def test_the_access_guard_runs_before_body_validation(
     assert unknown.status_code == HTTPStatus.NOT_FOUND, unknown.text
     assert parse_envelope(unknown).code == ErrorCode.NOT_FOUND
     assert await photo_rows_for_id(migrated_engine, probe_id) == []
+
+
+# --------------------------------------------------------------------------
+# The 16 MiB request cap applies to the upload only
+# --------------------------------------------------------------------------
+
+
+async def _raw_asgi(method: str, path: str, content_length: int) -> tuple[int, bytes]:
+    """
+    One request straight into the ASGI app, declaring `content_length` but sending no body.
+
+    httpx will not send a GET whose `Content-Length` disagrees with its body, so
+    this bypasses it. The declared length is all the cap looks at before reading.
+    """
+    import app.main
+
+    sent: list[dict[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "https",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"host", b"testserver"),
+            (b"origin", b"https://testserver"),
+            (b"content-type", b"multipart/form-data; boundary=x"),
+            (b"content-length", str(content_length).encode()),
+        ],
+        "client": ("203.0.113.9", 50000),
+        "server": ("testserver", 443),
+    }
+    await app.main.app(scope, receive, send)
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return status, body
+
+
+async def test_a_large_content_length_on_the_list_get_is_not_refused_as_a_photo(
+    client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    seeded_stops: list[SeededStop],
+) -> None:
+    """
+    `CappedBodyRoute` is set on the whole photos router, but only the upload
+    POST is capped. The POST is the control: the same header there is the 422.
+    """
+    from app.api.routes.photos import MAX_UPLOAD_REQUEST_BYTES, PHOTO_TOO_LARGE_MESSAGE
+
+    trip = seeded_trips[0]
+    stop = seeded_stops[0]
+    path = PHOTOS_PATH.format(slug=trip.viewer_slug, stop_id=stop.id)
+    too_big = MAX_UPLOAD_REQUEST_BYTES + 1
+
+    get_status, get_body = await _raw_asgi("GET", path, too_big)
+    post_status, post_body = await _raw_asgi("POST", path, too_big)
+
+    assert get_status == HTTPStatus.OK, get_body
+    assert PHOTO_TOO_LARGE_MESSAGE.encode() not in get_body
+    assert post_status == HTTPStatus.UNPROCESSABLE_ENTITY, post_body
+    assert PHOTO_TOO_LARGE_MESSAGE.encode() in post_body

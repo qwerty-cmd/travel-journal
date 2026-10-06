@@ -8,7 +8,7 @@ import type { TripOut } from "./TripOut";
 
 export type GetTripApiTripsSlugGetPathParams = {
     /**
-     * @description The trip\'s rider or viewer slug — the unguessable link the trip was shared with. Read endpoints accept either one.
+     * @description The trip\'s rider or viewer slug — the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.
      * @type string
     */
     slug: string;
@@ -16,7 +16,7 @@ export type GetTripApiTripsSlugGetPathParams = {
 
 /**
  * TripOut
- * @description The trip, the bikes on it, and which kind of link was used.
+ * @description The trip, the bikes on it, and whether the caller is an active member.
 */
 export type GetTripApiTripsSlugGet200 = TripOut;
 
@@ -32,10 +32,16 @@ export type GetTripApiTripsSlugGet404 = ErrorEnvelope;
 */
 export type GetTripApiTripsSlugGet422 = ErrorEnvelope;
 
+/**
+ * ErrorEnvelope
+ * @description The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.
+*/
+export type GetTripApiTripsSlugGet429 = ErrorEnvelope;
+
 export type GetTripApiTripsSlugGetQueryResponse = GetTripApiTripsSlugGet200;
 
 export type GetTripApiTripsSlugGetQuery = {
     Response: GetTripApiTripsSlugGet200;
     PathParams: GetTripApiTripsSlugGetPathParams;
-    Errors: GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422;
+    Errors: GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429;
 };

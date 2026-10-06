@@ -105,7 +105,7 @@ test("AC6: keyed by stop.id — an earlier stop inserted above keeps the existin
 });
 
 // AC5: through the real route tree, fetch stubbed per path.
-const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "viewer" };
+const TRIP: TripOut = { id: "t1", name: "Stuart Hwy 2026", startDate: "2026-10-01", bikes: [], access: "viewer", visibility: "private", publicDelayHours: 24, riderCount: 1, lastPublicStopAt: null, viewer: { role: "none" } };
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 

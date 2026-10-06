@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mockup: Discover (docs/design/screens/discover.md)</title>
+<!-- Illustration only. dev implements from docs/design/DESIGN.md + screens/*.md, not from this markup.
+     Sample content only. No external requests. -->
+<style>
+:root{
+  --color-brand-primary:#1f5c40;--color-brand-primary-pressed:#164430;--color-brand-primary-subtle:#e3efe8;--color-brand-on-primary:#ffffff;
+  --color-surface-page:#f4f6f3;--color-surface-card:#ffffff;--color-surface-sunken:#eceeeb;--color-surface-inverse:#17201b;
+  --color-text-primary:#17201b;--color-text-muted:#4d5a52;--color-text-on-inverse:#ffffff;
+  --color-border-strong:#6b776f;--color-border-subtle:#d5dbd6;
+  --color-status-danger:#b3261e;--color-status-danger-subtle:#fbe9e7;--color-status-warning-text:#7a4b00;--color-status-warning-subtle:#fdf0d5;
+  --color-focus-ring:#1d4ed8;--color-control-disabled-bg:#e4e8e5;--color-text-disabled:#5f6b64;
+  --font-family-base:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --font-family-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;--space-12:48px;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;--radius-pill:999px;
+  --elevation-1:0 1px 2px rgba(23,32,27,.12),0 1px 1px rgba(23,32,27,.08);--elevation-2:0 4px 12px rgba(23,32,27,.16);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:var(--space-6);background:var(--color-border-subtle);font-family:var(--font-family-base);color:var(--color-text-primary);font-size:17px;line-height:24px}
+.canvas{display:flex;gap:var(--space-8);flex-wrap:wrap;align-items:flex-start}
+.frame-label{font-size:15px;font-weight:600;margin:0 0 var(--space-2)}
+.frame{width:390px;min-height:844px;background:var(--color-surface-page);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--elevation-2);position:relative}
+.icon{width:24px;height:24px;flex:none}.icon--sm{width:18px;height:18px}
+.topbar{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 var(--space-2) 0 var(--space-4);background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.wordmark{font-size:20px;font-weight:700;color:var(--color-brand-primary)}
+.content{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-6)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:48px;padding:0 var(--space-4);border-radius:var(--radius-md);font:600 17px/24px var(--font-family-base);border:2px solid transparent;cursor:pointer;text-decoration:none}
+.btn--primary{background:var(--color-brand-primary);color:var(--color-brand-on-primary)}
+.btn--secondary{background:var(--color-surface-card);color:var(--color-brand-primary);border-color:var(--color-border-strong)}
+.btn--tertiary{background:transparent;color:var(--color-brand-primary);text-decoration:underline;padding:0 var(--space-2)}
+.btn--lg{min-height:56px;padding:0 20px}.btn--full{width:100%}
+.iconbtn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--color-text-primary);border-radius:var(--radius-md)}
+.btn:focus-visible,.iconbtn:focus-visible,a:focus-visible{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.card{background:var(--color-surface-card);border-radius:var(--radius-lg);box-shadow:var(--elevation-1);padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-2)}
+.card--emph{border:2px solid var(--color-brand-primary)}
+.row{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap}
+.between{justify-content:space-between}
+.h1{font-size:24px;line-height:30px;font-weight:700;margin:0}
+.h2{font-size:20px;line-height:26px;font-weight:600;margin:0}
+.title{font-size:20px;line-height:26px;font-weight:600;margin:0;color:var(--color-text-primary)}
+.meta{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.p{margin:0}
+.badge{display:inline-flex;align-items:center;gap:var(--space-1);height:24px;padding:0 var(--space-2);border-radius:var(--radius-sm);font-size:15px;font-weight:600;line-height:20px}
+.badge--public{background:var(--color-brand-primary-subtle);color:var(--color-brand-primary)}
+.badge--private{background:var(--color-surface-sunken);color:var(--color-text-primary)}
+.badge--pending{background:var(--color-status-warning-subtle);color:var(--color-status-warning-text)}
+.badge--leader{background:var(--color-brand-primary);color:var(--color-brand-on-primary)}
+.badge--rider{background:var(--color-surface-sunken);color:var(--color-text-primary)}
+.notice{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);align-items:flex-start}
+.notice--info{background:var(--color-brand-primary-subtle)}
+.trip-link{color:inherit;text-decoration:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.link{color:var(--color-brand-primary);text-decoration:underline}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2 20a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M18 13.5a7 7 0 0 1 4 6.5"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-bike" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="16" r="3.5"/><circle cx="18.5" cy="16" r="3.5"/><path d="M5.5 16 10 9h5l3.5 7M10 9 9 6H7"/></symbol>
+  </defs>
+</svg>
+
+<div class="canvas">
+
+<!-- Frame 1: signed out -->
+<div>
+<p class="frame-label">Discover, signed out (phone 390)</p>
+<div class="frame">
+  <header class="topbar">
+    <span class="wordmark">Bike Trip Journal</span>
+    <a class="btn btn--tertiary" href="#">Sign in</a>
+  </header>
+  <main class="content">
+    <h1 class="sr">Discover bike trips</h1>
+
+    <section class="card" aria-labelledby="ob-title">
+      <div class="row between">
+        <h2 class="h2" id="ob-title">Follow a bike trip</h2>
+        <button class="iconbtn" aria-label="Hide this introduction"><svg class="icon"><use href="#i-x"/></svg></button>
+      </div>
+      <p class="p">Anyone can view public trips. Adding stops and photos needs an account and a leader's approval.</p>
+      <p class="p">Pick a trip below to follow it. No account needed.</p>
+      <div class="row" style="margin-top:4px">
+        <a class="btn btn--secondary" href="#">Create an account</a>
+        <a class="btn btn--tertiary" href="#">Sign in</a>
+      </div>
+    </section>
+
+    <section style="display:flex;flex-direction:column;gap:16px">
+      <div>
+        <h2 class="h2">Public trips</h2>
+        <p class="meta">Public trips, most recently updated first.</p>
+      </div>
+
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Desert Loop (sample)</h3></a>
+          <span class="badge badge--public"><svg class="icon icon--sm"><use href="#i-globe"/></svg>Public</span></div>
+        <p class="meta">Started 12 Oct 2026 · 3 riders</p>
+        <p class="meta">Last public stop 2 days ago</p>
+      </article>
+
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Coast and Ranges Ride</h3></a>
+          <span class="badge badge--public"><svg class="icon icon--sm"><use href="#i-globe"/></svg>Public</span></div>
+        <p class="meta">Started 3 Oct 2026 · 2 riders</p>
+        <p class="meta">Last public stop 5 days ago</p>
+      </article>
+
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Saltbush Circuit</h3></a>
+          <span class="badge badge--public"><svg class="icon icon--sm"><use href="#i-globe"/></svg>Public</span></div>
+        <p class="meta">Starts 1 Nov 2026 · 4 riders</p>
+        <p class="meta">No public stops yet</p>
+      </article>
+
+      <button class="btn btn--secondary btn--full">Show more trips</button>
+      <a class="link" href="#" style="min-height:48px;display:flex;align-items:center">Have an old trip link?</a>
+    </section>
+  </main>
+</div>
+</div>
+
+<!-- Frame 2: signed in, rider -->
+<div>
+<p class="frame-label">Discover, signed in rider (Your trips on top)</p>
+<div class="frame">
+  <header class="topbar">
+    <span class="wordmark">Bike Trip Journal</span>
+    <button class="iconbtn" aria-label="Account"><svg class="icon"><use href="#i-user"/></svg></button>
+  </header>
+  <main class="content">
+    <h1 class="sr">Discover bike trips</h1>
+    <section style="display:flex;flex-direction:column;gap:12px">
+      <h2 class="h2">Your trips</h2>
+      <article class="card card--emph">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Desert Loop (sample)</h3></a>
+          <span class="badge badge--rider"><svg class="icon icon--sm"><use href="#i-bike"/></svg>Rider</span></div>
+        <p class="meta">Started 12 Oct 2026 · 3 riders · <span class="badge badge--public" style="vertical-align:middle">Public</span></p>
+        <a class="btn btn--primary btn--lg btn--full" href="#"><svg class="icon"><use href="#i-plus"/></svg>Add stop</a>
+      </article>
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Weekend Hills Run</h3></a>
+          <span class="badge badge--leader"><svg class="icon icon--sm"><use href="#i-users"/></svg>Leader</span></div>
+        <p class="meta">Starts 20 Nov 2026 · <a class="link" href="#">3 requests to review</a></p>
+      </article>
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Coast and Ranges Ride</h3></a>
+          <span class="badge badge--pending"><svg class="icon icon--sm"><use href="#i-clock"/></svg>Pending</span></div>
+        <p class="meta">Waiting for approval</p>
+      </article>
+    </section>
+
+    <section style="display:flex;flex-direction:column;gap:16px">
+      <div class="row between">
+        <div><h2 class="h2">Public trips</h2><p class="meta">Most recently updated first.</p></div>
+        <a class="btn btn--secondary" href="#"><svg class="icon"><use href="#i-plus"/></svg>Create a trip</a>
+      </div>
+      <article class="card">
+        <div class="row between"><a class="trip-link" href="#"><h3 class="title">Saltbush Circuit</h3></a>
+          <span class="badge badge--public"><svg class="icon icon--sm"><use href="#i-globe"/></svg>Public</span></div>
+        <p class="meta">Starts 1 Nov 2026 · 4 riders</p>
+      </article>
+    </section>
+  </main>
+</div>
+</div>
+
+</div>
+</body>
+</html>

@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422 } from "../types/CreateStopApiTripsSlugStopsPost";
+import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422, CreateStopApiTripsSlugStopsPost429 } from "../types/CreateStopApiTripsSlugStopsPost";
 
 function getCreateStopApiTripsSlugStopsPostUrl({ slug }: { slug: CreateStopApiTripsSlugStopsPostPathParams["slug"] }) {
   const res = { method: 'POST', url: `/api/trips/${slug}/stops` as const }
@@ -16,12 +16,16 @@ function getCreateStopApiTripsSlugStopsPostUrl({ slug }: { slug: CreateStopApiTr
  * @description **Context.** This is how a stop gets into the journal, and the one write the app
  * makes most: the rider taps "Add stop" on the Stuart Hwy, often with no signal, so
  * the stop is captured on the device with an id the *client* generates and queued
- * until there is a connection. Rider slug only — a viewer link can read this trip's
- * stops but not add one. Task `t-stops-create-endpoint`.
- * **How it works.** `{slug}` is resolved by `require_rider_access`, which raises a
- * 404 if no trip has this slug and a 403 if it is the trip's viewer slug; the stop
- * is stored against the `trip_id` that dependency resolved, never against anything
- * in the path or the body. `StopCreate.id` then decides one of **three** branches
+ * until there is a connection. Only a signed-in, active member of the trip can add
+ * one; either slug just locates the trip (decision-log Entry 29, contract default
+ * 21). Tasks `t-stops-create-endpoint`, `t-am-write-gate-legacy`.
+ * **How it works.** `require_trip_writer` checks, in order: the slug (404 if no
+ * trip has it), the session (401), and an active membership on the trip, read fresh
+ * on every request (403 "You're not a rider on this trip." or, for a revoked
+ * member, "You're no longer a rider on this trip."). The stop is stored against the
+ * `trip_id` that dependency resolved, never against anything in the path or the
+ * body, with `created_by` set to the signed-in account. `StopCreate.id` then decides
+ * one of **three** branches
  * (`docs/api-contract.md`, "Idempotency"; decision-log Entry 14):
  * - an **unseen** id creates the stop — `201`, body is the new stop;
  * - an id **already on this trip** is a replay — `200`, body is the **stored**
@@ -39,7 +43,8 @@ function getCreateStopApiTripsSlugStopsPostUrl({ slug }: { slug: CreateStopApiTr
  * rider crossing timezones has no offset worth guessing (decision-log Entry 15).
  * **Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,
  * `GET /api/trips/{slug}` is the trip header above it (its `access` field is the
- * UI hint for whether to offer this write at all),
+ * UI hint for whether to offer this write at all: `rider` iff the caller is an
+ * active member),
  * `POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created
  * here, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.
  * @summary Add a stop to a trip
@@ -50,6 +55,6 @@ export async function createStopApiTripsSlugStopsPost({ slug, data }: { slug: Cr
 
   const requestData = data
 
-  const res = await request<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, CreateStopApiTripsSlugStopsPostMutationRequest>({ method : "POST", url : getCreateStopApiTripsSlugStopsPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
+  const res = await request<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, CreateStopApiTripsSlugStopsPostMutationRequest>({ method : "POST", url : getCreateStopApiTripsSlugStopsPostUrl({ slug }).url.toString(), data : requestData, ... requestConfig })
   return res.data
 }

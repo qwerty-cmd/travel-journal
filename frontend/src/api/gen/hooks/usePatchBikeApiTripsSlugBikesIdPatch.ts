@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
+import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch401, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422, PatchBikeApiTripsSlugBikesIdPatch429 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
-import type { PatchBikeApiTripsSlugBikesIdPatchMutationRequest, PatchBikeApiTripsSlugBikesIdPatchMutationResponse, PatchBikeApiTripsSlugBikesIdPatchPathParams, PatchBikeApiTripsSlugBikesIdPatch403, PatchBikeApiTripsSlugBikesIdPatch404, PatchBikeApiTripsSlugBikesIdPatch422 } from "../types/PatchBikeApiTripsSlugBikesIdPatch";
-import { mutationOptions, useMutation } from "@tanstack/react-query";
 import { patchBikeApiTripsSlugBikesIdPatch } from "../clients/patchBikeApiTripsSlugBikesIdPatch";
+import { mutationOptions, useMutation } from "@tanstack/react-query";
 
 export const patchBikeApiTripsSlugBikesIdPatchMutationKey = () => [{ url: '/api/trips/:slug/bikes/:id' }] as const
 
@@ -16,7 +16,7 @@ export type PatchBikeApiTripsSlugBikesIdPatchMutationKey = ReturnType<typeof pat
 export function patchBikeApiTripsSlugBikesIdPatchMutationOptions<TContext = unknown>(config: Partial<RequestConfig<PatchBikeApiTripsSlugBikesIdPatchMutationRequest>> & { client?: Client } = {}) {
 
         const mutationKey = patchBikeApiTripsSlugBikesIdPatchMutationKey()
-        return mutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>({
+        return mutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>({
           mutationKey,
           mutationFn: async({ id, slug, data }) => {
             return patchBikeApiTripsSlugBikesIdPatch({ id, slug, data }, config)
@@ -28,7 +28,8 @@ export function patchBikeApiTripsSlugBikesIdPatchMutationOptions<TContext = unkn
 /**
  * @description **Context.** Partial update of a bike registered on this trip. Only the fields
  * present in the request body are changed — absent fields stay as they are.
- * Rider slug only. Task `t-bikes-patch-endpoint`.
+ * Active members only, through `require_trip_writer` (slug 404, session 401,
+ * membership 403). Tasks `t-bikes-patch-endpoint`, `t-am-write-gate-legacy`.
  * **How it works.** Last-write-wins: no conflict detection, no ETags, no version
  * field. Two concurrent patches both succeed; whichever one the database sees
  * last is the one that sticks (spec Section 4).
@@ -39,7 +40,7 @@ export function patchBikeApiTripsSlugBikesIdPatchMutationOptions<TContext = unkn
  */
 export function usePatchBikeApiTripsSlugBikesIdPatch<TContext>(options: 
 {
-  mutation?: UseMutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext> & { client?: QueryClient },
+  mutation?: UseMutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext> & { client?: QueryClient },
   client?: Partial<RequestConfig<PatchBikeApiTripsSlugBikesIdPatchMutationRequest>> & { client?: Client },
 }
  = {}) {
@@ -48,13 +49,13 @@ export function usePatchBikeApiTripsSlugBikesIdPatch<TContext>(options:
           const { client: queryClient, ...mutationOptions } = mutation;
           const mutationKey = mutationOptions.mutationKey ?? patchBikeApiTripsSlugBikesIdPatchMutationKey()
 
-          const baseOptions = patchBikeApiTripsSlugBikesIdPatchMutationOptions(config) as UseMutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>
+          const baseOptions = patchBikeApiTripsSlugBikesIdPatchMutationOptions(config) as UseMutationOptions<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>
           
 
-          return useMutation<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>({
+          return useMutation<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>({
             ...baseOptions,
             mutationKey,
             ...mutationOptions,
-          }, queryClient) as UseMutationResult<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>
+          }, queryClient) as UseMutationResult<PatchBikeApiTripsSlugBikesIdPatchMutationResponse, ResponseErrorConfig<PatchBikeApiTripsSlugBikesIdPatch401 | PatchBikeApiTripsSlugBikesIdPatch403 | PatchBikeApiTripsSlugBikesIdPatch404 | PatchBikeApiTripsSlugBikesIdPatch422 | PatchBikeApiTripsSlugBikesIdPatch429>, {id: PatchBikeApiTripsSlugBikesIdPatchPathParams["id"], slug: PatchBikeApiTripsSlugBikesIdPatchPathParams["slug"], data: PatchBikeApiTripsSlugBikesIdPatchMutationRequest}, TContext>
       
 }

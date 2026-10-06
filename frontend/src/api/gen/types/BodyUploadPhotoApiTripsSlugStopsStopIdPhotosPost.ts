@@ -14,18 +14,17 @@ export type BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost = {
     */
     id: string;
     /**
-     * @description Display name only, no auth -- see spec Section 6.
-     * @type string
-    */
-    uploadedBy: string;
-    /**
      * @description When the photo was taken, as a timezone-aware ISO 8601 instant. Captured on the device, which may have been offline, so it is the capture time and not the time the upload reached the server. The UTC offset is **required** -- a naive value (no offset) is rejected with 422 / VALIDATION_ERROR rather than assumed to be UTC or server-local, because a rider crossing timezones has no offset worth guessing. EXIF `DateTimeOriginal` is naive, so the client composes this field: pair it with `OffsetTimeOriginal` when present, otherwise apply the device\'s current offset. The generated client cannot catch this; only the server rejects it.
      * @type string, date-time
     */
     takenAt: string;
     /**
-     * @description The photo file.
+     * @description The photo: a JPEG of at most 15 MiB. Its EXIF, XMP, ICC and comment segments are removed before it is stored.
      * @type string
     */
     file: Blob;
+    /**
+     * @description Optional and ignored. Before accounts, the uploader\'s free-text display name; queued uploads from then still send it. The stored name is now the signed-in account\'s display name at upload time, whatever this field says.
+    */
+    uploadedBy?: (string | null);
 };

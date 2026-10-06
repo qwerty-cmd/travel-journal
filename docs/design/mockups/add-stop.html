@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Mockup: Add stop (docs/design/screens/add-stop.md)</title>
+<!-- Illustration only. Sample coordinates and names only. Photo previews are CSS placeholders. No external requests. -->
+<style>
+:root{
+  --color-brand-primary:#1f5c40;--color-brand-primary-subtle:#e3efe8;--color-brand-on-primary:#ffffff;
+  --color-surface-page:#f4f6f3;--color-surface-card:#ffffff;--color-surface-sunken:#eceeeb;
+  --color-text-primary:#17201b;--color-text-muted:#4d5a52;
+  --color-border-strong:#6b776f;--color-border-subtle:#d5dbd6;
+  --color-status-warning-text:#7a4b00;--color-status-warning-subtle:#fdf0d5;
+  --color-control-disabled-bg:#e4e8e5;--color-text-disabled:#5f6b64;
+  --color-focus-ring:#1d4ed8;
+  --font-family-base:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;
+  --radius-sm:6px;--radius-md:10px;--radius-lg:16px;
+  --elevation-1:0 1px 2px rgba(23,32,27,.12),0 1px 1px rgba(23,32,27,.08);--elevation-2:0 4px 12px rgba(23,32,27,.16);
+}
+*{box-sizing:border-box}
+body{margin:0;padding:var(--space-6);background:var(--color-border-subtle);font-family:var(--font-family-base);color:var(--color-text-primary);font-size:17px;line-height:24px}
+.canvas{display:flex;gap:var(--space-8);flex-wrap:wrap;align-items:flex-start}
+.frame-label{font-size:15px;font-weight:600;margin:0 0 var(--space-2)}
+.frame{width:390px;height:844px;background:var(--color-surface-page);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--elevation-2);display:flex;flex-direction:column}
+.scroll{flex:1;overflow:hidden}
+.icon{width:24px;height:24px;flex:none}.icon--sm{width:18px;height:18px}
+.topbar{height:56px;flex:none;display:flex;align-items:center;gap:var(--space-2);padding:0 var(--space-2);background:var(--color-surface-card);border-bottom:1px solid var(--color-border-subtle)}
+.topbar .t{flex:1;font-weight:600}
+.iconbtn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--color-text-primary);border-radius:var(--radius-md)}
+.form{padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-4)}
+.loc{display:flex;gap:var(--space-3);align-items:flex-start;background:var(--color-surface-card);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);box-shadow:var(--elevation-1)}
+.loc--warning{background:var(--color-status-warning-subtle);box-shadow:none}
+.loc p{margin:0}.loc .lt{font-weight:600}.loc .ld{font-size:15px;line-height:20px;color:var(--color-text-muted);font-variant-numeric:tabular-nums}
+.loc--warning .lt{color:var(--color-status-warning-text)}.loc--warning .ld{color:var(--color-text-primary)}
+.field{display:flex;flex-direction:column;gap:var(--space-2)}
+.label{font-weight:600}
+.helper{font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.input{min-height:48px;border:2px solid var(--color-border-strong);border-radius:var(--radius-md);background:var(--color-surface-card);padding:0 var(--space-3);font:17px/24px var(--font-family-base);color:var(--color-text-primary);width:100%}
+.textarea{min-height:72px;padding:var(--space-3)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-2);min-height:48px;padding:0 var(--space-4);border-radius:var(--radius-md);font:600 17px/24px var(--font-family-base);border:2px solid transparent;text-decoration:none}
+.btn--primary{background:var(--color-brand-primary);color:#fff}
+.btn--secondary{background:var(--color-surface-card);color:var(--color-brand-primary);border-color:var(--color-border-strong)}
+.btn--tertiary{background:transparent;color:var(--color-brand-primary);text-decoration:underline;padding:0 var(--space-2)}
+.btn--disabled{background:var(--color-control-disabled-bg);color:var(--color-text-disabled)}
+.btn--lg{min-height:56px}.btn--full{width:100%}
+.btn:focus-visible,.iconbtn:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--color-focus-ring);outline-offset:2px}
+.map{position:relative;height:280px;border-radius:var(--radius-lg);border:1px solid var(--color-border-subtle);overflow:hidden;background-color:var(--color-surface-sunken);
+  background-image:linear-gradient(var(--color-border-subtle) 1px,transparent 1px),linear-gradient(90deg,var(--color-border-subtle) 1px,transparent 1px);background-size:24px 24px}
+.map svg{position:absolute;inset:0;width:100%;height:100%}
+.attrib{position:absolute;right:0;bottom:0;background:rgba(255,255,255,.85);font-size:14px;line-height:18px;padding:2px 6px}
+.thumbs{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.thumb{position:relative;width:72px;height:72px;border-radius:var(--radius-sm);background:linear-gradient(135deg,#c9b08a,#8a6f4d 60%,#5d7a8c)}
+.thumb:nth-child(2){background:linear-gradient(160deg,#9fb7c9,#e0c9a0 55%,#a4744a)}
+.thumb .rm{position:absolute;top:-12px;right:-12px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;border:0;background:transparent}
+.thumb .rm span{width:26px;height:26px;border-radius:50%;background:var(--color-text-primary);color:#fff;display:flex;align-items:center;justify-content:center}
+.small-h{font-size:17px;font-weight:600;margin:0}
+.note{display:flex;gap:6px;align-items:center;font-size:15px;line-height:20px;color:var(--color-text-muted);margin:0}
+.actionbar{flex:none;background:var(--color-surface-card);box-shadow:var(--elevation-2);padding:var(--space-3) var(--space-4) calc(var(--space-3) + 8px);display:flex;flex-direction:column;gap:var(--space-2)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+  <symbol id="i-pin-approx" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="3 2.5" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.5" stroke-dasharray="none" fill="currentColor"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3zM12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+</defs></svg>
+
+<div class="canvas">
+
+<div>
+<p class="frame-label">GPS pending (0–15 s), nothing entered</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Cancel"><svg class="icon"><use href="#i-x"/></svg></button><span class="t">Add stop</span></header>
+  <div class="scroll"><form class="form" onsubmit="return false">
+    <div class="loc" role="status"><svg class="icon" style="color:#1f5c40"><use href="#i-cross"/></svg><div><p class="lt">Getting your location…</p><p class="ld">This can take a few seconds outdoors.</p></div></div>
+    <div class="field"><label class="label" for="n1">Name (required)</label><p class="helper">e.g. Roadhouse fuel stop</p><input class="input" id="n1"></div>
+    <div class="field"><label class="label" for="t1">Notes</label><textarea class="input textarea" id="t1"></textarea></div>
+    <p class="small-h">Photos</p>
+    <button class="btn btn--secondary btn--lg btn--full" type="button"><svg class="icon"><use href="#i-camera"/></svg>Add photos</button>
+  </form></div>
+  <div class="actionbar"><p class="helper">Add a name and a location to save.</p><button class="btn btn--disabled btn--lg btn--full" aria-disabled="true">Save stop</button></div>
+</div>
+</div>
+
+<div>
+<p class="frame-label">GPS unavailable, location set with a map tap, 2 photos</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Cancel"><svg class="icon"><use href="#i-x"/></svg></button><span class="t">Add stop</span></header>
+  <div class="scroll"><form class="form" onsubmit="return false">
+    <div class="loc"><svg class="icon" style="color:#1f5c40"><use href="#i-pin-approx"/></svg><div><p class="lt">Location set on the map</p><p class="ld">-26.51234, 133.20871 · Shown as approximate location.</p></div></div>
+    <div class="map" role="img" aria-label="Map placeholder: tap to set location">
+      <svg viewBox="0 0 358 280" aria-hidden="true">
+        <g stroke="#17201b" stroke-width="2" opacity=".55"><path d="M179 128v-12M179 152v12M167 140h-12M191 140h12"/></g>
+        <circle cx="222" cy="104" r="11" fill="#fff" stroke="#1f5c40" stroke-width="3" stroke-dasharray="4 3"/>
+        <circle cx="222" cy="104" r="3" fill="#1f5c40"/>
+      </svg>
+      <span class="attrib">© OpenStreetMap contributors</span>
+    </div>
+    <button class="btn btn--secondary btn--full" type="button">Use map centre</button>
+    <p class="helper">With no signal the map may look blank. Tap as close as you can.</p>
+    <div class="field"><label class="label" for="n2">Name (required)</label><input class="input" id="n2" value="Creek-bed lunch"></div>
+    <p class="small-h">Photos</p>
+    <div class="thumbs">
+      <div class="thumb"><button class="rm" aria-label="Remove photo 1"><span><svg class="icon icon--sm"><use href="#i-x"/></svg></span></button></div>
+      <div class="thumb"><button class="rm" aria-label="Remove photo 2"><span><svg class="icon icon--sm"><use href="#i-x"/></svg></span></button></div>
+    </div>
+  </form></div>
+  <div class="actionbar"><p class="note"><svg class="icon icon--sm"><use href="#i-globe"/></svg>This stop is visible to the public 24 hours after it's saved.</p><button class="btn btn--primary btn--lg btn--full">Save stop</button></div>
+</div>
+</div>
+
+<div>
+<p class="frame-label">GPS fix, fallback-timer warning state (for reference)</p>
+<div class="frame">
+  <header class="topbar"><button class="iconbtn" aria-label="Cancel"><svg class="icon"><use href="#i-x"/></svg></button><span class="t">Add stop</span></header>
+  <div class="scroll"><form class="form" onsubmit="return false">
+    <div class="loc"><svg class="icon" style="color:#1f5c40"><use href="#i-pin"/></svg><div><p class="lt">Location found (GPS)</p><p class="ld">-26.49810, 133.24455</p></div></div>
+    <p class="helper" style="font-weight:600;color:#17201b">Fallback state shown instead when GPS fails or 15 s pass:</p>
+    <div class="loc loc--warning"><svg class="icon" style="color:#7a4b00"><use href="#i-alert"/></svg><div><p class="lt">GPS unavailable: tap the map to set the location</p><p class="ld">Or pan the map and tap Use map centre.</p></div></div>
+    <div class="field"><label class="label" for="n3">Name (required)</label><input class="input" id="n3" value="Roadhouse fuel stop"></div>
+    <div class="field"><label class="label" for="t3">Notes</label><textarea class="input textarea" id="t3">Cold drinks, full tanks, 180 km to the next fuel.</textarea></div>
+    <p class="helper" role="status">Processing 1 photo…</p>
+  </form></div>
+  <div class="actionbar"><p class="helper">Wait for photos to finish processing.</p><button class="btn btn--disabled btn--lg btn--full" aria-disabled="true">Save stop</button></div>
+</div>
+</div>
+
+</div>
+</body>
+</html>

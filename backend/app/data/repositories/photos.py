@@ -21,16 +21,39 @@ from functools import partial
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.repositories.stops import public_visibility
 from app.data.tables import photos, stops
 from app.models.photo import PhotoOut
 from app.storage.s3_client import BUCKET_NAME, get_presign_client
 
 
-async def stop_belongs_to_trip(session: AsyncSession, trip_id: str, stop_id: str) -> bool:
-    """True when this stop exists and is on this trip."""
+async def stop_belongs_to_trip(
+    session: AsyncSession, trip_id: str, stop_id: str, *, public_delay_hours: int | None = None
+) -> bool:
+    """
+    True when this stop exists and is on this trip -- and, given ``public_delay_hours``,
+    is visible to the public (``stops.public_visibility``).
+
+    A stop hidden by the delay is ``False`` exactly like one that doesn't exist,
+    so its photos are unreachable to a non-member and the route's ``404`` is the
+    same in both cases.
+
+    A NUL byte is ``False`` without a query: Postgres ``text`` cannot hold one,
+    so the driver would raise and the read would be a ``500``, not the unknown
+    stop's ``404`` (the same guard as ``trips.get_by_slug`` / ``get_by_id``).
+    ``%00`` in the path reaches here decoded.
+    """
+    if "\x00" in stop_id:
+        return False
     return bool(
         await session.scalar(
-            select(exists().where(stops.c.id == stop_id, stops.c.trip_id == trip_id))
+            select(
+                exists().where(
+                    stops.c.id == stop_id,
+                    stops.c.trip_id == trip_id,
+                    public_visibility(public_delay_hours),
+                )
+            )
         )
     )
 
@@ -129,6 +152,8 @@ async def insert(
     uploaded_by: str,
     taken_at,
     object_key: str,
+    *,
+    created_by: str | None = None,
 ) -> PhotoOut:
     """
     Insert a new photo row. Caller must have already checked for replay/conflict.
@@ -137,6 +162,12 @@ async def insert(
     the arguments: ``taken_at`` goes in with the device's offset and comes back
     from ``timestamptz`` as UTC, so echoing the argument made a ``201`` spell
     the same instant differently from its own ``200`` replay.
+
+    ``uploaded_by`` is the uploading account's ``display_name`` at upload time
+    and ``created_by`` its id (decision-log Entry 29, contract default 23). The
+    upload route always passes both. ``created_by`` defaults to ``None`` only
+    because the column is nullable and a photo with no account behind it (a
+    pre-0003 row, a repository test) is a legitimate row.
     """
     stored = (
         await session.execute(
@@ -147,6 +178,7 @@ async def insert(
                 object_key=object_key,
                 uploaded_by=uploaded_by,
                 taken_at=taken_at,
+                created_by=created_by,
             )
             .returning(
                 photos.c.id,

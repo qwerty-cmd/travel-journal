@@ -1,0 +1,21 @@
+"""
+The v2 API surface — ``/api/v2`` (decision-log Entry 29).
+
+Routes located by account and trip id rather than by slug. Each module adds its
+own router here; ``app/api/routes/__init__.py`` mounts this one under ``/api``.
+"""
+
+from fastapi import APIRouter
+
+from app.api.routes.v2 import auth, join_requests, me, members, rider_writes, trips
+
+v2_router = APIRouter(prefix="/v2")
+v2_router.include_router(auth.router)
+v2_router.include_router(me.router)
+# Before trips.router: `/trips/claim` must never be matched as a `{tripId}`.
+v2_router.include_router(join_requests.claim_router)
+v2_router.include_router(trips.router)
+v2_router.include_router(rider_writes.router)
+v2_router.include_router(rider_writes.photo_router)
+v2_router.include_router(members.router)
+v2_router.include_router(join_requests.router)

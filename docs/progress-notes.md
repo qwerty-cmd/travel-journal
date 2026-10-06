@@ -2078,6 +2078,1013 @@ TRIGGERED DEBT (Gate 3), filed 2026-09-29 from the qa pass on `t-probe-patch-scr
 - **Promotion trigger: anyone running those blocks under `sh`/dash** (a `sh infra-create.sh`, a CI step, or a non-bash default shell). Also fires if either block is lifted into a script file.
 - Agent: `devops`.
 
+## m5-accounts-membership
+**Merge as one PR at the end; no partial merge to main.** CI publishes an image from every green `main` (`ea1a27c`). After `t-am-write-gate-legacy`, nobody can write through the current frontend: `access` is `viewer` for everyone, and legacy trips have no members until `grant_leader` and a claim plus approval exist. The earliest usable merge point is essentially the end of the milestone, with the operator CLIs and runbook included. Say this in the PR description.
+- **Each commit must still leave the tree green.** `t-am-test-client-harness`, the `t-am-rate-limits`-after-write-gate ordering, and the `rider_session` fixture in `t-am-write-gate-legacy` are what keep that true.
+- Deploying the merged milestone is `t-am-owner-deploy` (owner). Both owner verifications are blocked on it.
+
+Pre-flight 2026-09-29: the scrum-master's 21 changes were accepted by the orchestrator as written and applied to the tracker and these notes. The splits are listed below; the old ids no longer exist.
+- `t-am-identity-core` → `t-am-csrf` + `t-am-identity-core`
+- `t-am-auth-endpoints` → `t-am-auth-sessions` + `t-am-auth-account`
+- `t-am-v2-public-reads` → `t-am-v2-trip-list` + `t-am-v2-trip-reads`
+- `t-am-trip-create-leadership` → `t-am-trip-create` + `t-am-trip-leadership`
+- `t-am-join-requests` → `t-am-join-requester` + `t-am-join-leader`
+- `t-am-queue-accounts` → `t-am-queue-classification` + `t-am-queue-userid`
+- `t-am-fe-leader-review` → `t-am-fe-leader-review` + `t-am-fe-members` + `t-am-fe-trip-settings`
+- `t-am-fe-rider-home-restyle` → `t-am-fe-rider-add-stop` + `t-am-fe-bikes-v2` + `t-am-fe-legacy-readonly`
+
+New tasks: `t-am-test-client-harness`, `t-am-fe-icons` and `t-am-owner-deploy`.
+
+## t-am-contract-doc
+**Goal.** Put the Entry 29 contract into writing before any code.
+**Scope.**
+- `docs/api-contract.md`: the text from ba's Deliverable 1, placed as marked.
+- `docs/decision-log.md`: Entry 29 plus an index row. It records the ADR, the orchestrator ruling, supersedes spec §2 "Friend access", and reopens Entry 21 with the trigger that fired being "writes gated per person". Include ba's defaults list.
+- `docs/architecture-diagram.md`: the Entry 29 §13 edits.
+- `docs/progress.json` and these notes.
+**AC.**
+- The contract contains all eight `ErrorCode`s, the status map, the queue classification table, the Access / Sessions / CSRF / Rate limits sections, the v2 endpoint table, the changed legacy rows, the photo JPEG/EXIF/15 MiB → 422 section and its justification, the models-by-file additions, and the identity × trip matrix.
+- The old "no accounts" text is gone from the Access section.
+- Entry 29 cites the ADR's §15 test obligations.
+- The diagram shows the "Anonymous viewer / signed-in rider" client box, the "HTTPS /api/* (session cookie)" arrow, the "Identity: local accounts in Postgres, no IdP" note, and the authZ / rate-limit / single-replica bullet.
+**Validation.**
+- `git diff --stat` touches only `docs/`.
+- `grep -c "UNAUTHENTICATED" docs/api-contract.md` returns ≥ 3.
+- `grep -n "Entry 29" docs/decision-log.md` hits the index row.
+
+DONE 2026-09-29 (docs).
+
+## t-am-claude-md
+**Goal.** Bring CLAUDE.md in line with Entry 29. The orchestrator writes it (Entry 12).
+**AC.**
+- Stack names local accounts, argon2id, the `argon2-cffi>=25.1,<26` dependency and cookie sessions.
+- Architecture invariants are unchanged, with a note that identity is Postgres-only with no IdP.
+- Conventions say tests use an `https://testserver` base URL and send `Origin`.
+- The testing-rigor priority adds "authentication/session" under access control.
+**Validation.** `git diff --stat` shows `CLAUDE.md` only; review.
+
+DONE 2026-09-29 (orchestrator). Checked against `CLAUDE.md` on disk: Stack has an "Identity & access" line (local accounts in Postgres, argon2id via `argon2-cffi>=25.1,<26`, one-time recovery code, `__Host-btj_session` cookie with only its SHA-256 stored, no identity provider, writes authorised by an active `trip_members` row, slugs are locators, cites Entry 29). The Frontend line gains the styling approach and cites Entry 30. Conventions say backend tests use `https://testserver` and send a same-origin `Origin`. The testing-rigor line reads "access control (incl. authentication/sessions/CSRF)". The architecture-invariants list is unchanged. The "no IdP" note sits in the Stack line, not under the invariants heading; that meets the AC's intent, but its wording is not exact.
+
+## t-am-contract-models
+
+DONE 2026-09-29. QA PASS (9/9 AC, 17/17 mutations caught). Backend 842, frontend 385. Field lists decided by dev + orchestrator rulings X3/X4; RecoveryCodeIssuedOut = {account: MeOut, recoveryCode} (route tasks confirm).
+**Goal.** Machine-readable contract only. No routes.
+**Scope.** `models/common.py`, `models/account.py`, `models/join_request.py`, `models/member.py`, `models/trip.py` (new classes only; `TripOut` is **not** changed yet), `core/errors.py`, `api/responses.py`, tests, `frontend/openapi.json`, `frontend/src/api/gen/`.
+**AC.**
+- `ErrorCode` has exactly eight members.
+- `code_for_status(401)` is `UNAUTHENTICATED` and `code_for_status(429)` is `RATE_LIMITED`.
+- `ApiError.unauthenticated(msg)` renders a 401 envelope with `WWW-Authenticate: Cookie realm="bike-trip-journal"`.
+- `ApiError.rate_limited(msg, n)` renders a 429 envelope with `Retry-After: n`, and n < 1 raises `ValueError`.
+- The `__init__` pairing backstop rejects `(401, RATE_LIMITED)` and similar mismatches.
+- `ERROR_RESPONSES` has 401 and 429, and the 429 declares a `Retry-After` header.
+- Every new model field has a real `description=`. Constraints match the contract: username regex, password 15–128 after NFKC with no `Cc`, displayName 1–40, message ≤ 280, `TripCreate.id` a canonical UUID, `TripPatch` rejects null.
+- The queue's `NEVER_RETRY` set is unchanged.
+- **Sole owner of `TripSummaryOut` and `TripPageOut`.** Their class definitions live here. `t-am-v2-trip-list` and `t-am-v2-trip-reads` only use them; `t-am-v2-trip-reads` extends `TripOut`.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_error_envelope.py tests/test_openapi_error_responses.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+## t-am-migration-0003
+
+DONE 2026-09-29. SQL byte-identical to the contract. QA PASS (all AC; races on both partial unique indexes leave exactly one row; ON DELETE RESTRICT/SET NULL/CASCADE as specified; 10 tables.py + 6 SQL mutations caught). Full suite 894; pre-0003 image 222/222 legacy endpoint tests on the 0003 schema. Debt filed: t-am-check-body-drift (triggered), t-am-m3-slug-seed-edges (ordinary).
+**Goal.** Deliverable 2's schema.
+**Scope.** `backend/migrations/0003_accounts_membership.sql`, `migrations/README.md` (files table), `app/data/tables.py`, `tests/test_schema.py`, new `tests/test_migration_0003.py`.
+**AC.**
+- The SQL is exactly as specified.
+- A second `migrate` run applies nothing.
+- `test_schema` is green, and `tables.py` mirrors every column, constraint and partial index.
+- Obligation 13: on a database seeded before 0003 (two trips with slugs, stops, photos, bikes), after migrating:
+  - every trip has `visibility='private'` and `public_delay_hours=24`;
+  - slugs are byte-identical;
+  - row counts are unchanged in every table;
+  - `trip_members` and `join_requests` are empty.
+- The partial unique index rejects a second pending request for the same (trip, user) and allows a second non-pending one.
+- `ux_trip_members_active` rejects two active rows and allows an active row plus a revoked row.
+- `trips_slugs_paired_check` rejects a row with one slug `NULL`.
+- **The pre-0003 image still works:** the previous commit's endpoint tests pass against the migrated database.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run python -m app.data.migrate && uv run python -m app.data.migrate
+cd backend && uv run pytest tests/test_schema.py tests/test_migration_0003.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+git worktree add ../btj-pre0003 HEAD && cp backend/.env ../btj-pre0003/backend/.env
+cd ../btj-pre0003/backend && uv sync && uv run pytest tests/test_trip_metadata_endpoint.py tests/test_stops_create_endpoint.py tests/test_photo_endpoints.py tests/test_bikes_create_endpoint.py tests/test_bikes_patch_endpoint.py tests/test_seed_trip.py
+```
+Use `HEAD`, not `HEAD~1`. Dev's patch is still uncommitted when validation runs, so `HEAD` is the pre-0003 tree. `.env` is gitignored, so the worktree needs a copy. Remove the worktree afterwards (`git worktree remove ../btj-pre0003`).
+
+## t-am-test-client-harness
+**Goal.** One shared HTTP test client that already looks like a same-origin HTTPS browser, so the CSRF middleware can land without breaking the suite. This is the missing prerequisite found at pre-flight (scrum change 2).
+**Why.** `tests/conftest.py` builds no HTTP client today. Eleven files build their own `AsyncClient(..., base_url="http://testserver")`, and `TestClient(app.main.app).post("/api/trips/whatever")` at `test_error_envelope.py:1405` would get a CSRF 403 as soon as `t-am-csrf` lands.
+**Scope.**
+- `tests/conftest.py`: a shared client factory with base URL `https://testserver` and a default `Origin: https://testserver` header.
+- Every file that builds its own client moves onto the factory:
+  - `test_bikes_create_endpoint.py`, `test_bikes_patch_endpoint.py`, `test_bikes_patch_null.py`
+  - `test_head_method.py`, `test_map_endpoint.py`, `test_no_slug_in_response_bodies.py`
+  - `test_photo_endpoints.py`, `test_photo_upload_storage.py`, `test_slug_access.py`
+  - the probe clients in `test_error_envelope.py` (around lines 870, 988, 1036 and 1405)
+- No application code and no behaviour change.
+**AC.**
+- `grep -rn 'base_url="http://testserver"' backend/tests` and `grep -rn 'TestClient(' backend/tests` find no client built outside the factory, or each remaining hit is justified in a comment.
+- The full suite is green **before any middleware exists**, with the same test count as before.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+DONE 2026-09-29. `make_async_client` / `make_test_client` in `tests/conftest.py` (https://testserver + same-origin Origin, per-call overrides). 19 files moved or carry a one-line justification (three non-app clients: mock Graph, two object-store fetches). QA PASS: 894 → 894, only `backend/tests/` touched, no assertion changed. Debt (ordinary): no direct test of the factory defaults — `t-am-csrf` tests exercise them.
+
+## t-am-csrf
+**Goal.** The CSRF middleware (obligation 8). It needs only `t-am-test-client-harness`, because the `FORBIDDEN` error code already exists.
+**Scope.** `core/csrf.py`, the `main.py` middleware wiring, and `tests/test_csrf.py`.
+**AC.**
+- **CSRF** (obligation 8), for every unsafe method on a real `/api` path:
+  - `Sec-Fetch-Site: cross-site` or `same-site` → 403 `FORBIDDEN` envelope with the security headers.
+  - `same-origin` or `none` → passes.
+  - With `Sec-Fetch-Site` absent: a missing `Origin`, `Origin: null` or a mismatched host → 403; a matching `Origin` → passes.
+  - GET, HEAD and OPTIONS are never checked.
+- With the middleware on, the existing suite stays green on the `t-am-test-client-harness` factory, including the `test_error_envelope.py` probe clients.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_csrf.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+**Added AC (from t-am-test-client-harness QA).** Two tests build raw ASGI requests outside the factory: `test_spa_static_files.py` `_raw_get` (plain-http GETs, no Origin, on purpose — path-escape probes) and `test_error_envelope.py` ~1450 (a scope passed straight to `_methods_allowed_elsewhere`, never through middleware). If the CSRF check touches safe methods or the scheme, give the first an Origin or a comment saying why not.
+
+DONE 2026-09-29. `core/csrf.py` (pure-ASGI, fail-closed: unknown/duplicated `Sec-Fetch-Site` or `Origin` → 403; any non-GET/HEAD/OPTIONS method checked), wired inside `SecurityHeadersMiddleware`. `tests/test_csrf.py` 272 tests written from the contract, incl. a blocked-write-writes-nothing check with a same-origin control. QA PASS: full suite 1166; 8 of 9 non-equivalent mutants killed; path/header tricks either blocked or only reach GET-only routes (405). Host spoof with matching Origin passes by design (browsers can't set Host). Debt: t-am-csrf-root-path (triggered), t-am-csrf-test-gaps (ordinary). Owner check added to t-am-verify-aca-xff: ingress must pass the original Host through.
+
+## t-am-identity-core
+
+ADDED AC (from t-am-contract-models QA): (1) presented passwords — signin `password`, `currentPassword`, rotation `password` — are NFKC-normalised before verify, same as new passwords (else decomposed/fullwidth input can never sign in); add the sentence to api-contract.md Sessions. (2) presented credentials get a generous `max_length=1024` (not 128 — NFKC can shorten, and a far cap leaks no plausibility signal). (3) `ApiError.__init__` requires `WWW-Authenticate` for 401 and `Retry-After` for 429 (or extend test_bare_409_raise_audit.py to 401/429) so neither can go out without its header.
+**Goal.** Password and session primitives, plus the `require_session` dependency. No auth routes. CSRF moved to `t-am-csrf`, and the conftest client moved to `t-am-test-client-harness`.
+**Scope.**
+- `core/passwords.py`, `core/sessions.py`
+- `data/repositories/users.py`, `data/repositories/sessions.py`
+- `core/security.py`: `require_session` only
+- `pyproject.toml` / `uv.lock`: `argon2-cffi>=25.1,<26`
+- tests
+**AC.**
+- **Cookie refresh (contract default 12):** when `last_used_at` is bumped, which happens at most daily, the response re-issues the session cookie with a fresh `Max-Age`.
+- **Rationale beside the code (Entry 29):** `core/sessions.py` carries a comment on why the session is a cookie and not a bearer token, citing Entry 29.
+- **Passwords.**
+  - argon2id with m=19456 KiB, t=2, p=1.
+  - Hashing and verifying run in `asyncio.to_thread` behind a module-level `Semaphore(2)`.
+  - A dummy-hash verify is available for unknown users.
+  - Passwords are NFKC-normalised before hashing.
+- **Sessions** (obligation 9, core half):
+  - Tokens are 32 bytes from `secrets` and base64url-encoded.
+  - The database holds only the 32-byte SHA-256, which a test asserts by reading the row.
+  - A token is valid iff it is within 90 days of `last_used_at` and before `absolute_expires_at` (created + 365 d).
+  - `last_used_at` is written only when more than 24 h old.
+  - `require_session` returns 401 `UNAUTHENTICATED` for a missing, garbage, expired, over-cap or deleted token, and for a disabled user. It clears the cookie when one was sent.
+- **Nothing sensitive in output** (obligation 16, core half): a caplog test drives hash, verify and session create/resolve and asserts that no password, token or hash string appears in any log record.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv sync && uv run pytest tests/test_passwords.py tests/test_sessions.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+DONE 2026-09-30. argon2id (19456/2/1, `to_thread` + `Semaphore(2)`, import-time dummy hash ~ same cost as a real verify), NFKC on hash and verify, token `token_urlsafe(32)` with only its SHA-256 stored, strict 90 d / 365 d windows on the app clock, `last_used_at` touched when > 24 h with cookie re-issue via the injected `Response`, `require_session` identical 401 for every reason and cookie clear only when sent. `ApiError` enforces 401/429 headers. argon2-cffi 25.1.0. Tests: 73 (test_passwords 30, test_sessions 43). QA PASS: suite 1239, 30/30 mutants killed. Refresh-loss finding routed to t-am-auth-sessions as added AC; other debt in t-am-identity-core-doc-gaps.
+
+## t-am-auth-sessions
+
+ADDED AC (from t-am-contract-models QA): strip Pydantic's "Value error, " prefix from 422 messages (e.g. in `_format_validation_errors` for type `value_error`, or raise PydanticCustomError) — first custom ValueError validators are rider-facing on signup/recover.
+**Goal.** Signup, signin, signout and me, plus per-account lockout, exactly as in the contract. This task also restructures the route audit. The rework was moved here from `t-am-write-gate-legacy` (scrum change 4): `EXPECTED_GUARD` is keyed by HTTP method, so `GET /api/v2/auth/me` with `require_session` would fail the existing GET → `require_trip_access` rule.
+**Scope.** `api/routes/v2/auth.py` (new package `api/routes/v2/`), `api/routes/__init__.py`, the users and sessions repositories, `tests/test_route_dependency_audit.py`, tests, Kubb regen.
+**AC.**
+- Every status code and body in the contract table and notes, for signup, signin, signout and me.
+- **Cookie attributes** (obligation 9): `Set-Cookie` is exactly `__Host-btj_session=…; HttpOnly; Max-Age=7776000; Path=/; SameSite=lax; Secure`, with no `Domain`.
+- **Lockout** (obligation 10, "lockout survives restart" half):
+  - 10 failures → 429 with `Retry-After` ≈ 900 even for the correct password;
+  - the lock is still in force after the engine is disposed and a new client is built, because it is read from Postgres;
+  - a success resets the counter.
+- Unknown-username signin runs a verify: a test patches the verifier and asserts it is called.
+- **Me** returns the username. The signup, signin, signout and me responses contain no `password`, token or hash, and only signup returns `recoveryCode`.
+- **Nothing sensitive in output** (obligation 16, signup/signin half): a caplog test over signup, signin and bad signin shows none of the password, code or token in any log record, error message or `pytest` output.
+- **Route audit: per-route-class rules replace `EXPECTED_GUARD`.**
+  - Trip-scoped unsafe routes must declare today's trip guard. `t-am-write-gate-legacy` tightens this rule to writer/leader.
+  - Account-scoped unsafe routes must declare `require_session`, through a named allowlist.
+  - Anonymous routes (signup, signin, signout, and later recover) are exempt by name.
+  - Reads must declare reader/access, or `require_session` for account reads such as `me`.
+  - The "everything under `/api/trips`" test is generalised to `/api/trips` or `/api/v2`.
+  - `test_audit_is_not_vacuous` still passes.
+- OpenAPI declares 401 / 409 / 422 / 429 per the table for these endpoints, and Kubb is regenerated.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_auth_endpoints.py tests/test_route_dependency_audit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Added AC (from t-am-identity-core QA, triggered debt promoted here).** `require_session` puts the refreshed cookie on FastAPI's injected `Response`, which is lost when a gated route returns its own `Response` (e.g. a 204 sign-out) or the request errors after `last_used_at` was bumped. Any gated route in this task that returns a `Response` directly must carry the refresh `Set-Cookie` too (or the mechanism moves to a request-state hook); add a test that a >24 h-old session hitting such a route receives the refreshed cookie.
+
+DONE 2026-09-30. `api/routes/v2/auth.py` (signup 201/409/422, signin 200/401/422/429, signout 204, me 200/401), `core/recovery_codes.py` (128-bit Crockford), per-route-class audit. Lockout: each verify reserves a slot with an atomic conditional UPDATE committed before argon2 (≤ 10 per window under any concurrency; saturation locks at once; success never clears another request's lock). QA first FAIL (parallel bypass: 20 guesses verified, correct password cleared a lock), fixed, re-QA PASS: 10 verifies in every parallel run, no connection held across argon2, sequential semantics unchanged. Tests: test_auth_endpoints 40; suite 1297; frontend 385 + build. Debt/routing below.
+
+## t-am-auth-account
+**Goal.** Signout-all, password change, recover and recovery-code rotation, as in the contract.
+**Scope.** `api/routes/v2/auth.py`, the users and sessions repositories, the route-audit allowlists (for these routes only), tests, Kubb regen.
+**AC.**
+- Every status code and body in the contract table and notes, for signout-all, password, recover and recovery-code.
+- **Revocation** (obligation 9, revocation half):
+  - signout deletes only the current row;
+  - signout-all deletes all of the user's rows;
+  - a password change deletes all rows, then exactly one new row exists;
+  - after each, the old cookie gets 401.
+- **Recovery** (obligation 10, "recovery single-use" half):
+  - a code works once, and a second use gets 401;
+  - a successful recover revokes every earlier session;
+  - the response carries a new code that works.
+- Only recover and recovery-code return `recoveryCode`. The signout-all and password responses contain no `password`, `recoveryCode`, token or hash.
+- **Nothing sensitive in output** (obligation 16, recover/password half): a caplog test over recover and password change shows none of the password, code or token in any log record, error message or `pytest` output.
+- Route audit: recover is on the anonymous list by name. Signout-all, password and recovery-code declare `require_session` and are on the account-scoped allowlist.
+- OpenAPI declares 401 / 409 / 422 / 429 per the table for these endpoints, and Kubb is regenerated.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_auth_endpoints.py tests/test_route_dependency_audit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Added AC (from t-am-auth-sessions, triggered debt).** Signout-all (and any other `require_session` route here) must not return its own `Response`: set the status on the decorator and return `None`, so `require_session`'s refresh `Set-Cookie` survives; test a >24 h-old session on it.
+
+DONE 2026-09-30. Signout-all 204, password change 200/403/422 (revokes all, issues exactly one), recover 200/401 (anonymous; single-use by one conditional UPDATE; typed-code normalisation, non-ASCII rejected; shared claim-first lockout), recovery-code rotation 200/403 (password required, sessions kept). Wrong current passwords count toward the shared lock and 429 blocks password/rotation while locked; success resets (implementation-defined, recorded as debt for the contract). Tests: 62 endpoint + 2 race. QA PASS: suite 1365; 10 parallel recovers → exactly one 200 in 5/5 rounds; 30 parallel wrong codes → 10 verifies; 5/5 mutants caught. Debt: t-am-auth-account-gaps; double-submit finding routed to t-am-fe-auth-screens.
+
+## t-am-rate-limits
+
+ADDED AC (from t-am-contract-models QA): `ApiError.rate_limited` rounds a float wait UP to whole seconds (min 1) and rejects bool; Retry-After is always an integer string.
+**Goal.** In-process limits per the contract's bucket table.
+**Ordering (scrum change 5).** This task runs after `t-am-write-gate-legacy`. The `writes` bucket is keyed per user, and the legacy writes have no session until the write gate lands. Its blockers are the write gate and both auth tasks.
+**Scope.** `core/ratelimit.py`, `core/config.py` (`trusted_proxy_hops: int = 1`, with a description; **`.env.example` is not touched**), limiter dependencies on the existing routes, a new limiter audit test, Kubb regen.
+**AC.**
+- `public-read` covers every legacy and v2 GET/HEAD except `/api/health`.
+- `signup-ip` plus `signup-global`; `signin` shared by signin, recover, password and recovery-code.
+- `writes` on the legacy writes, signout-all and the auth session writes.
+- `trip-create` and `join` are defined, and attached by later tasks.
+- **Obligation 15:**
+  - the (N+1)th request → 429 envelope `RATE_LIMITED` with an integer `Retry-After` ≥ 1;
+  - the key is the right-most `X-Forwarded-For` entry;
+  - requests varying only the left-most entry share one bucket;
+  - with no `X-Forwarded-For`, the socket address is used;
+  - with `trusted_proxy_hops=0`, `X-Forwarded-For` is ignored.
+- Time is injectable, so tests refill without sleeping.
+- **Bucket isolation between tests:** an autouse fixture resets the bucket registry before each test. Without it, the suite goes over `public-read`'s 120/min from one client IP.
+- **The lockout test still proves the lockout.** Its 11 signin attempts exceed the `signin` IP bucket of 10, so without a fix the 11th returns 429 from the IP limiter, not the lockout. Each attempt either uses a distinct right-most `X-Forwarded-For`, or the limiter is disabled for that test. The test asserts that the 429 came from the lockout.
+- **Rationale beside the code (Entry 29):** `core/ratelimit.py` carries a comment on why the key is the right-most `X-Forwarded-For` hop.
+- A limiter audit asserts that every `/api` route except health, the catch-all and signout declares exactly one limiter dependency.
+- OpenAPI declares 429 on every limited operation, and Kubb is regenerated.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_ratelimit.py tests/test_auth_endpoints.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Added AC (from t-am-auth-sessions).** `tests/test_auth_endpoints.py` makes > 10 signins from one client IP (lockout tests); the per-test limiter reset must cover it so those tests keep testing the lockout, not the IP bucket.
+
+**Added AC (from t-am-write-gate-legacy).** The contract lists 429 on the legacy write routes; declare it in their OpenAPI responses when the `writes` limiter lands.
+
+DONE 2026-09-30. `core/ratelimit.py`: continuous-refill token buckets (injectable clock, `threading.Lock`, 50k cap with refilled-first then LRU eviction), key = entry `trusted_proxy_hops` from the right of XFF (socket fallback), limiter first in each route's `dependencies=` (audit-enforced), `writes` keyed `user:` via a side-effect-free session read else `ip:`. `signup` spends ip+global atomically. `trip-create`/`join` defined, unattached. Lockout tests use a distinct XFF per request and assert the lockout message. Tests: test_ratelimit 17 + audit + unit; suite 1842; frontend 385 + build. QA PASS: 9/9 mutants caught, XFF spoofing probes all held. Debt: t-am-ratelimit-gaps, t-am-ratelimit-ipv6-sweep.
+
+## t-am-write-gate-legacy
+**Goal.** One membership gate. Slugs locate trips but never authorise.
+**Blockers.** This task depends directly on `t-am-identity-core`, `t-am-auth-sessions` and `t-am-auth-account` (scrum change 5). `t-am-rate-limits` now follows it.
+**Scope.**
+- `core/security.py`: `require_trip_writer` with a slug locator (a tripId locator is added in `t-am-v2-rider-writes`); module docstring rewritten.
+  - `require_trip_leader` is **not** built here. No legacy leader route consumes it; its first consumer is `t-am-trip-create`, with a tripId locator.
+- `data/repositories/memberships.py` (read side).
+- `routes/stops.py`, `photos.py`, `bikes.py`, `trips.py`.
+- The stops, photos and bikes repositories: `created_by`.
+- `models/photo.py`: the `PhotoOut.uploadedBy` description change the contract lists (now the account's display name). No other task owns it.
+- `test_route_dependency_audit.py`: tightening the trip-scoped rule only. The per-route-class restructure is done in `t-am-auth-sessions`, and adding DELETE is done in `t-am-member-revoke`.
+- `tests/conftest.py`: a shared `rider_session` fixture (user + session + active membership).
+- **Test churn:** every existing write test moves onto `rider_session`: `test_stops_create_endpoint.py`, `test_bikes_create_endpoint.py`, `test_bikes_patch_endpoint.py`, `test_bikes_patch_null.py`, `test_photo_endpoints.py`, `test_photo_upload_storage.py`, `test_stops_coordinates.py`, and `test_slug_access.py`.
+- `tests/test_access_matrix.py` (new; later tasks extend it).
+- Kubb regen.
+**AC.**
+- **Rationale beside the code (Entry 29):** `core/security.py` carries comments on the gate order and on the 404-not-403 rule for private trips.
+- **Intended inversion, not a regression:** `test_slug_access.py`'s "viewer slug → 403 on write" is superseded. Per contract default 21, legacy writes accept either slug as the locator, so the same request now gives 401 without a session and 201 with a member session. The test is rewritten to assert that, with a comment citing default 21.
+- The legacy write order is slug (404) → session (401) → active membership (403).
+- 403 messages:
+  - a revoked member gets "You're no longer a rider on this trip.";
+  - any other non-member gets "You're not a rider on this trip."
+- **Obligation 3:** a valid rider slug with no session → 401 on all four legacy writes; the same slug with a non-member session → 403; with an active rider → 201.
+- Stops, photos and bikes store `created_by`.
+- The photo row's `uploaded_by` is the account's `display_name`, whatever the form sends. The form's `uploadedBy` becomes optional and is ignored.
+- Legacy GET `TripOut.access` is `rider` iff the session user is an active member.
+- **Route audit** (obligation 4):
+  - the trip-scoped unsafe rule from `t-am-auth-sessions` is tightened: every unsafe route under `/api/trips/{slug}` declares `require_trip_writer` or `require_trip_leader`;
+  - a synthetic app with an unguarded POST fails the audit.
+- Legacy rows of the obligation 1 matrix are covered in `test_access_matrix.py`.
+- **Known interim state:** until `t-am-queue-classification`, the current frontend's writes get 401 and retry with backoff. Nothing is lost. This is one reason the milestone merges as one PR (see `m5-accounts-membership`).
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_access_matrix.py tests/test_route_dependency_audit.py tests/test_slug_access.py tests/test_stops_create_endpoint.py tests/test_bikes_create_endpoint.py tests/test_bikes_patch_endpoint.py tests/test_bikes_patch_null.py tests/test_photo_endpoints.py tests/test_photo_upload_storage.py tests/test_stops_coordinates.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-09-30. `require_trip_writer` (slug 404 → session 401 → active membership 403, two messages), `require_trip_access` derives `access` from membership (optional session), `memberships.get_for_user` (uncached; active first, else newest revoked). `created_by` from the session on stops/photos/bikes; photo `uploaded_by` = display name, form `uploadedBy` ignored. Audit: unsafe trip routes declare exactly one membership gate. Scope widened (approved) to test_trip_metadata_endpoint, test_csrf, test_no_slug_in_response_bodies, test_openapi_error_responses and the `TripOut.access` description. Tests: test_access_matrix 435; suite 1803; frontend 385 + build. QA PASS: no bypass across all routes/methods, 12/12 behavioural + 4 audit mutants caught. Private-trip legacy write by a non-member is 403 (contract: legacy slug always locates). Debt: t-am-write-gate-gaps; rate-limit 429 declarations stay with t-am-rate-limits.
+
+## t-am-v2-trip-list
+**Goal.** The anonymous public trip list.
+**Scope.** `routes/v2/trips.py` (`GET /api/v2/trips` plus its HEAD sibling), the trips repository list query, cursor encoding, tests, Kubb regen. It **uses** `TripSummaryOut` and `TripPageOut` from `t-am-contract-models` and does not define them.
+**AC.**
+- **List:**
+  - sort order and `nextCursor` paging across 3 pages with `limit=2`;
+  - `limit` 0 or 51 → 422; a garbage cursor → 422;
+  - private trips never appear.
+- The `public-read` limiter is attached to GET and HEAD, and OpenAPI declares 429 on both. The limiter audit from `t-am-rate-limits` enforces this.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_trip_list.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-09-30. `routes/v2/trips.py` GET/HEAD `/api/v2/trips` (anonymous, `public-read` first), `trips.list_public` (public filter before the keyset; `lastPublicStopAt` = max `arrived_at` older than each trip's own delay on the DB clock; `riderCount` = unrevoked members incl. leaders). Cursor: base64url of `[at|null, id]`, must round-trip exactly; ids must be UTF-8-encodable, instants normalised to UTC with overflow → 422. QA first FAIL (3 crafted cursors → 500), fixed, re-QA PASS: 591 fuzzed cursors, 0 × 500. Tests: 36; suite 1881; frontend 385 + build. Debt: t-am-trip-list-gaps.
+
+## t-am-v2-trip-reads
+**Goal.** Anonymous browsing of a public trip, with the delay applied.
+**Scope.**
+- `routes/v2/trips.py`: the trip, bikes, stops, photos and map GETs, plus their HEAD siblings.
+- `require_trip_reader`.
+- Repository filters for the delay.
+- The `TripOut` extension; the legacy GET fills the new fields too.
+- **`viewer.role = pending` needs to read `join_requests`** before the requester task exists. That read starts `data/repositories/join_requests.py` here, with a read-only lookup. `t-am-join-requester` adds the write side to the same file. The lookup does not go in `memberships.py`, because it reads a different table. (The scrum review left this choice open; `docs` made it while applying the review, and the orchestrator may reverse it.)
+- Tests, Kubb regen.
+**AC.**
+- **Obligation 2:** GET and HEAD of each v2 trip-scoped read on a private trip, as anonymous, a signed-in non-member, pending and revoked callers, returns a body, status and header set **byte-identical** (after dropping `date`) to the same request with a random nonexistent UUID.
+- **Obligation 11:** with delay 24 and stops at now−30h, now−1h and now+1h:
+  - a non-member sees one stop in `/stops`, one Point and no trail in `/map`, and photos only for that stop;
+  - `/stops/{hiddenStopId}/photos` → 404;
+  - `lastPublicStopAt` equals that stop's time;
+  - a member sees all three;
+  - `publicDelayHours=0` shows everything except the future stop.
+- **Obligation 11, leak check:** `test_no_slug_in_response_bodies.py` is extended to assert that no v2 public response contains either slug, any username, any user id or the string `email`. That includes the list from `t-am-v2-trip-list`.
+- `viewer.role` is right for all five roles, including `pending`, and `access` is derived as specified.
+- The `public-read` limiter is attached to every GET and HEAD in this task, and OpenAPI declares 429 on each.
+- Reader rows of the obligation 1 matrix are added.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_public_reads.py tests/test_access_matrix.py tests/test_no_slug_in_response_bodies.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-09-30. `require_trip_reader` (optional session read first, trip by id, membership looked up for every signed-in caller so a private trip and a missing id cost the same statements; private + non-member → the unknown-id 404, byte-identical incl. headers). v2 GET/HEAD trip, bikes, stops, `stops/{id}/photos`, map; non-members filtered by `arrived_at <= now() - delay` (DB clock), trail only with ≥ 2 visible stops, hidden stop's photos = unknown-stop 404; members unfiltered; bikes not delayed. `viewer.role` (anonymous/none/pending/rider/leader) with `join_requests.has_pending` (new read-only repo). `TripOut` extended; legacy GET fills it, legacy reads stay undelayed (contract). NUL guard on the shared stop lookup also fixed a legacy 500. Approved churn: 7 frontend fixtures, audit path-based trip-read rule, test_slug_access, test_trip_metadata_endpoint. QA PASS after two fixes (NUL stop id 500; +0.65 ms private-vs-missing timing oracle, now equal statements and < 0.1 ms noise). Tests: test_v2_public_reads 207 + matrix/leak sections; suite 2271; frontend 385 + build. Debt: t-am-trip-reads-gaps.
+
+## t-am-photo-exif-strip
+**Goal.** The server never stores photo metadata, and it accepts JPEG only.
+**Why it's blocked by `t-am-write-gate-legacy`.** It only needs `t-am-contract-doc`. The write-gate blocker exists only to stop concurrent edits to `routes/photos.py`, which both tasks change. In a serial, single-PR milestone that costs nothing. Drop it if the two tasks are ever run in parallel on separate branches.
+**Scope.** `core/jpeg.py` (pure Python, no new dependency), `routes/photos.py` (the shared upload helper), tests with fixture JPEGs, Kubb regen only if descriptions change.
+**AC.**
+- **Obligation 12:**
+  - a JPEG carrying APP1/EXIF (including GPS), APP2/ICC, APP13 and COM is stored in MinIO with none of the markers `FFE1`–`FFEF` or `FFFE` before SOS;
+  - APP0, DQT, SOF, DHT, SOS and the image data are byte-identical;
+  - the stored object decodes.
+- PNG, HEIC, GIF, empty and truncated inputs, and a JPEG with no SOS → 422 `VALIDATION_ERROR`, with nothing in S3 and no database row.
+- 15 MiB + 1 byte → 422; exactly 15 MiB → accepted. `Content-Length` over 16 MiB → 422 without the body being read.
+- A replay performs no S3 write (existing test still green).
+- Fill bytes (`FF FF`) and RST markers are handled.
+- The walker has unit tests independent of HTTP.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_jpeg_strip.py tests/test_photo_endpoints.py tests/test_photo_upload_storage.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+DONE 2026-09-30. `core/jpeg.py` pure-Python walker (drops APP1–APP15 and COM before SOS, keeps everything else byte-identical, copies from SOS on; handles fill bytes and RST; `JpegError` on anything else; kept runs copied whole, so peak ≤ ~2× output). `routes/photos.py`: `CappedBodyRoute` (POST only) refuses `Content-Length` > 16 MiB before reading and counts chunked bodies; 15 MiB file cap; walker in `asyncio.to_thread`; checks after replay and before conflict/S3/insert. Five existing tests moved from fake bytes to fixture JPEGs (approved churn). Tests: test_jpeg_strip 208, test_photo_jpeg_http 31, +1 GET-cap test; suite 2511; frontend 385 + build. QA PASS (200k fuzz cases, only `JpegError`; Pillow decode check in scratch) with F1 (1 GiB on crafted input) and F3 (cap on GET) fixed before commit. Debt: t-am-jpeg-after-sos (triggered), t-am-jpeg-gaps.
+
+## t-am-v2-rider-writes
+**Goal.** v2 creates and patches located by tripId, session checked first.
+**Scope.** `routes/v2/` (stops, photos, bikes writes), a tripId locator for `require_trip_writer`, tests, Kubb regen.
+**AC.**
+- The idempotency three-way branch is identical to legacy, and the gate runs before the replay lookup.
+- The v2 photo form is `id`, `takenAt`, `file` only. EXIF and size rules apply.
+- **Obligation 1, v2 write rows:**
+  - anonymous → 401 for an existing public trip, an existing private trip and a random UUID alike (byte-identical);
+  - a non-member on a private trip → the byte-identical 404;
+  - a non-member on a public trip → 403;
+  - revoked → 403;
+  - rider and leader → 201.
+- Rate bucket `writes`.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_rider_writes.py tests/test_access_matrix.py tests/test_route_dependency_audit.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Added AC (from t-am-v2-trip-reads).** Client-supplied ids on write paths may still reach Postgres with a NUL byte (stop/bike/photo create bodies, the upload form's id, `PATCH …/bikes/{id}`), giving a 500 instead of a 4xx. Check each write path this task adds or reuses and guard like `trips.get_by_id` / `photos.stop_belongs_to_trip`; test a NUL id on each.
+
+**Added AC (from t-am-photo-exif-strip QA, triggered debt promoted here).** The 16 MiB pre-read cap depends on `route_class=CappedBodyRoute` on the router. The v2 photo upload route must use it (or share the legacy router's class) and run the same `_stripped_jpeg` path; test a v2 `Content-Length` > 16 MiB → 422 with 0 body messages read, and EXIF stripped on v2 uploads.
+
+DONE 2026-09-30. `routes/v2/rider_writes.py`: POST stops, POST photos (own router with `CappedBodyRoute`; form `id`/`takenAt`/`file`), POST and PATCH bikes, located by tripId, `writes` limiter first. Writer gate with a tripId locator: session first (anonymous 401 byte-identical for public/private/random id), then trip + membership with equal statements for private vs missing (non-member private → the reader's 404), public non-member / revoked → 403. Legacy handlers now call shared `store_stop`/`store_bike`/`store_photo`/`apply_bike_patch` (behaviour unchanged, QA diffed). NUL guards on every client id, legacy and v2. Tests: test_v2_rider_writes 105 + matrix rows; suite 2698; frontend 385 + build. QA PASS, 8/8 mutants caught. Debt: t-am-stop-arrivedat-echo.
+
+## t-am-trip-create
+**Goal.** Create trips, list your trips, and edit a trip as a leader. This is part (a) of the scrum change 10 split.
+**Scope.**
+- The v2 trips create route and PATCH route, and `/me/trips`.
+- `require_trip_leader` with a tripId locator. This is its first consumer; the write gate no longer builds a slug-locator version.
+- The memberships repository, write side: the leader membership inserted on create.
+- The `trip-create` bucket attached.
+- Tests, Kubb regen.
+**AC.**
+- Create is one transaction: the trip (slugs `NULL`, `created_by`, visibility default `public`) plus a leader membership.
+- Replay by the creator → 200. Someone else's id or a legacy id → 409. A non-UUID id → 422.
+- The 4th create in a day → 429, and a replay doesn't spend a token.
+- The 21st lifetime create → 409.
+- PATCH: omit = no change, null → 422, delay outside 0–168 → 422.
+- `/me/trips` lists active memberships with their role.
+- **Obligation 1 matrix, leader column:** the PATCH trip row is added (every identity × trip combination).
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_trip_create.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-09-30. `POST /api/v2/trips` (one transaction: trip with NULL slugs + leader membership; users row locked FOR UPDATE, then replay → taken → cap 20 → insert, ON CONFLICT DO NOTHING), `PATCH /api/v2/trips/{tripId}` (`require_trip_leader` = writer gate + leader role; omit = no change, null/out-of-range → 422), `GET/HEAD /api/v2/me/trips` (active memberships, joined_at desc then id). `trip-create` limiter exempts only a replay by a still-active creator. Audits: `LEADER_ONLY` rule. Tests: test_v2_trip_create 68 + matrix section 14; suite 2789; frontend 385 + build. QA PASS (one missing mutant test, added). Debt: t-am-trip-create-gaps, t-am-trip-create-anon-ip-bucket (triggered).
+
+## t-am-trip-leadership
+**Goal.** Peer leadership: see the members, promote, step down, leave. This is part (b) of the scrum change 10 split.
+**Scope.**
+- The members GET, promote, step-down and leave routes.
+- `require_trip_member_read`.
+- The trip-row `FOR UPDATE` lock.
+- The memberships repository, write side: role changes and self-leave.
+- Tests, Kubb regen.
+**AC.**
+- Members GET follows member-read ordering (401 / 404 / 403).
+- **Obligation 6, last-leader half:**
+  - the last leader's step-down or leave → 409 with nothing changed;
+  - with two leaders, one can step down;
+  - two concurrent step-downs (two sessions, `asyncio.gather`) leave at least one leader, because of the trip-row `FOR UPDATE`.
+- Promote on a non-member → 404; on an existing leader → 200.
+- **Obligation 1 matrix, leader column:** the members GET, promote, step-down and leave rows are added.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_v2_trip_leadership.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-10-05. `routes/v2/members.py`: members GET/HEAD (`require_trip_member_read`), promote and step-down (leader gate), leave (writer gate, riders too). Every change locks the trip row FOR UPDATE, re-reads the caller (and target) under it, then counts leaders; last leader → 409 with nothing changed. Leave sets `revoked_by` = self and leaves join_requests alone. Promote re-checks the caller under the lock (test-writer found it didn't; fixed). Members payload = `MemberOut` only, ordered joinedAt then userId. Tests: test_v2_trip_leadership 39 + matrix §15; suite 2902; frontend 385 + build. QA PASS, 4/4 mutants killed, no cross-leader removal path, no deadlock. Debt: t-am-leadership-contract-wording.
+
+## t-am-join-requester
+**Goal.** The requester's side of the per-person join lifecycle. This is part of the scrum change 11 split.
+**Scope.**
+- `routes/v2/join_requests.py`: create, cancel and `GET /me/join-requests`.
+- `data/repositories/join_requests.py`: the write side, added to the file `t-am-v2-trip-reads` started.
+- Caps, cooldown, the `join` bucket.
+- Tests, Kubb regen.
+**AC.**
+- **Obligation 7, requester half.** Rejected and blocked rows are inserted directly, because the decision endpoint arrives in `t-am-join-leader`.
+  - a duplicate create while pending → 200 with the same id, message unchanged;
+  - with a rejected request, a re-request inside 7 days → 409 and at 7 days + 1 s → 201 (injected clock);
+  - with a blocked request, a create → 409;
+  - cancel, then an immediate re-request → 201.
+- **Revoked by someone else, less than 7 days ago → 409.** This task implements and tests the branch, using a directly inserted revoked membership row with `revoked_by` set to another user. Self-leave (`revoked_by` = self) does not start the cooldown. Both halves are tested here; `t-am-member-revoke` no longer carries them.
+- Caps: the 21st pending across trips → 409; the 101st pending on a trip → 409.
+- Private trip create → the byte-identical 404.
+- `/me/join-requests` reports blocked as `rejected`.
+- Requester-route rows (create, cancel) of the obligation 1 matrix are added. The completeness guard in `t-am-member-revoke` requires them.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_join_requests.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-10-06. `routes/v2/join_requests.py`: create (`require_trip_join_requester` = session + reader rule; `join` limiter first), cancel, GET/HEAD `/me/join-requests`. `join_requests.create` locks trip then user, then pending → member → blocked → rejected (< 7 d) → revoked by another (< 7 d, NULL counts) → caps 20/100, insert ON CONFLICT on the partial index with a literal predicate (a bound one broke after 5 executions — test-writer caught it). Blocked reported as `rejected`. Reader lookup shared via `_readable_trip`. Tests: test_join_requests 39 + matrix §16; suite 2975; frontend 385 + build. QA PASS, 4/4 mutants, no deadlock, no private-trip oracle. Debt: t-am-join-copy-review; /me private-name question routed to t-am-legacy-claim.
+
+## t-am-join-leader
+**Goal.** The leader's side: review, decide, unblock. This is part of the scrum change 11 split.
+**Scope.** `routes/v2/join_requests.py` (leader list, decision, unblock), `data/repositories/join_requests.py`, tests, Kubb regen.
+**AC.**
+- **Obligation 7, leader half:** after a reject_and_block through the decision endpoint, every create → 409 until unblock. After unblock, the cooldown from the original decision still applies.
+- Approve inserts a rider membership, and the requester's next write succeeds.
+- Repeating the same decision → 200; a different decision on a decided request → 409.
+- The leader list never contains a username.
+- Leader-route rows of the obligation 1 matrix are added.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_join_requests.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+DONE 2026-10-06. Leader list (GET/HEAD, `state` pending|blocked, oldest first, display names only), decision (approve / reject / reject_and_block) and unblock in `routes/v2/join_requests.py`. Lock order: trip row → caller re-check (`_leader_check`) → request FOR UPDATE filtered by trip. Approve adds the rider membership in the same transaction (skipped if already active). Same decision → 200, different → 409; unblock → rejected keeping `decided_at`. Audits: `LEADER_READ`. Tests: test_join_requests 77 (incl. a re-check-under-lock test QA asked for) + matrix §17; suite 3072; frontend 385 + build. QA PASS, 4/4 mutants, no deadlock under 22 mixed concurrent calls. Debt: t-am-join-leader-gaps.
+
+## t-am-member-revoke
+**Goal.** A leader revokes a rider, effective on the next request.
+**Scope.**
+- `DELETE /api/v2/trips/{tripId}/members/{userId}`, in the v2 members route module `t-am-trip-leadership` added.
+- The memberships repository: revoke, setting `revoked_at` and `revoked_by`.
+- `test_route_dependency_audit.py`: DELETE is added as an agreed, audited verb. This moved here from `t-am-write-gate-legacy`, because `test_audit_is_not_vacuous` asserts that the audited methods equal the rule keys, so adding DELETE before any DELETE route exists fails.
+- `tests/test_access_matrix.py`: the DELETE row and the completeness guard.
+- Tests, Kubb regen.
+**AC.**
+- **Rationale beside the code (Entry 29):** the revoke route carries a comment on the no-grace rule (revocation takes effect on the next request, with no grace period for queued items).
+- DELETE is audited, and `test_audit_is_not_vacuous` passes.
+- **Obligation 1 completeness guard:** the matrix is parametrised from `app.routes`, so a trip-scoped route with no matrix row fails the test. A test proves the guard catches a synthetic unrowed route.
+- **Obligation 6, leader-removal half:** DELETE on a leader, including yourself → 403.
+- DELETE on a rider → 204 and the row is kept with `revoked_at` and `revoked_by`. Repeating → 204. A never-member → 404.
+- **Obligation 5:**
+  - after revocation, the very next request from the rider's live session is 403 with "You're no longer a rider on this trip", on legacy and v2 stop, photo and bike writes;
+  - that includes replaying a stop id and a photo id already stored;
+  - the database row counts and the MinIO object listing are unchanged by those requests.
+- (The re-request cooldown after revocation moved to `t-am-join-requester`, which owns that branch.)
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_member_revoke.py tests/test_access_matrix.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Note (from t-am-write-gate-legacy tests).** A write already past the gate when a revoke commits can still land just after it (observed even with the revoke locking the trip row first, default 26): the contract binds only the next request, which is 403. Keep that the tested guarantee; don't promise in-flight cancellation.
+
+DONE 2026-10-06. `DELETE /api/v2/trips/{tripId}/members/{userId}` (`revoke_member`, leader gate, `writes` limiter; lock trip → re-check caller → target: leader/self 403, active rider → revoked_at/revoked_by and 204, inactive row 204 no write, never-member 404). No-grace rationale comment beside the route. DELETE audited; matrix §18 completeness guard built from `app.routes`. Tests: test_member_revoke 29 + matrix §15/§18; suite 3146; frontend 385 + build. QA PASS; revoked rider's next private reads are the byte-identical 404. Debt: t-am-matrix-guard-gaps (triggered), t-am-revoke-prior-rows-test.
+
+## t-am-legacy-claim
+**Goal.** Someone holding an old rider link can ask to join the trip it points at. The link turns into a pending join request, never into access.
+**Blocker.** Only `t-am-join-requester` (scrum change 13). The claim reuses the requester-side create rules; nothing here needs the leader endpoints.
+**Scope.**
+- `POST /api/v2/trips/claim`, in `routes/v2/join_requests.py`, registered before every `/api/v2/trips/{tripId}` route.
+- The join_requests repository, with `via='legacy_rider_link'`.
+- The `join` bucket.
+- Tests, Kubb regen.
+**AC.**
+- **Route order (contract line 430):** `/claim` is registered before the `{tripId}` routes. A test asserts its index in `app.routes` is lower than that of every `/api/v2/trips/{tripId}…` route.
+- The rider slug in the body → 201 pending request with `via='legacy_rider_link'`; a repeat → 200 with the same id.
+- **Obligation 7, claim half:** after a claim, the claimant's writes on that trip → 403, and v2 reads of the private trip → 404, until a leader approves.
+- A viewer slug or an unknown slug → 404 with a message identical to `UNKNOWN_TRIP_MESSAGE`.
+- Every join rule applies: cooldown, block, caps, already a member.
+- The slug does not appear in any response, and caplog shows it in no log record.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_legacy_claim.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend && uv run python -c "import json,pathlib; from app.main import app; pathlib.Path('../frontend/openapi.json').write_text(json.dumps(app.openapi(), indent=2)+'\n', encoding='utf-8', newline='\n')"
+cd frontend && npm run generate:api && npm test && npm run build
+```
+
+**Added AC (from t-am-join-requester, triggered debt promoted here).** (1) Any claim path that creates a join request must take the same lock order as `join_requests.create` — trip row, then user row — or risk deadlocks. (2) `/me/join-requests` shows a private trip's *current* name to the requester (renames included); claims create requests on private trips by design, so get an architect ruling before this ships: freeze the name at request time, hide it, or accept it, and record the answer in the contract.
+
+DONE 2026-10-06. `POST /api/v2/trips/claim` on its own router registered before every `{tripId}` route (`limit_join`, then `require_session`); rider slug → `join_repo.create(via='legacy_rider_link')`, reusing every join rule and the trip → user lock order; viewer/unknown/NUL slug → the identical `UNKNOWN_TRIP_MESSAGE` 404. Added AC (2) decided by the orchestrator under the owner's delegated autonomy (no architect dispatch): `/me/join-requests` shows the current trip name — rider-link holders could already read the whole trip; recorded in the contract's Me / join-requests note. Also fixed a flaky presigned-url comparison in test_v2_rider_writes (separate commit). Tests: test_legacy_claim 54 + test_claim_route_order; suite 3202; frontend 385 + build. QA PASS, no slug oracle (timing equal, 404 bytes equal).
+
+## t-am-operator-clis
+**Goal.** The only ways to make a legacy leader, reset an account or remove a rogue leader.
+**Scope.**
+- `app/data/grant_leader.py` (`--trip-id --username`)
+- `app/data/reset_account.py` (`--username [--disable]`)
+- `app/data/revoke_member.py` (`--trip-id --username`)
+- `seed_trip.py` (`--leader-username`)
+- tests
+**AC.**
+- **grant_leader** inserts or upgrades an active leader membership and is idempotent.
+- **reset_account**, in one transaction:
+  - writes a new recovery-code hash;
+  - deletes all of the user's sessions (**obligation 10**);
+  - clears the lockout;
+  - prints the code once, **after commit**, following the Entry 9 pattern.
+  - `--disable` sets `disabled_at` and deletes the sessions.
+- **revoke_member** can revoke a leader and refuses to remove the last leader (exit 1).
+- **seed_trip `--leader-username`** creates the leader membership in the same transaction as the trip. Without the flag, the behaviour is unchanged.
+- An unknown username or trip → a non-zero exit with no traceback.
+- **Obligation 16, CLI half:** the `reset_account` recovery code goes to stdout exactly once (capsys) and never into a log record (caplog).
+- Blocker: only `t-am-member-revoke`. The former blocker on `t-am-legacy-claim` was unnecessary (scrum change 14).
+**Human approval.** Agents never run these CLIs against production. Production use is owner-only.
+**Validation.**
+```
+docker compose up -d postgres minio minio-init
+cd backend && uv run pytest tests/test_operator_clis.py tests/test_seed_trip.py && uv run pytest && uv run ruff check . && uv run ruff format --check .
+```
+
+**Added AC (from t-am-auth-sessions QA, triggered debt promoted here).** Signin checks the lock before the disabled flag, so an account locked before being disabled answers 429 + Retry-After instead of the identical 401. Once `--disable` exists, disabling must also clear `locked_until`/`failed_logins` (or signin checks disabled first while keeping equal timing); test that a disabled account always gets the identical 401.
+
+DONE 2026-10-06. `app/data/grant_leader.py`, `reset_account.py`, `revoke_member.py` (one transaction each, injected-session cores, `main()` → `_run`; errors print class + SQLSTATE only), `seed_trip --leader-username` (trip + leader in one transaction; no flag = unchanged). reset_account deletes all sessions, clears the lockout, prints the code once after commit; `--disable` sets disabled_at, clears the lock, issues no code. revoke_member locks the trip, refuses the last leader, `revoked_by` NULL. Tests: test_operator_clis 24 + test_seed_trip 5 + one auth test; suite 3232. QA PASS. Debt: t-am-cli-gaps; reset-on-disabled routed to t-am-runbook-accounts.
+
+## t-am-runbook-accounts
+**AC.** `docs/deploy-cutover-runbook.md` covers:
+- migration 0003;
+- seeding with `--leader-username`, or `grant_leader` after the owner signs up;
+- the reset, disable and revoke procedures;
+- an explicit warning that rolling back the image restores slug-bearer writes (Entry 29 §12) and is security-degrading;
+- the `TRUSTED_PROXY_HOPS` check.
+**Validation.** `git diff --stat` shows `docs/` only.
+
+**Added AC (from t-am-operator-clis QA, triggered debt promoted here).** `reset_account` without `--disable` on a disabled account prints a recovery code that can't be used (the account stays disabled; recover → 401). The runbook must say plainly that reset does not re-enable an account, and how to re-enable one (today: no CLI — say so, or file it).
+
+DONE 2026-10-06. Runbook §7a "Accounts and membership (Entry 29)": migration 0003 pointer, first leader (grant_leader after the owner signs up; seed `--leader-username` on a fresh DB), reset/disable/revoke invocations (owner-only, code printed once after commit, reset doesn't re-enable, no re-enable CLI), TRUSTED_PROXY_HOPS + Host-passthrough checks, and the security-degrading rollback warning (also pointed to from §8). Docs only. Debt: t-am-reenable-account (triggered).
+
+## t-am-owner-deploy
+
+Blockers made explicit (orchestrator): every remaining implementation/doc task, not only the last in the chain — the deploy follows the runbook and user guide.
+**Owner step. NEEDS THE USER.** The owner deploys the merged milestone to Azure. The milestone merges as one PR at the end (see `m5-accounts-membership`), so nothing in it is deployed until then.
+- Follow `docs/deploy-cutover-runbook.md` as updated by `t-am-runbook-accounts`: migrate 0003, then `grant_leader` or seed with `--leader-username`.
+- Agents never run the deploy (CLAUDE.md, off-limits).
+- **Blocker:** `t-am-fe-legacy-readonly`, the last implementation task in list order. The merge itself is the real gate.
+**Validation.** The deployed revision serves `/api/health` over HTTPS and the migration shows 0003 applied, recorded in the handover.
+Unblocks `t-am-verify-aca-xff` and `t-am-verify-ios-cookie`.
+
+## t-am-verify-aca-xff
+**Owner step. NEEDS THE USER.** Against the deployed app, a request with a spoofed `X-Forwarded-For: 1.2.3.4` must be bucketed by the real client IP, which should be the right-most hop. If the ingress appends more than one hop, `TRUSTED_PROXY_HOPS` has to change in the Container App env, which is `infra/` and off-limits without approval.
+**Blocker.** `t-am-owner-deploy`. `t-am-rate-limits` being done isn't enough, because nothing is deployed until the PR merges (scrum change 15).
+**Validation.** A scripted 121-request burst from two networks, recorded in the handover. (The "diagnostic log line" option was dropped: no task adds one.)
+
+**Also verify (from t-am-csrf QA):** the ingress passes the browser's original `Host` through unchanged — the CSRF check compares `Origin` with `Host`, so a rewritten Host would 403 every same-origin write (fails closed, never a bypass).
+
+## t-am-design-spec
+
+Reconciliation pass committed in `bf2938e` (no `TBC:` API references remain; §13 C1–C15 resolved; tokens.css appendix per Entry 30).
+
+**Orchestrator rulings on design/contract conflicts X1–X5 (2026-09-29)
+- X1 routes: the designer's routes win (design is the source of truth for layout): leader screens at /trips/$tripId/members and /trips/$tripId/settings (requests on the members/review screen per specs), not /manage. Riders get a read-only Members tab with "Leave trip" (contract allows POST /leave) — add to t-am-fe-members AC.
+- X2 pending-request count: no contract change; the leader badge on "Your trips" makes one GET .../join-requests per led trip (few trips at this scale). Reopen if a user leads > 10 trips.
+- X3 MyJoinRequestOut fields: id, tripId, tripName, state (blocked→rejected), message, createdAt.
+- X4 TripSummaryOut fields: id, name, startDate, riderCount, lastPublicStopAt (nullable, delay applied).
+- X5 join 409 copy: dev writes the messages in t-am-join-requester; designer reviews them then.
+
+**Goal.** `docs/design/DESIGN.md` (tokens) plus one spec per screen named in the title.
+**AC.**
+- Each spec names its data sources (the v2 endpoints) and its states: loading, empty, error envelope, offline, and each `viewer.role`.
+- The Publish warning copy covers the first-stop-is-home risk.
+- The recovery-code screen requires an acknowledgement before continuing.
+- Any styling approach, font, icon set or map theme is marked as a recommendation for `t-am-styling-ruling`.
+**Validation.** Files exist under `docs/design/` only.
+
+DONE 2026-09-29 (closed at pre-flight, scrum change 17). The deliverable, `DESIGN.md` plus 15 screen specs and 6 mockups, was committed in `ee45465`. The tracker had been inconsistent: `t-am-styling-ruling` was `done` while this task, its blocker, was still `in_progress`.
+
+**Reconciliation pass, tracked here rather than as open status.** As of 2026-09-29 the designer is running a reconciliation pass over `docs/design/`, and it may still change tokens or specs.
+- `t-am-fe-styling-foundation` is now blocked by this task, and its "tokens match DESIGN.md" AC is checked against `DESIGN.md` **as it stands once the reconciliation commit lands**.
+- The same applies to each screen task's spec.
+- If the pass changes a token after the foundation task has started, that is a spec change for the orchestrator to route. It is not silent drift.
+- Record the reconciliation commit hash here when it lands.
+
+## t-am-styling-ruling
+**Goal.** An architect ruling on the recommended styling approach, recorded in the decision log (next free entry). Escalate only if it changes the locked stack in a way Entry 29's delegation doesn't cover.
+
+DONE 2026-09-29. The ruling is decision-log Entry 30: plain CSS with custom properties (D1), with D2–D7 confirmed. The architect wrote it and the orchestrator accepted it under the owner's delegation. No new dependency, so no escalation. It ran before `t-am-design-spec` closed (that task is still reconciling), even though the tracker lists the spec as its blocker. (Resolved at pre-flight: `t-am-design-spec` is now closed, and `t-am-fe-styling-foundation` is blocked by both this ruling and the spec.) Its scope is the file layout Entry 30 names: `frontend/src/styles/tokens.css`, `base.css`, and imports at the top of `main.tsx`.
+
+## t-am-fe-styling-foundation
+**Goal.** Implement Entry 30 D1 exactly as laid out: the global style layer every restyled screen builds on.
+**Blockers.** `t-am-styling-ruling` and `t-am-design-spec` (scrum change 17). Read `DESIGN.md` after its reconciliation commit; see `t-am-design-spec`.
+**Scope.** Only the style layer the ruling names. The earlier scope ("tokens and `__root.tsx`") was narrower than Entry 30 assigns (scrum change 18). No screen logic.
+- `frontend/src/styles/tokens.css`: `:root { --… }` only.
+- `frontend/src/styles/base.css`: the reset, `html`/`body` type, focus ring, `.visually-hidden`, and a `prefers-reduced-motion` rule zeroing the `--motion-*` tokens.
+- `frontend/src/main.tsx`: both CSS imports, once each, tokens first, at the top.
+- `TripMap.css` beside `TripMap.tsx`, imported after `leaflet/dist/leaflet.css`.
+- The `__root.tsx` shell restyle.
+- **Not in scope:** the D4 icon set, which is `t-am-fe-icons`.
+**AC.**
+- **Rationale beside the code (Entry 30 "What follows"):**
+  - `TripMap.css` carries a comment on why there is no `@layer` and why the import order matters;
+  - `tokens.css` carries the `theme_color` (in `vite.config.ts`) = `--color-brand-primary` pairing and the literal-breakpoint rule;
+  - `base.css` starts with a pointer to decision-log Entry 30.
+- The tokens match DESIGN.md.
+- Existing screens render with no behaviour change: the test suite is green and snapshot-free.
+- The build output stays one artifact.
+**Validation.** `cd frontend && npm test && npm run build`
+
+DONE 2026-10-06. `styles/tokens.css` (86 tokens, exact match to DESIGN.md Appendix A), `styles/base.css` (reset, type, focus ring, `.visually-hidden`, reduced-motion zeroing — moved here from the appendix per Entry 30), imports in `main.tsx`, `TripMap.css` after leaflet.css (no `@layer`), `__root.css` `.app-shell`. Rationale comments in place. Focus ring 6.17:1 on page. Frontend 385 + build. QA PASS. Note: `QueueNotice.tsx` still has an inline style — for a later restyle.
+
+## t-am-fe-icons
+**Goal.** The Entry 30 D4 icon set. Nobody owned it before pre-flight (scrum change 18).
+**Scope.** `frontend/src/icons/` (16 in-house SVG icon components) and `frontend/src/icons/LICENSE`. No runtime icon package, no new dependency, no screen changes.
+**AC.**
+- The icons are the set DESIGN.md §4.5 lists (16 per Entry 30 D4), at the `size/icon/*` tokens.
+- SVG paths are vendored only from Lucide (ISC; Feather-derived parts MIT), Feather (MIT) or Tabler (MIT). No GPL, CC-BY-SA or unlicensed source.
+- `frontend/src/icons/LICENSE` carries the upstream copyright and permission notice for every source used.
+- Each icon file has a source comment naming its upstream icon.
+- `package.json` gains no dependency.
+**Validation.** `cd frontend && npm test && npm run build`; `git diff --stat -- frontend/package.json` is empty.
+
+DONE 2026-10-06. `frontend/src/icons/`: shared `Icon.tsx` (size md/sm → `--size-icon-*`, aria-hidden unless titled, then role=img + <title>), 22 icon components (21 Lucide paths vendored verbatim from lucide-static 1.52.0, 8 of them Feather-derived; `pin-approx` in-house), `index.ts`, `LICENSE` (ISC + Feather MIT), 45 tests. No dependency added. Frontend 430 + build. QA PASS (all 21 paths match upstream). Debt: t-am-icon-count-doc.
+
+## t-am-fe-auth-screens
+**AC.**
+- `/signup` validates with the contract's rules client-side and shows the server's `message` on 409 / 422 / 429.
+- The recovery code is shown once with copy and a required "I saved it" checkbox, and is never stored in localStorage or IndexedDB (a test asserts this).
+- `/signin` handles 401 and 429 (with a `Retry-After` countdown).
+- `/account` offers sign out, sign out everywhere, change password (403 = wrong current password) and a new recovery code.
+- The current user comes from generated `GET /me`. `{id, displayName}` (no username) is cached in localStorage `btj.me` for offline cold opens and cleared on signout.
+- A `BroadcastChannel` `auth` message fires on sign-in and sign-out.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-auth-account QA, triggered debt promoted here).** Concurrent password changes from one session all return 200 but only the last takes effect; the others get an already-dead cookie. The /account change-password form must block double-submit (disable while pending) — or, if dev prefers, the server re-checks the current password under the row lock; test that a double-tap sends one request.
+
+DONE 2026-10-06. `/signup`, `/signin`, `/account` routes; `auth.ts` (useMe + `btj.me` {id, displayName} cache, BroadcastChannel `auth`, `safeNext`, field rules, Retry-After countdown, single-flight submit); `ApiError.retryAfter` in `api/client.ts` (queue-classification should consume it); 8 components with their own CSS. Recovery code only in component state (`gcTime: 0`, reset after copy), never in storage. Tests: auth.test.tsx 39; frontend 469 + build. QA PASS (SW never caches /api, generated hooks only). Promoted finding → new task t-am-fe-recover (no task built /recover). Debt: t-am-fe-auth-gaps, t-am-fe-lint-config.
+
+## t-am-verify-ios-cookie
+**Owner step on a real iPhone, against the deployed HTTPS host.** `__Host-`/`Secure` cookies over `http://localhost` don't work on Safari (contract default 28), so this can't run against local dev.
+**Blockers (scrum change 16).**
+- `t-am-queue-userid` (the queue's 401 pause and `userId` hold; it follows `t-am-queue-classification`).
+- `t-am-fe-rider-add-stop` (offline capture on v2).
+- `t-am-owner-deploy`.
+The earlier single blocker, `t-am-fe-auth-screens`, covered step 1 only.
+1. Sign in in Safari, then open the installed app. Record whether the session is shared or whether you must sign in again.
+2. Capture offline in the installed app, reconnect, and confirm the items send under that app's session.
+
+Record the outcome in `docs/real-device-test-plan.md`.
+
+## t-am-fe-discover-trip-detail
+**AC.**
+- `/` shows Discover: `GET /api/v2/trips` with Load more on `nextCursor`, a "My trips" section from `/me/trips` when signed in, and a "Continue: last trip link" card when `lastSlug` exists. The auto-redirect of Entry 18 is replaced; the Entry 29 routes supersede it.
+- `/trips/$tripId` shows the map, timeline, gallery and bikes from the v2 hooks, a delay note for non-members, and the persisted `TripOut` per tripId as `initialData`.
+- 404 shows "Trip not found" for missing and private alike.
+- No write UI unless `viewer.role` is `rider` or `leader`.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-v2-trip-reads, triggered debt).** `frontend/src/localStore.ts` may hold a `TripOut` cached before the extension, with no `viewer`/`visibility`. The first screen that reads `trip.viewer` must treat it as absent (fall back to `access`, or refetch) rather than crash; test with a pre-extension cached trip.
+
+DONE 2026-10-06. `/` = Discover (public trips with Load more, My trips when signed in, Continue card for `lastSlug`; Entry 18 auto-redirect removed per Entry 29/D7, routing test updated). `/trips/$tripId` (+ index, + stops/$stopId) on v2 hooks; `tripV2.ts` uses the per-id cached TripOut (`btj.tripById.<id>`) as initialData and clears it on 404; identical "Trip not found" for missing/private/malformed; pre-extension cache → no role, no write rights. Components Badge, TripCard, PhotoGallery. No write UI yet on v2 pages. Tests: discoverTripDetail 16; frontend 492 + build. QA PASS. Debt: t-am-fe-discover-gaps.
+
+## t-am-fe-create-trip
+**AC.**
+- `/trips/new` is signed-in only and generates a UUID at submit time.
+- Choosing public shows the Publish warning.
+- 201 or 200 navigates to `/trips/$tripId`. 409 and 429 show `message`.
+- It is online-only and not queued.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+DONE 2026-10-06. `/trips/new` (signed-in only; UUID minted at submit, reused on retry, dropped on 201/200/409; public shows the inline Publish warning, no dialog per spec; online-only, not queued; 409/429 show the message, 429 countdown) and a "Create a trip" link on Discover for signed-in users. Tests: createTrip 11; frontend 503 + build. QA PASS. Not built (spec): disabling Create for the visit after the lifetime-cap 409 — the contract can't distinguish it from other 409s (see t-am-trip-create-gaps); the leader's first-visit card and Copy trip link belong to the trip page.
+
+## t-am-fe-join-flow
+**AC.**
+- The Request button shows for `viewer.role` none or anonymous; anonymous goes to `/signin` and back.
+- The message counter enforces 280.
+- The pending state offers Cancel.
+- `/account` lists My requests.
+- `/t/$slug`, when signed in and not a member, offers "Ask to join as a rider" (claim). 404 shows "This link can't be used to join".
+- Every 409 message is shown verbatim.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+DONE 2026-10-06. `components/JoinRequest.tsx`: `JoinRequestPanel` on the trip shell (anonymous → sign-in link; none → message form with a 280 code-point counter; pending → Cancel; anything else or no role → nothing), `LegacyJoinPanel` on `/t/$slug` (claim; 404 → "This link can't be used to join"; slug only in the request body). `/account` My requests (rejected and blocked both "Not approved"). 409s verbatim, 429 countdown, single-flight. Tests: joinFlow 20; frontend 523 + build. QA PASS. Debt: t-am-fe-join-gaps.
+
+## t-am-fe-leader-review
+**Goal.** The leader's join-request review screen. Split along the existing design specs (scrum change 20); this task is `docs/design/screens/leader-review.md`.
+**Route.** This task creates the leader area route. The specs name it `/trips/$tripId/members?view=requests`, while earlier AC said `/trips/$tripId/manage`. The router path is `dev`'s call (DESIGN.md §13 X1). `t-am-fe-members` and `t-am-fe-trip-settings` add their views to it.
+**Blockers.** `t-am-fe-discover-trip-detail` and `t-am-join-leader`. The former blocker on `t-am-fe-join-flow` was needed only for end-to-end UX testing, not technically, so it was dropped. `t-am-member-revoke` moved to `t-am-fe-members`.
+**Scope.** The leader area route and its requests view, per `leader-review.md`. It uses the generated join-request hooks.
+**AC.**
+- The leader area is leader-only (UI gate; the server enforces).
+- Pending requests have approve, reject, and reject & block with a confirm step. Multi-select loops over the decision endpoint and reports each outcome.
+- The blocked tab offers Unblock.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+DONE 2026-10-06. Route `/trips/$tripId/members` (`view` = requests | members | blocked; members falls back to requests until t-am-fe-members), leader-only on `viewerRole()`; `components/LeaderReview.tsx`: approve / reject / reject & block (confirm dialog), sequential multi-select with per-row outcomes (409/404 → "Already handled", 429/401/403 stop), Blocked tab with Unblock, per-row in-flight dedupe, display names only. Leader-only Requests link on the trip shell. Tests: leaderReview 18; frontend 541 + build. QA PASS. Debt: t-am-fe-ui-primitives.
+
+## t-am-fe-members
+**Goal.** Members management, per `docs/design/screens/members.md` (scrum change 20).
+**Blockers.** `t-am-fe-leader-review` (it creates the shared route), `t-am-trip-leadership` and `t-am-member-revoke`.
+**Scope.** The members view in the leader area. It uses the generated members, promote, step-down, leave and revoke hooks.
+**AC.**
+- Members: promote, revoke with a confirm step (not shown for leaders), step down, leave.
+- A 409 last-leader message is shown.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+DONE 2026-10-06. `components/MembersView.tsx` on `/trips/$tripId/members?view=members` (leader or rider via `viewerRole()`; others/no role → nothing loaded): leaders get Make leader and Revoke on rider rows only; own row offers Step down (leaders) and Leave (everyone); all confirmed via Dialog; sole leader sees the reason disabled; 409 shown verbatim; leave → invalidate trip + /me/trips → `/`. Members tab in LeaderReview, Members link for riders. Tests: members 16; frontend 557 + build. QA PASS.
+
+## t-am-fe-trip-settings
+**Goal.** Trip settings, per `docs/design/screens/trip-settings.md` (scrum change 20).
+**Blockers.** `t-am-fe-leader-review` (shared route) and `t-am-trip-create` (PATCH).
+**Scope.** The settings view in the leader area. It uses the generated PATCH trip hook.
+**AC.**
+- Settings PATCH covers name, visibility and delay.
+- Switching private → public shows the Publish warning.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+DONE 2026-10-06. `/trips/$tripId/settings` (leader-only via `viewerRole()`; one form sending only changed fields, never null; name 1–100, delay integer 0–168; private → public shows the inline Publish warning; 200 updates and refetches the cached trip; 403 → no-longer-leader notice; 429 countdown) and a leader-only Settings link on the shell. Tests: tripSettings 23; frontend 580 + build. QA PASS. Simplifications filed under t-am-fe-ui-primitives.
+
+## t-am-queue-classification
+**Goal.** The offline queue classifies the new 401 and 429 correctly and lets a rider rescue a failed photo (obligation 14, classification half; scrum change 19).
+**Blockers.** `t-am-contract-models` (the new codes) and `t-am-fe-auth-screens` (the `auth` broadcast). The former blocker on `t-am-member-revoke` was dropped, because the 403 classification doesn't change.
+**Scope.** `offline/queue.ts`, `api/client.ts` (`ApiError.retryAfter` parsed from the header), `offline/QueueNotice.tsx`, queue tests. The IndexedDB schema version is unchanged.
+**AC. Obligation 14, scripted tests:**
+- **401:** the entry is not failed and attempts are unchanged. The drain stops and the notice reads "Sign in to send N items". An `auth` broadcast restarts the drain.
+- **403:** failed, blob kept. "Save photo to this device" downloads the stored JPEG through an object URL and an `<a download>` link.
+- **429 with `Retry-After: 7`:** the next attempt is scheduled at 7 s (fake timers) and does not advance the doubling backoff.
+- A test pins a frozen copy of the old five-code `NEVER_RETRY` classification and asserts that it retries `UNAUTHENTICATED` and `RATE_LIMITED`.
+- Restart persistence: the 401 pause survives a reload.
+- **Rationale beside the code (Entry 29):** `queue.ts` carries a comment on the no-grace rule: a revoked rider's queued items fail with 403, with no grace period.
+**Validation.** `cd frontend && npm test && npm run build`
+
+DONE 2026-10-06. `offline/queue.ts`: 401 → pause (entry untouched, no attempt, `btj.queue.paused` survives reload, cleared by a 2xx or an `auth` signin broadcast); 429 + Retry-After → retry at that delay, attempt counted, backoff unchanged; five-code NEVER_RETRY unchanged; 403 keeps the blob; no-grace comment. `QueueNotice.tsx`: "Sign in to send N items" and "Save photo to this device" (object URL + `<a download>`, revoked after 1 s). No existing queue test changed. Tests: queueClassification 12; frontend 592 + build. QA PASS, 4/4 mutants. Debt: t-am-queue-classification-gaps; Retry-After skip routed to t-am-fe-rider-add-stop.
+
+## t-am-queue-userid
+**Goal.** Queued items belong to the account that captured them, and v2 payloads route by tripId (obligation 14, `userId` half; scrum change 19).
+**Blockers.** `t-am-queue-classification` (the same file, serialised) and `t-am-v2-rider-writes`.
+**Scope.** `offline/queue.ts`, queue tests.
+**`enqueue`'s `userId` is optional** (`userId?: string`). New v2 callers always pass it, from `t-am-fe-rider-add-stop` onwards. The legacy `t.$slug.add.tsx` is **not** changed here and stays outside this task's scope; its entries carry no `userId` and are sent like entries from before the upgrade, until `t-am-fe-legacy-readonly` makes `/t/$slug` read-only. (The scrum review asked for this to be stated; `docs` chose "optional" while applying it, because "required" would have pulled `t.$slug.add.tsx` into scope. The orchestrator may reverse this.)
+**AC.**
+- **userId hold:**
+  - an entry with a different `userId`, or with a `userId` while signed out, is held: not sent, not failed, counted separately in the notice;
+  - entries without a `userId` (from before the upgrade, or from the legacy add route) are sent.
+- New entries with a `userId` carry `{tripId}` payloads sent through the v2 generated clients. Slug payloads still go to the legacy clients.
+- Restart persistence: the hold survives a reload.
+**Validation.** `cd frontend && npm test && npm run build`
+
+DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside the payload, never sent); `isHeld()` re-reads `btj.me` per entry — another account or signed out → held (not sent, not failed, no attempt), counted in a separate notice line that never names the account; entries without userId send as before; `{tripId}` payloads route to the v2 clients, slug payloads to legacy; signin releases, signout holds. `enqueue` overloads require a userId for v2 items at compile time. IDB schema unchanged. Tests: queueUserId 21; frontend 613 + build. QA PASS, 4/4 mutants. Debt: t-am-queue-userid-gaps.
+
+## t-am-fe-rider-add-stop
+**Goal.** Part (a) of scrum change 21: the rider home and add stop on v2.
+**Blockers.** `t-am-queue-userid` and `t-am-fe-discover-trip-detail`. The former blocker on `t-am-fe-leader-review` was unnecessary.
+**Scope.** The rider home at `/trips/$tripId` and `/trips/$tripId/add`, per `rider-home.md` and `add-stop.md`.
+**AC.**
+- Members see the rider home at `/trips/$tripId`.
+- `/trips/$tripId/add` enqueues v2 payloads with `userId`.
+- The rider home and add stop screens use DESIGN.md tokens.
+- Add stop has a keyboard-operable "Use map centre" control (DESIGN.md C15).
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+**Added AC (from t-am-queue-classification QA, triggered debt promoted here).** Once the queue posts to the v2 rider-write endpoints (which do send 401/429), a trigger during a 429 (the `again` loop, `visibilitychange`) runs the drain again immediately and skips the Retry-After wait. Make triggers respect a pending Retry-After (and the backoff) and test it.
+
+**DONE (472e46b).** Rider home shows a bottom "Add stop" bar for `rider`/`leader` only; `/trips/$tripId/add` shows a no-access notice to everyone else (pending users are told they need leader approval) and a sign-in notice when the account id is unknown. Payloads are `{tripId, data}` with `userId`. Queue waits are per entry and in memory: Retry-After ends only on its own timer; backoff ends early on `online`, `visibilitychange` or `drain()`; a drain stops at a waiting entry and skips held entries first. Tests: `riderAddStop.test.tsx` (15), `offline/queueTiming.test.tsx` (14); frontend 642. QA passed with 3 mutants killed. Debt: `t-am-fe-rider-add-stop-gaps`.
+
+## t-am-fe-bikes-v2
+**Goal.** Part (b) of scrum change 21: bikes on v2.
+**Blockers.** `t-am-fe-discover-trip-detail` and `t-am-v2-rider-writes`.
+**Scope.** `/trips/$tripId/bikes`, using the generated v2 bikes hooks.
+**AC.**
+- `/trips/$tripId/bikes` add and edit go through v2, online-only.
+- The bikes screen uses DESIGN.md tokens.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+**DONE.** `/trips/$tripId/bikes` lists bikes by rider name for every reader (v2 list, falling back to the persisted trip's bikes offline); Add bike / Edit only for `viewerRole()` rider or leader. Writes use the generated v2 hooks, online-only (offline shows a message and nothing is queued); create keeps one client id per form so a retry replays; PATCH sends only changed fields. 401/403/422/429 per trip-detail.md. Bikes is a link in the trip shell. Tests: `bikesV2.test.tsx` (20); frontend 662. QA passed, 3 mutants killed. Debt: `t-am-fe-bikes-v2-gaps`.
+
+## t-am-fe-legacy-readonly
+**Goal.** Part (c) of scrum change 21: the legacy link becomes read-only, and the account supplies the rider's name.
+**Blockers.** `t-am-fe-rider-add-stop` (v2 add stop must exist before legacy writes go away) and `t-am-fe-join-flow` (it adds the claim CTA to `/t/$slug`, so the two are serialised).
+**Scope.** The `/t/$slug` routes (including removing write UI such as `t.$slug.add.tsx`'s entry point), and the display-name prompt, per `legacy-link.md`.
+**AC.**
+- `/t/$slug` is read-only. If the user is an active member (`viewer.role`), it links to `/trips/$tripId`.
+- The display-name prompt is removed; the name comes from the account.
+- The `/t/$slug` screens use DESIGN.md tokens.
+**Validation.** `cd frontend && npm test && npm run build`
+
+**DONE.** `/t/$slug` is read-only: no Add stop, Add bike or Edit bike for any legacy `access` or `viewer.role`; `/t/$slug/add` redirects members to `/trips/$tripId/add` and everyone else to `/t/$slug`. New `LegacyNotice` ("This is an old trip link") by `viewer.role`: signed-out copy with Sign in / Create an account, members get "Open trip"; none/pending keep join-flow's `LegacyJoinPanel`. Display-name prompt removed. Legacy routes restyled with tokens (`t.$slug.css`, bikes reuse `trips.$tripId.bikes.css`). Queue untouched; legacy drain covered by `offline/queueUserId.test.tsx`. Tests: `legacyReadonly.test.tsx` (20); legacy add-form and bike-write tests removed with their UI; frontend 621. QA passed. Debt: `t-am-fe-legacy-readonly-gaps`.
+
+## t-am-user-guide
+**AC.** `docs/user-guide.md` explains, for friends rather than developers:
+- signup and keeping the recovery code;
+- public vs private trips and the 24 h delay;
+- requesting to join, and what leaders do;
+- old links (claim);
+- queued items waiting for sign-in;
+- saving a failed photo;
+- capturing from the installed app.
+
+No slug or credential values.
+**Validation.** `git diff --stat` shows `docs/` only.
+
+**DONE.** `docs/user-guide.md` rewritten from the built screens (signup/recover, public/private + delay, create trip, join request, leader tools, legacy notice, queue notices, installed app). The two-link and typed-name sections are gone. Production address stays a TODO. Not built, so not described: notifications, email, display-name edit, invites to private trips.
+
+## t-am-legacy-removal
+TRIGGERED DEBT (Entry 29 §12). Filed with its promotion trigger only. **Not scoped.** Trigger: at least 120 days since release **and** no legacy trip still `private` **and** 14 consecutive days of zero hits to `/api/trips/<redacted>` in the redacted access logs.
+
+## t-am-ratelimit-postgres
+TRIGGERED DEBT (Entry 29 §10). Not scoped. Trigger: Container App `max-replicas` > 1.
+
+## t-am-passkeys
+TRIGGERED DEBT (Entry 29 §3). Not scoped. Trigger: a rider is locked out with no recovery code, a phishing incident against a trip account, or the owner asks for passwordless sign-in. (The ADR named no concrete trigger; the orchestrator supplied this one on 2026-09-29.)
+
+## t-am-stop-hide-from-public
+ORDINARY DEBT (Entry 29 §1, accepted residual risk). Not scoped.
+
+## t-am-private-trip-invites
+ORDINARY DEBT, a gap found while scoping. A private trip created in the app returns 404 to non-members and has no slug, so nobody can ever request to join it. Mitigation until then: the leader publishes it, or creates it public (the default). Not scoped.
+
+## t-am-display-name-edit
+ORDINARY DEBT, a gap found while scoping. No endpoint changes `displayName` after signup. Photos keep the name they were uploaded under. Not scoped.
+
+## t-am-json-body-limit
+
+ORDINARY DEBT (from t-am-contract-models QA, 2026-09-29). No request-body size limit exists for JSON routes; a 1 MB string field is parsed and held in memory on any JSON route. Promotion trigger: an abuse incident or a public-write surface beyond the auth routes. Fix: a small ASGI middleware refusing Content-Length > 64 KiB on non-multipart /api bodies with 422.
+
+## t-am-check-body-drift
+
+TRIGGERED DEBT (QA on t-am-migration-0003). `test_check_constraint_names_match_metadata` compares CHECK constraints by name only, so a CHECK body in `tables.py` can drift from the SQL (e.g. delay `BETWEEN 0 AND 100`) with every test green. Today all 16 bodies match (hand-checked vs `pg_get_constraintdef`). No consumer: `tables.py` CHECK text is never emitted as DDL. Promotion trigger: anything renders DDL from `tables.metadata` (create_all, Alembic autogenerate), or a migration changes an existing CHECK body.
+
+## t-am-m3-slug-seed-edges
+
+ORDINARY DEBT (QA on t-am-migration-0003). The obligation-13 test seeds only token_urlsafe slugs, so a whitespace-only slug normalisation (`rtrim`) would pass. The real 0003 keeps odd slugs byte-identical (QA-verified). No trigger.
+
+## t-am-csrf-root-path
+
+TRIGGERED DEBT (QA on t-am-csrf). The middleware tests the `/api` prefix against `scope["path"]`, which includes `root_path`, while Starlette routes on the path with `root_path` stripped. Reproduced with `uvicorn --root-path /btj`: a cross-site POST reached the bikes-create handler. No consumer: nothing sets `root_path` (Dockerfile, compose, infra, app). Fix: strip `scope.get("root_path", "")` from the front before the prefix test, plus a test. Promotion trigger: `--root-path`, `FastAPI(root_path=...)`, serving under a path prefix, or mounting the app as a sub-app.
+
+## t-am-csrf-test-gaps
+
+ORDINARY DEBT (dev + QA on t-am-csrf). (1) No test for repeated `Sec-Fetch-Site` headers — mutating `all` → `any` in `is_cross_site` survives all 272 tests (behaviour correct today, verified live). (2) `ApiError.forbidden` docstring in `core/errors.py` still describes only the slug 403. (3) `tests/conftest.py` comment says an `http://` client is cross-site; only the missing `Origin` matters.
+
+## t-am-identity-core-doc-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-identity-core). (1) `models/account.py` comment says NFKC never lengthens past the cap — wrong (`ﬁ`→2 chars, U+FDFA→18); behaviour correct since the cap applies to raw input. (2) `ApiError.__init__` comment says only 401/429 constructors set headers; `unauthenticated()` now also sets `Set-Cookie`. (3) `sessions_repo.touch()` commits the request's shared `AsyncSession` inside a dependency, so an earlier dependency's pending writes would commit with it (none exist today). (4) Test env: the S3 bucket fixture can't create its bucket on a fresh mock under `S3_REGION=auto` (no location constraint); CI and compose are unaffected (bucket pre-created).
+
+## t-am-auth-sessions-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-auth-sessions). (1) Contract Me note says Me is the only response containing a username; signup/signin also return `MeOut` per the table — fix the note. (2) `core/security.py` docstring still says no route declares `require_session`. (3) `SessionCreate.username` / `AccountRecover.username` have no `max_length` (see t-am-json-body-limit). (4) Audit self-test never feeds an account route outside `/api/v2` or one declaring two guards (live rule enforces both). (5) With 10 verifies in flight a correct password gets 429 and the account locks — deliberate, keeps the ≤ 10 bound and self-heals stranded slots; QA agrees it's within the contract.
+
+## t-am-session-confirm-limit
+
+Decision-log Entry 33; contract text already written (`api-contract.md` "Rate limits and lockout", "Sessions", "Migration 0004"). Promoted from `t-am-auth-account-gaps` item (1); item (2) (contract lockout text) is now moot. Gate: currently_broken (a stolen session can lock the owner out).
+
+**Goal.** Wrong passwords on `POST /auth/password` and `POST /auth/recovery-code` are counted per session and revoke it at 10, and never touch the account lockout.
+
+**Scope.**
+1. Migration `backend/migrations/0004_session_confirm_failures.sql`: `sessions.failed_confirmations integer NOT NULL DEFAULT 0` plus a `DO $$`-guarded CHECK `sessions_failed_confirmations_check` (>= 0), same style as 0003. Threshold 10 stays in code. Mirror in `data/tables.py`.
+2. `data/repositories/sessions.py`: `reserve_confirmation(db, token_hash, *, threshold) -> int | None` (conditional `UPDATE ... WHERE failed_confirmations < :threshold RETURNING`), `reset_confirmations(db, token_hash) -> bool`; reuse `delete`. No commit inside, same pattern as `users.py`.
+3. `core/sessions.py`: add internal `token_hash: bytes` to `SessionUser` (never serialised).
+4. `routes/v2/auth.py` (`_confirm_own_password`, `_hand_back_claim`): claim before argon2; `None` claim, or a 10th wrong, deletes the session and returns 401 UNAUTHENTICATED with cleared cookie and `WWW-Authenticate` ("Signed out after too many wrong passwords. Sign in again."); 1-9 wrong is 403; correct resets to 0 in the working transaction, and a reset that finds no row rolls back with 401. Remove all use of `reserve_login_attempt`, `lock_if_saturated`, `reset_lockout` from these two routes. Per-IP `signin` bucket unchanged.
+5. Update the route "How it works" text in `auth.py` (about lines 643-662 and 707-724) and the `currentPassword`/`password` descriptions in `models/account.py` (about lines 165 and 178); 403 and 429 response texts.
+6. Regenerate OpenAPI and Kubb.
+
+**AC.**
+- 20 parallel wrong attempts on one session: at most 10 argon2 calls (spy), nine 403, the rest 401, row deleted.
+- Sequential: 9 wrong are 403; the 10th is 401 with `Max-Age=0` and `WWW-Authenticate`; the 11th is 401.
+- After revocation the right password signs in (no 429); `failed_logins` and `locked_until` unchanged.
+- Another session of the same user stays valid with counter 0.
+- 9 wrong, a correct rotation, then 9 wrong: session still live. A correct password change gives a new session at 0.
+- An account locked by 10 signin failures: signed-in password change with the right password succeeds; a wrong one is 403, not 429.
+- Race where the reset finds the row deleted: 401, nothing written.
+- Migration test modelled on `tests/test_migration_0003.py`: migrate to 0003, seed sessions, migrate to 0004, existing rows read 0, CHECK rejects -1 by constraint name and allows 0, second run applies nothing.
+
+**Validation.** `cd backend && uv run pytest -q tests/test_auth_session_confirm.py tests/test_migration_0004.py`; full suite once; `uv run ruff check . && uv run ruff format --check .`; regenerate OpenAPI and Kubb per CLAUDE.md "Commands". test-writer is mandatory (access control) and writes tests contract-first.
+
+**Rollback.** Additive column with default; redeploy the old image, the column can stay.
+
+
+**DONE.** Migration 0004 adds `sessions.failed_confirmations`; `reserve_confirmation` claims before argon2 and commits; the 10th wrong password deletes the session and returns 401 with the cookie cleared; a correct password resets the count (401 if the row vanished). Password change and recovery-code rotation no longer read or write the account lockout; signin and recover are unchanged. Tests: `test_auth_session_confirm.py` (19), `test_migration_0004.py` (3); 0003 migration tests now migrate up to 0003 only; the shared-counter test now covers signin and recover only. Full suite 3516; frontend 621. QA: 4 mutants killed. Debt: `t-am-session-confirm-limit-gaps`.
+## t-am-auth-account-gaps
+
+ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stolen session and no password, 10 wrong password-change/rotation attempts lock the owner out of signin and recover for 15 min, repeatable; contract-conformant (the contract counts these failures). Should session-authenticated failures count toward the signin/recover lock? (2) The contract's per-account lockout text names only signin/recover for the 429 and the reset; record that password change and rotation also 429 while locked and reset on success. (3) Recover/signin timing: unknown/disabled ~35 ms vs wrong code ~40 ms (extra lockout round-trips); bodies/headers identical, and the lockout already reveals existence. Fix both together if enumeration resistance is tightened. Also: `AccountRecover.username` has no `max_length` (see t-am-auth-sessions-gaps 3).
+
+## t-am-write-gate-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-write-gate-legacy). (1) A photo upload whose body isn't valid multipart gets FastAPI's 400 → `INTERNAL_ERROR` before the gate — the code the queue retries forever; no current client sends one. (2) The membership lookup scans `ix_trip_members_user_id` then filters `trip_id`; a `(trip_id, user_id)` index would serve it (cost bounded by one user's rows). (3) Pre-existing: two concurrent first uploads of the same photo id by two active members can both pass `find_existing`, write the same S3 key, and one INSERT hits the PK. (4) Stale text: stops/bikes/trips repository docstrings describe the slug as the access model; `responses.py` fallback 403 says "viewer slug — read-only"; `api-contract.md` envelope example still shows "This link is read-only.". (5) Legacy GETs with a cookie do a session+membership lookup even where `access` isn't returned.
+
+## t-am-ratelimit-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-rate-limits). (1) Contract gaps to write down: the limiter message text and the lockout message text; the hop>entries fallback to the socket address; `writes` falls back to an `ip:` key without a session; the limiter runs before the gates. (2) FastAPI parses JSON bodies before dependencies, so a malformed body gets 422 without spending a token even when the bucket is empty (no gate, DB or argon2 reached, so nothing gained); multipart is read in full before the 429. (3) Each `writes` request with a cookie costs one indexed session read even when the IP bucket is empty; an expired session keeps keying as its user (user + ip buckets).
+
+## t-am-ratelimit-ipv6-sweep
+
+TRIGGERED DEBT (QA on t-am-rate-limits). Keys are exact addresses, so a client rotating IPv6 addresses (e.g. within a /64) gets a fresh bucket each and can churn the registry enough to evict idle buckets; the eviction sweep scans up to 50k entries under the lock on the loop (~49 ms worst case, about once per 5k new keys). Promotion trigger: abuse from rotating IPv6 addresses, or moving buckets to Postgres (t-am-ratelimit-postgres / Entry 29 multi-replica reopen). Fix then: key IPv6 by /64 and make eviction incremental.
+
+## t-am-trip-list-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-list). (1) The sort key depends on `now()`, so a trip whose stop leaves the delay window between page requests can move, and be skipped or repeated across pages. (2) Each page computes the stop subquery for every public trip (planner inlines it into the keyset predicate, up to 4× per trip) — TRIGGERED on setting a Discover latency budget or a public-trip count threshold. (3) The AC says OpenAPI declares 429 on GET and HEAD; Entry 11 keeps HEAD out of the schema — reword the AC pattern for later v2 reads. (4) `TripRecord.rider_slug`/`viewer_slug` are typed `str` but nullable since 0003.
+
+## t-am-trip-reads-gaps
+
+ORDINARY DEBT (dev, test-writer, QA on t-am-v2-trip-reads). (1) The five v2 reads declare 422 in OpenAPI (the legacy convention, keeping FastAPI's validation schema out of the client) but the contract rows list 200/404/429 — align one or the other. (2) No test reaches the NUL guard in `memberships.get_for_user` with a signed-in caller (the malformed-id test is anonymous). (3) `data/repositories/trips.py` module docstring still describes the two-slug model.
+
+## t-am-jpeg-after-sos
+
+TRIGGERED DEBT (dev + QA on t-am-photo-exif-strip). Everything from the first SOS on is copied untouched per the contract, so APPn/COM between progressive scans and data after EOI (MPF secondary images with their own EXIF, Motion Photo MP4 trailers) survive. No current consumer: `frontend/src/photo.ts` always re-encodes on a canvas. Promotion trigger: any upload path that sends original bytes (non-web client, a keep-original option). Needs a contract change (architect).
+
+**Promoted (owner, Option B).** Scoped per Entry 31: full-file strip, one forward walk ending at the first top-level EOI.
+- Scope: `backend/app/core/jpeg.py` (walker + docstring), `backend/tests/test_jpeg_strip.py`, `backend/tests/jpeg_fixtures.py`. No route change (`photos.py` maps `JpegError` to 422), no dependency, no frontend.
+- AC: (1) APP1 and COM between progressive scans dropped, scans and DHTs kept. (2) MPF APP2 + secondary JPEG with EXIF after EOI cut to exactly the primary. (3) Arbitrary bytes after EOI (MP4 `ftyp` lookalike, gain-map JPEG) discarded. (4) Entropy data with FF00, RST0-7 and fill FFs copied unchanged; a clean file returns the same object. (5) APP14 Adobe (len 14) and APP0 JFIF (len 16) kept; other APP14, JFXX, JFIF with thumbnail dropped. (6) 422 for every truncation of a complete progressive fixture at any offset incl. inside scans, no EOI, SOI/TEM/past-end length after a scan, EOI before SOS. (7) Existing linearity and memory tests pass, plus 15 MiB of FF00, of RST, of fill with no EOI, of minimal scans, of scans alternating with COM, each < 5 s; peak memory < 3x output + 64 KiB.
+- Validation: tests that change with the new rules are `test_bytes_after_sos_are_copied_untouched...`, `test_trailing_bytes_after_eoi_are_copied`, `test_app0_is_kept` (JFXX), and the skip in `test_every_truncation_before_the_scan_is_rejected`. Fixtures hand-built (no Pillow). QA mutants: `\xff+` search; forgetting `\xd0-\xd7`; returning data instead of `data[:eoi]`; dropping APP14.
+
+
+**DONE.** `core/jpeg.py` walks the whole file per Entry 31: drop rules at every top-level marker before and between scans, scan ends found by one compiled search (FF00/RST/fill never match), output cut at the first EOI after a scan; plain JFIF APP0 and Adobe APP14 kept; malformed and truncated input raises `JpegError` → 422. `jpeg_with_scan` now stuffs FF as FF00. Tests: 255 contract-first (`test_jpeg_strip.py` 459 total; new `test_photo_jpeg_v2_after_sos.py` 11 over the v2 upload route, nothing stored on reject); full suite 3494. QA: 4 mutants killed (the FF-run quantifier one only by hanging). Debt: `t-am-jpeg-after-sos-gaps`.
+## t-am-jpeg-gaps
+
+ORDINARY DEBT (QA on t-am-photo-exif-strip). (1) A crafted 15 MiB file still costs 2–4 s of CPU in a worker thread (memory fixed); only an active member within the writes limit can send one. (2) FastAPI reads and spools the multipart body (≤ 16 MiB) before the membership gate and limiter run; only CSRF and the cap precede it. (3) An oversized upload is 422 before the gate (unknown slug/anonymous see 422, not 404/401); add a sentence to the contract's legacy gate order.
+
 ## t-probe-script-yaml-rationale
 
 TRIGGERED DEBT (Gate 3), filed 2026-09-30 from decision-log **Entry 28**'s "Gap, deliberate and flagged" paragraph. Do not implement on sight.
@@ -2141,3 +3148,193 @@ No token starts with a dash, so az passes them through. Running the module by fi
 - The env/secret split bullet lists `PYTHONPATH` as a plain var, not a secret.
 
 **Caveat.** The create block itself was not re-run, because no agent runs `az` writes. It matches the owner's live `job update` above field for field, and that shape produced a successful run. The live Job was already fixed by the owner and needed no change. Runbook §5's recreate warning was reduced to a pointer at the README.
+
+## t-am-stop-arrivedat-echo
+
+ORDINARY DEBT (test-writer + QA on t-am-v2-rider-writes). A fresh stop's 201 echoes `arrivedAt` in the offset the device sent, while the replay 200 returns UTC; same instant. The contract (Entry 26 paragraph) says UTC. Cause: the shared `store_stop` (legacy and v2). The same issue on photo `takenAt` was fixed in `d534ea7`. No current consumer compares spellings.
+
+## t-am-trip-create-gaps
+
+ORDINARY DEBT (test-writer + QA on t-am-trip-create). (1) The contract gives no wording for the 20-trip cap 409; `TRIP_CAP_MESSAGE` hard-codes "20" instead of using `LIFETIME_TRIP_CAP`. (2) The `/me/trips` order (joined_at desc, then id asc) is only in the route description, not the contract. (3) The non-leader 403 wording ("You're not a leader on this trip.") comes from the design spec, not the contract.
+
+## t-am-trip-create-anon-ip-bucket
+
+TRIGGERED DEBT (test-writer + QA on t-am-trip-create). A trip create with no stored session is charged to the IP `trip-create` bucket (3/day, the UserRateLimit fallback), so the 4th from one IP gets 429 with an 8 h Retry-After instead of 401. The queue pauses on 401 but waits on 429, so a signed-out device's queued create would stall 8 h instead of prompting sign-in. Promotion trigger: the offline queue starts sending trip creates. Fix then: skip the IP charge for trip-create when there is no session (the gate 401s it anyway).
+
+## t-am-leadership-contract-wording
+
+ORDINARY DEBT (dev + test-writer on t-am-trip-leadership). (1) The last-leader 409 message "Promote another rider to leader first" has no full stop, unlike every other message — the code copies the contract verbatim. (2) The promote note says the target "must be an active rider, else 404" but the same bullet says promoting an existing leader returns 200; code and tests follow the 200.
+
+## t-am-join-copy-review
+
+ORDINARY DEBT (dev on t-am-join-requester). (1) The join 409 messages were written by dev; DESIGN.md X5 says the designer reviews them. (2) Cancel declares a 422 for its path parameter that the contract row doesn't list (existing pattern, keeps FastAPI's HTTPValidationError out of the client). (3) The `join` limiter spends a token on a duplicate-pending 200 — the contract gives no exemption.
+
+## t-am-join-leader-gaps
+
+ORDINARY DEBT (dev + QA on t-am-join-leader). (1) A pending request whose requester has since become an active member (e.g. via claim once it lands) can still be rejected/blocked: 200 "blocked" with the membership untouched — an active member marked blocked. Contract is silent; consider 409 or auto-cancel. (2) The `state=blocked` list is unbounded (pending is capped at 100). (3) Unblock declares a 422 for its path parameter not in the contract row.
+
+## t-am-matrix-guard-gaps
+
+TRIGGERED DEBT (QA on t-am-member-revoke). (1) `matrix_row_problem` checks only that a named test exists with that parameter, not skip/xfail marks, so skipping a matrix test leaves the guard green. Trigger: the first skip/xfail on a test named in `MATRIX_ROWS`. (2) Websocket routes are invisible to the guard and the route audit (`_walk_tree` drops them; `methods=None` skipped). Trigger: the first websocket route under `/api`.
+
+## t-am-revoke-prior-rows-test
+
+ORDINARY DEBT (QA on t-am-member-revoke). Dropping the `revoked_at IS NULL` filter in `memberships.revoke` would rewrite an earlier self-leave row of a re-joined rider; no shipped test catches it (QA's probe did). The code is correct; add a left → rejoined → revoked test.
+
+## t-am-cli-gaps
+
+ORDINARY DEBT (QA on t-am-operator-clis). (1) No test pins that DB-error output omits `str(exc)` — mutating `describe_db_error` to return `str(exc)` passes all tests and would print bound parameters. (2) An unreachable Postgres makes all three CLIs (and seed_trip) print a traceback: asyncpg's ConnectionRefusedError is an OSError, not caught. No secret appears in it.
+
+## t-am-reenable-account
+
+TRIGGERED DEBT (docs on t-am-runbook-accounts). `reset_account --disable` is one-way: there is no CLI to clear `disabled_at`, and a plain reset leaves the account disabled. Promotion trigger: the first time the owner needs to re-enable an account. Fix then: a `reset_account --enable` (or separate CLI) that clears `disabled_at` and issues a fresh code in one transaction.
+
+## t-am-icon-count-doc
+
+ORDINARY DEBT (dev + QA on t-am-fe-icons). DESIGN.md §4.5, Entry 30 D4 and this tracker say 16 icons but §4.5 lists 22; all 22 were built. Correct the count. Also the icons LICENSE drops upstream's "(for the icons listed above)" from the MIT heading — cosmetic.
+
+## t-am-fe-recover
+
+CURRENTLY BROKEN gap (dev on t-am-fe-auth-screens): `screens/signin.md` specifies `/recover` and a "Forgot your password?" link, but no task built them, so a rider who forgets their password can't use their recovery code — the code's only purpose. Scope: `/recover` route using the generated recover hook (username + recovery code + new password; typed-code normalisation is server-side), then the new recovery code shown once with the same RecoveryCodeStep and the same never-stored guarantee; the link on `/signin`. Handle 401 (wrong/used code, generic), 422, 429 with Retry-After. Tests: storage scan for both codes, single-flight submit. Validation: `cd frontend && npm test && npm run build`.
+
+DONE 2026-10-06. `/recover` (username, recovery code sent as typed, new password → signed in; replacement code via RecoveryCodeStep, only in component state, `gcTime: 0`, reset after copy) and the "Forgot your password?" link on /signin carrying the username. Tests: recover.test.tsx 7 (storage + mutation-cache scan for both codes, double tap, 401/422/429); frontend 476 + build. QA PASS.
+
+## t-am-fe-auth-gaps
+
+Also (QA on t-am-fe-recover): no test passes a hostile `next` to /recover (code uses `safeNext`); `recover.tsx` sets the mono font with an inline style rather than a CSS class.
+
+ORDINARY DEBT (QA on t-am-fe-auth-screens). (1) No test asserts the recovery code is absent from the TanStack query/mutation cache — removing `gcTime: 0` and `rotate.reset()` on /account passes all tests. (2) /account errors use role=alert but don't move focus (spec silent). (3) Deferred account extras: Your trips, My requests, This phone queue section, Signed-out toast, iOS standalone line.
+
+## t-am-fe-lint-config
+
+ORDINARY DEBT (dev on t-am-fe-auth-screens). `npm run lint` fails because the frontend has no `eslint.config.*`, so no frontend lint gate runs.
+
+
+**DONE.** Closed by the owner-approved complexity tooling: `frontend/eslint.config.js` (recommended JS + typescript-eslint + sonarjs cognitive-complexity 15 as warn + react-hooks) makes `npm run lint` run with 0 errors; `npm run lint:complexity` reports only the complexity rule. Backend gained radon and xenon (dev group). Neither is a CI gate. Debt: `t-tooling-complexity-gaps`.
+## t-am-fe-discover-gaps
+
+ORDINARY DEBT (dev + QA on t-am-fe-discover-trip-detail). Deferred spec extras: onboarding card, Create-a-trip entry on Discover, pending-requests and member continue cards, tabs, "You see stops live" notice, "Public from" chips, "Who can see this trip?" dialog, 429 countdown on Try again. `components/README.md` is stale. `/t/$slug/stops/$stopId` still has an inline gallery (use PhotoGallery). Timeline rows are `div role=link` (design wants `<a>`).
+
+## t-am-fe-join-gaps
+
+ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$tripId/join` route and its extras ("A leader didn't approve your last request" notice, already-member redirect, quoted message with Sent date, Back to the trip); `/account` row timestamps; legacy page signed-out and member variants; a 401 on create/claim redirecting to sign-in; "Request cancelled" as a toast. Missing tests: an emoji against the 280 counter; the slug absent from DOM/console/storage.
+
+## t-am-fe-ui-primitives
+
+ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders. Trip settings (dev on t-am-fe-trip-settings): one Save instead of per-field saves, no Make private ConfirmDialog, "Saved." instead of the designed toasts, no "What the public sees" card, no TopBar, delay chips not 48px. Also no home-page notice after leaving a trip ("You left <trip>").
+
+## t-am-queue-classification-gaps
+
+ORDINARY DEBT (dev + QA on t-am-queue-classification). (1) Retry-After isn't bounded: 0 retries at once and > ~2,147,483 s overflows setTimeout and fires at once (backend never sends either). (2) The pause flag is cleared only by a 2xx or a signin message; if paused entries later fail for another reason the notice says "Sign in to send…" until a send succeeds. (3) The download filename is `${stopName} ${id}.jpg` from rider text (browsers sanitise it). (4) `offline/README.md` still lists only the five never-retry codes; `btj.queue.paused` bypasses `localStore.ts`.
+
+## t-am-queue-userid-gaps
+
+ORDINARY DEBT (dev + QA on t-am-queue-userid). (1) `useMe()` clears `btj.me` on a 401 without broadcasting or a queue emit, so QueueNotice keeps listing the user's own entries as waiting until the next emit (sending is still correctly blocked). (2) The queue has no bike kind; v2 bike create/patch aren't routed through it (no caller queues bikes today).
+
+## t-iac-decision-entry-32
+
+Goal: Entry 32 records the ACA-YAML + Actions-OIDC design and the owner's reversal of "CI never deploys" (2026-10-06).
+Blockers: none.
+Scope: docs/decision-log.md (index row + entry) only. Flag, don't edit, CLAUDE.md and ci.yml "never deploys" wording (t-iac-deploy-workflow and the orchestrator own those).
+AC: Entry states decision, rejected options (azd, Bicep/ARM, Terraform, k8s) with reasons, the guardrails (workflow_dispatch only, production environment + required reviewer, concurrency), the YAML caveats (never `secrets:`, fresh `rel-<sha12>` suffix, Jobs updated with --image only, no --command override on job start), the private-GHCR PAT decision (set in ACA only, expiry recorded, owner rotates), the cost note, and that the architecture invariants still hold. Index row added.
+Validation: grep -n "Entry 32" docs/decision-log.md shows the index row and the heading; the heading numbering is contiguous with Entry 31.
+
+**DONE.** Entry 32 and index row written; owner setup commands included. Flagged (not edited): `.claude/skills/deploy/SKILL.md:19` and `.github/workflows/ci.yml:3` say CI never deploys.
+
+## t-iac-app-yaml
+
+Goal: committed ACA app spec for `az containerapp update --yaml`.
+Blockers: Entry 32. Approval: owner-approved infra/ file (plan, decision 2).
+Scope: infra/azure/app.yaml only.
+AC: no `secrets:` key; env entries use `secretRef` only, names match .env.example (kebab-case secret names); registries block uses passwordSecretRef naming the owner-set secret, no value; probes, ingress (external, https-only), scale min 0 max 1, `activeRevisionsMode: Multiple`; image and revisionSuffix are explicit placeholders (`${IMAGE}`, `${REVISION_SUFFIX}`) for the workflow to substitute; no GRAPH_* anywhere.
+Validation: [V-common]; `! grep -n GRAPH_ infra/azure/app.yaml`. Owner step, in the PR description: diff against `az containerapp show -o yaml`, verify that `update --yaml` keeps the registry credential.
+
+[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github`. If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
+
+## t-iac-migrate-job-yaml
+
+Goal: manual-trigger Job spec that runs migrations on the same image.
+Blockers: t-iac-app-yaml.
+Scope: infra/azure/migrate-job.yaml only.
+AC: triggerType Manual; command `python -m app.data.migrate` baked into the container; same secretRefs and registry reference as app.yaml; no `secrets:`; image placeholder.
+Validation: [V-common]; grep -n "app.data.migrate" infra/azure/migrate-job.yaml.
+
+## t-iac-sync-job-yaml
+
+Goal: create-time-only spec for the OneDrive sync Job.
+Blockers: t-iac-app-yaml. Approval: owner-approved (plan, decision 2). Touches no token handling code.
+Scope: infra/azure/sync-job.yaml only; header comment says "create-only: later updates use `job update --image`".
+AC: GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_REFRESH_TOKEN appear as secretRef names only; plain GRAPH_ONEDRIVE_FOLDER placeholder; no `secrets:`; schedule matches the README's existing Job.
+Validation: [V-common]; `git diff --stat` shows no change to backend/app/storage/onedrive_sync.py.
+
+## t-iac-owner-identity
+
+Goal: Azure identity the workflow signs in as, with minimum scope.
+Blockers: Entry 32. Needs Owner or User Access Administrator.
+Scope: Azure only; no repo change; commands are in the Entry 32 "Owner setup" subsection.
+AC: user-assigned managed identity exists; federated credential subject is exactly `repo:<owner>/<repo>:environment:production`; role Contributor scoped to the app's resource group only (not the subscription); owner pastes the three IDs (not secrets) into the tracker note.
+Validation (owner): `az identity federated-credential list` shows the subject; `az role assignment list --assignee <client-id> -o table` shows one Contributor row on the RG scope.
+
+## t-iac-owner-github-env
+
+Goal: gate every deploy behind the owner's approval.
+Blockers: t-iac-owner-identity.
+Scope: GitHub repo settings only.
+AC: environment `production` has the owner as required reviewer; variables (not secrets) AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID are set; no repository-level Azure secrets exist.
+Validation (owner): `gh api repos/<owner>/<repo>/environments/production` shows the reviewer rule; `.../environments/production/variables` lists three names.
+
+## t-iac-owner-ghcr-pat
+
+Goal: ACA can pull the private image.
+Blockers: Entry 32. Credential handling: owner only.
+Scope: ACA registry settings of the app, migrate Job and sync Job. Not GitHub, not YAML.
+AC: classic PAT with `read:packages` only; set via `az containerapp registry set` and `az containerapp job registry set` (or the portal), entered without echo; expiry date recorded in the handover; `passwordSecretRef` name matches what the YAML files reference.
+Validation (owner): `az containerapp show --query properties.configuration.registries` shows server and secret name, no password.
+
+## t-iac-smoke-script
+
+Goal: reusable post-deploy checks, runnable by the workflow and by hand.
+Blockers: Entry 32.
+Scope: infra/azure/smoke.sh only (arg: base URL; no secrets read).
+AC: asserts /api/health 200; / returns the SPA (HTML); http:// does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403 (Host passthrough); optional `--xff-burst` flag sends 121 requests from one network and expects exactly one 429; non-zero exit on any failure.
+Validation: `bash -n infra/azure/smoke.sh`; `shellcheck infra/azure/smoke.sh` if installed; `bash infra/azure/smoke.sh` with no args exits non-zero with usage. The live run is an owner step (t-iac-first-deploy).
+
+## t-iac-deploy-workflow
+
+Goal: approval-gated deploy by workflow_dispatch.
+Blockers: the three YAMLs and smoke script. Approval: workflow config owner-approved (plan, decision 1).
+Scope: .github/workflows/deploy.yml; .github/workflows/ci.yml header comment only (rewrite the "never deploys" scope text to point to deploy.yml; no job changes).
+AC: trigger is workflow_dispatch only, input `sha`; `environment: production`; `concurrency: deploy`; `permissions: id-token: write, contents: read`; steps follow the plan: verify CI green and GHCR tag, azure/login via vars, record current revision and pin traffic, migrate Job start with --image and poll Succeeded, `update --yaml` with fresh `rel-<sha12>` suffix, poll Healthy and shift traffic, sync `job update --image` and assert images equal, run smoke.sh, write step summary with new and previous revision. No `secrets:` use beyond GITHUB_TOKEN; no secret values.
+Validation: `actionlint .github/workflows/deploy.yml .github/workflows/ci.yml` if installed; [V-common]; `grep -n "workflow_dispatch" .github/workflows/deploy.yml` and `! grep -nE '^\s*(push|pull_request|schedule):' .github/workflows/deploy.yml`.
+
+## t-iac-rollback-workflows
+
+Goal: gated rollback and revision cleanup.
+Blockers: t-iac-deploy-workflow.
+Scope: .github/workflows/rollback.yml, .github/workflows/deactivate-revisions.yml.
+AC: same trigger, environment, concurrency and OIDC rules as deploy.yml; rollback takes a `revision` input, verifies it exists, shifts 100% traffic, runs smoke.sh, and warns (annotation) when the target predates Entry 29 (security-degrading, runbook §7a); deactivate refuses to deactivate the active or the rollback-target revision.
+Validation: actionlint if installed; [V-common]; the grep for no push/pull_request triggers as above.
+
+## t-iac-runbook-skill
+
+Goal: docs match reality.
+Blockers: both workflow tasks.
+Scope: docs/deploy-cutover-runbook.md §6 and §8, with §7/§7a cross-links; .claude/skills/deploy/SKILL.md (orchestrator writes it).
+AC: §6 describes dispatching deploy.yml and approving it; manual steps kept only for the fallback and the owner-only list (secret entry, grant_leader/reset_account, real-device tests); the SKILL "never deploys" and "owner runs migrations" text is replaced; old `az` command blocks are moved under "manual fallback".
+Validation: `! grep -n "never deploys" docs/deploy-cutover-runbook.md .claude/skills/deploy/SKILL.md`; grep -n "deploy.yml" on both files.
+
+## t-iac-first-deploy
+
+Goal: prove the pipeline end to end.
+Blockers: all setup and workflow tasks. NEEDS THE USER.
+Scope: GitHub Actions UI and the live app.
+AC: owner dispatches deploy with a green main SHA and approves; run is green; summary names new and previous revisions; app and Job images equal; owner runs the second-network XFF check and records the result against t-am-verify-aca-xff.
+Validation (owner): the run URL is recorded in the tracker; `az containerapp revision list` shows the new revision with 100% traffic.
+
+## t-iac-retire-manual
+
+Goal: remove superseded manual paths.
+Blockers: t-iac-first-deploy.
+Scope: the az rest probe script in infra/azure/ and the superseded create commands in infra/azure/README.md (the README's probe section runs from about line 182 to 320; devops locates the exact range).
+AC: probe script deleted; README keeps one-time bootstrap (environment creation, secret entry) and points to the YAML and workflows for everything else; no dangling links.
+Validation: `grep -rn "<probe-script-name>" . --include=*.md --include=*.yml` returns nothing; [V-common].

@@ -24,7 +24,7 @@ export type PhotoOut = {
     */
     url: string;
     /**
-     * @description Display name only, no auth — see spec Section 6. Whoever the uploading device said it was; it is not tied to a user account and nothing verifies it. Stored as `photos.uploaded_by`.
+     * @description Who uploaded the photo: the uploading account\'s `displayName` at upload time, set by the server from the session, whatever the upload form sent. For photos uploaded before accounts existed, the free-text label stored then. A snapshot: it does not change if the account is renamed. Stored as `photos.uploaded_by`.
      * @type string
     */
     uploadedBy: string;

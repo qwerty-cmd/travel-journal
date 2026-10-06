@@ -1,0 +1,91 @@
+/* AuthPage frame (TopBar §5.13 + form column §8.1). Tokens only. */
+.auth-topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-bar);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-topbar);
+  padding: 0 var(--space-1);
+  background: var(--color-surface-card);
+}
+
+.auth-topbar__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-target-min);
+  height: var(--size-target-min);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.auth-topbar__title {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-semibold);
+}
+
+.auth-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--size-form-max);
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+.auth-page h1 {
+  font-size: var(--font-size-title);
+  line-height: var(--font-line-height-title);
+}
+
+.auth-page h2 {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+}
+
+.auth-page form,
+.auth-page .auth-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.auth-page .auth-links {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.auth-page .auth-muted {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.auth-page .auth-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-surface-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-1);
+}
+
+.auth-page .auth-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.auth-page .auth-skeleton {
+  height: var(--space-12);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-sm);
+}

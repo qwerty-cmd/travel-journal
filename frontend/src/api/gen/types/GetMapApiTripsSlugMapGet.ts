@@ -8,7 +8,7 @@ import type { MapFeatureCollection } from "./MapFeatureCollection";
 
 export type GetMapApiTripsSlugMapGetPathParams = {
     /**
-     * @description The trip\'s rider or viewer slug — the unguessable link the trip was shared with. Read endpoints accept either one.
+     * @description The trip\'s rider or viewer slug — the link the trip was shared with. Either one locates the trip; neither grants anything. Legacy reads accept both and give the full, undelayed trip.
      * @type string
     */
     slug: string;
@@ -32,10 +32,16 @@ export type GetMapApiTripsSlugMapGet404 = ErrorEnvelope;
 */
 export type GetMapApiTripsSlugMapGet422 = ErrorEnvelope;
 
+/**
+ * ErrorEnvelope
+ * @description The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.
+*/
+export type GetMapApiTripsSlugMapGet429 = ErrorEnvelope;
+
 export type GetMapApiTripsSlugMapGetQueryResponse = GetMapApiTripsSlugMapGet200;
 
 export type GetMapApiTripsSlugMapGetQuery = {
     Response: GetMapApiTripsSlugMapGet200;
     PathParams: GetMapApiTripsSlugMapGetPathParams;
-    Errors: GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422;
+    Errors: GetMapApiTripsSlugMapGet404 | GetMapApiTripsSlugMapGet422 | GetMapApiTripsSlugMapGet429;
 };

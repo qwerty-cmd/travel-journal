@@ -11,15 +11,22 @@ docker-compose ``postgres`` service (or any ``DATABASE_URL``) to be up.
 from __future__ import annotations
 
 import secrets
-from collections.abc import AsyncIterator
+import time
+import uuid
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from starlette.types import ASGIApp
 
+from app.core import ratelimit
 from app.core.config import get_settings
+from app.core.sessions import ABSOLUTE_LIFETIME, SESSION_COOKIE_NAME, hash_token, new_token
 from app.data import tables
 from app.data.db import normalize_database_url
 from app.data.migrate import run_migrations
@@ -27,6 +34,75 @@ from app.data.migrate import run_migrations
 # backend/. `import app` itself comes from pyproject's `pythonpath`; this is kept
 # for tests that launch a subprocess from the backend directory.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+# Every HTTP client a test points at one of our apps looks like the deployed
+# SPA calling its own API: HTTPS (so ``Secure`` cookies round-trip) and a
+# same-origin ``Origin`` header (so the CSRF check passes as it does for the
+# real frontend). Build clients through the two factories below, never by hand
+# -- a hand-built ``http://`` client with no ``Origin`` is a cross-site request
+# as far as the CSRF middleware is concerned.
+TEST_BASE_URL = "https://testserver"
+TEST_ORIGIN = "https://testserver"
+
+
+def _client_headers(headers: Mapping[str, str] | None) -> dict[str, str]:
+    """The default same-origin headers, with any per-call overrides on top."""
+    return {"Origin": TEST_ORIGIN, **(headers or {})}
+
+
+def make_async_client(
+    asgi_app: ASGIApp,
+    *,
+    base_url: str = TEST_BASE_URL,
+    headers: Mapping[str, str] | None = None,
+    raise_app_exceptions: bool = True,
+) -> AsyncClient:
+    """
+    An ``httpx.AsyncClient`` talking to ``asgi_app`` in-process.
+
+    Use as ``async with make_async_client(app) as client:``. ``base_url`` and
+    ``headers`` (merged over the default ``Origin``) are overridable for a test
+    that deliberately probes a cross-origin or plain-HTTP request.
+    ``raise_app_exceptions=False`` returns the 500 a real client would see
+    instead of re-raising the app's exception into the test.
+    """
+    transport = ASGITransport(app=asgi_app, raise_app_exceptions=raise_app_exceptions)
+    return AsyncClient(transport=transport, base_url=base_url, headers=_client_headers(headers))
+
+
+def make_test_client(
+    asgi_app: ASGIApp,
+    *,
+    base_url: str = TEST_BASE_URL,
+    headers: Mapping[str, str] | None = None,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
+    """
+    The synchronous counterpart of ``make_async_client``: a Starlette ``TestClient``.
+
+    Same defaults and overrides; ``raise_server_exceptions=False`` returns the
+    500 instead of re-raising.
+    """
+    return TestClient(
+        asgi_app,
+        base_url=base_url,
+        headers=_client_headers(headers),
+        raise_server_exceptions=raise_server_exceptions,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits() -> None:
+    """
+    Every test starts with empty rate-limit buckets (``app/core/ratelimit.py``).
+
+    The registry is process-wide and every in-process client has the same
+    address, so without this the suite as a whole runs through ``public-read``'s
+    120 a minute and later tests fail with a ``429`` that has nothing to do with
+    them. The clock is put back too, in case a test replaced it.
+    """
+    ratelimit.registry.reset()
+    ratelimit.registry.clock = time.monotonic
 
 
 @pytest.fixture(scope="session")
@@ -260,6 +336,152 @@ async def seeded_bikes(
             await conn.execute(
                 tables.bikes.delete().where(tables.bikes.c.id.in_([b.id for b in seeded]))
             )
+
+
+@dataclass(frozen=True, slots=True)
+class SignedInAccount:
+    """
+    An account this fixture put in the database, with one live session for it.
+
+    ``token`` is the raw cookie value; only its SHA-256 is in ``sessions``, as in
+    production. ``headers`` is what a test sends to act as this account: the
+    session cookie as a plain ``Cookie`` header, so it can be set on a whole
+    client (``make_async_client(app, headers=account.headers)``) or overridden
+    on one request (``client.post(..., headers=other.headers)``) without
+    touching httpx's cookie jar.
+    """
+
+    user_id: str
+    display_name: str
+    token: str
+
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Cookie": f"{SESSION_COOKIE_NAME}={self.token}"}
+
+
+async def create_signed_in_account(
+    engine: AsyncEngine, *, display_name: str = "Test Rider"
+) -> SignedInAccount:
+    """
+    Insert one user and one fresh session row for it, straight into the tables.
+
+    Straight into the tables rather than through signup, on purpose: this is the
+    independent statement of who exists, and a write test should not depend on
+    the auth routes working. The password hash is a placeholder no password
+    verifies against — nothing here signs in. The session is fresh (``last_used_at``
+    now), so it is valid and not due its daily refresh. Remove with
+    ``delete_accounts``.
+    """
+    user_id = str(uuid.uuid4())
+    token = new_token()
+    now = datetime.now(UTC)
+    async with engine.begin() as conn:
+        await conn.execute(
+            tables.users.insert().values(
+                id=user_id,
+                username=f"t{secrets.token_hex(8)}",
+                display_name=display_name,
+                password_hash="not-a-password-hash",
+            )
+        )
+        await conn.execute(
+            tables.sessions.insert().values(
+                token_hash=hash_token(token),
+                user_id=user_id,
+                created_at=now,
+                last_used_at=now,
+                absolute_expires_at=now + ABSOLUTE_LIFETIME,
+            )
+        )
+    return SignedInAccount(user_id=user_id, display_name=display_name, token=token)
+
+
+async def grant_membership(
+    engine: AsyncEngine,
+    trip_id: str,
+    user_id: str,
+    *,
+    role: str = "rider",
+    revoked: bool = False,
+) -> None:
+    """
+    Give ``user_id`` a ``trip_members`` row on ``trip_id``; ``revoked=True`` stores it revoked.
+
+    A revoked row has ``revoked_at`` set and ``revoked_by`` NULL (an operator
+    revocation), the shape migration 0003 keeps as history.
+    """
+    async with engine.begin() as conn:
+        await conn.execute(
+            tables.trip_members.insert().values(
+                id=str(uuid.uuid4()),
+                trip_id=trip_id,
+                user_id=user_id,
+                role=role,
+                revoked_at=datetime.now(UTC) if revoked else None,
+            )
+        )
+
+
+async def delete_accounts(engine: AsyncEngine, user_ids: list[str]) -> None:
+    """
+    Remove accounts made by ``create_signed_in_account``, with their memberships and requests.
+
+    ``trip_members.user_id`` and ``join_requests.user_id`` are ``ON DELETE
+    RESTRICT``, so those rows go first. Sessions cascade with the user, and
+    authorship columns (``created_by``) are ``SET NULL``, so rows a test wrote
+    as this account survive for that test's own cleanup.
+    """
+    async with engine.begin() as conn:
+        await conn.execute(
+            tables.trip_members.delete().where(tables.trip_members.c.user_id.in_(user_ids))
+        )
+        await conn.execute(
+            tables.join_requests.delete().where(tables.join_requests.c.user_id.in_(user_ids))
+        )
+        await conn.execute(tables.users.delete().where(tables.users.c.id.in_(user_ids)))
+
+
+@pytest.fixture
+async def rider_session(
+    migrated_engine: AsyncEngine, seeded_trips: list[SeededTrip]
+) -> AsyncIterator[SignedInAccount]:
+    """
+    A signed-in account with an active ``rider`` membership on **both** seeded trips.
+
+    Since decision-log Entry 29 a slug only locates a trip; a legacy write needs
+    a session whose account is an active member (``require_trip_writer``). This
+    is the account every write test acts as.
+
+    Both trips, not one, because the existing write tests deliberately write to
+    the second trip too (a replayed id under the other trip's slug is the 409
+    case). Membership on just one would turn those into 403s and hide the
+    behaviour they test. Being a member of one trip but not another is its own
+    access-control case, covered in ``test_access_matrix.py`` with its own
+    accounts.
+    """
+    account = await create_signed_in_account(migrated_engine, display_name="Test Rider")
+    for trip in seeded_trips:
+        await grant_membership(migrated_engine, trip.id, account.user_id)
+    try:
+        yield account
+    finally:
+        await delete_accounts(migrated_engine, [account.user_id])
+
+
+@pytest.fixture
+async def non_member_session(migrated_engine: AsyncEngine) -> AsyncIterator[SignedInAccount]:
+    """
+    A signed-in account with no membership on any trip: the writer gate's ``403`` case.
+
+    What stands in, in the write tests, for the pre-Entry 29 "viewer slug on a
+    write": a caller who can locate the trip but may not write to it.
+    """
+    account = await create_signed_in_account(migrated_engine, display_name="Test Outsider")
+    try:
+        yield account
+    finally:
+        await delete_accounts(migrated_engine, [account.user_id])
 
 
 @pytest.fixture

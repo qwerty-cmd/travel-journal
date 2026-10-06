@@ -5,11 +5,13 @@
 
 
 export const errorCodeEnum = {
+    UNAUTHENTICATED: "UNAUTHENTICATED",
     FORBIDDEN: "FORBIDDEN",
     NOT_FOUND: "NOT_FOUND",
     VALIDATION_ERROR: "VALIDATION_ERROR",
     CONFLICT: "CONFLICT",
     METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
+    RATE_LIMITED: "RATE_LIMITED",
     INTERNAL_ERROR: "INTERNAL_ERROR"
 } as const;
 
@@ -17,6 +19,6 @@ export type ErrorCodeEnumKey = (typeof errorCodeEnum)[keyof typeof errorCodeEnum
 
 /**
  * ErrorCode
- * @description The complete set of error codes the API can return — six, no more.\n\nA client (notably the offline queue, which decides retry-vs-never-retry from\nthe body alone) can exhaustively match on these. Adding a code is a contract\nchange; a handler must never invent one, which is why `core/errors.py` maps\nevery unrecognised status onto INTERNAL_ERROR rather than improvising.
+ * @description The complete set of error codes the API can return — eight, no more.\n\nA client (notably the offline queue, which decides retry-vs-never-retry from\nthe body alone) can exhaustively match on these. Adding a code is a contract\nchange; a handler must never invent one, which is why `core/errors.py` maps\nevery unrecognised status onto INTERNAL_ERROR rather than improvising.\nUNAUTHENTICATED and RATE_LIMITED are the seventh and eighth, admitted by\ndecision-log Entry 29 (the ruling Entries 6 and 14 require).
 */
 export type ErrorCode = ErrorCodeEnumKey;

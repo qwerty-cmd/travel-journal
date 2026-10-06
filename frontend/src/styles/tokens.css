@@ -1,0 +1,134 @@
+/* Bike Trip Journal design tokens. Source: docs/design/DESIGN.md §4, Appendix A.
+   Naming (decision-log Entry 30): token "a/b/c" -> custom property "--a-b-c".
+   Light mode only (D2). No other file may contain a hex colour.
+
+   --color-brand-primary must equal theme_color in frontend/vite.config.ts
+   (the PWA manifest). That one stays a literal there and nothing enforces the
+   pairing, so change both together.
+
+   Breakpoints are not custom properties (they cannot be used inside @media).
+   Write the literals min-width: 768px (bp/md) and min-width: 1024px (bp/lg)
+   and name the token in a comment beside them. */
+
+:root {
+  color-scheme: light;
+
+  /* Colour: brand */
+  --color-brand-primary: #1f5c40;
+  --color-brand-primary-pressed: #164430;
+  --color-brand-primary-subtle: #e3efe8;
+  --color-brand-on-primary: #ffffff;
+
+  /* Colour: surfaces */
+  --color-surface-page: #f4f6f3;
+  --color-surface-card: #ffffff;
+  --color-surface-sunken: #eceeeb;
+  --color-surface-inverse: #17201b;
+  --color-surface-scrim: rgba(23, 32, 27, 0.56);
+  --color-surface-photo-viewer: rgba(0, 0, 0, 0.92);
+
+  /* Colour: text */
+  --color-text-primary: #17201b;
+  --color-text-muted: #4d5a52;
+  --color-text-on-inverse: #ffffff;
+  --color-text-link: #1f5c40;
+  --color-text-disabled: #5f6b64;
+
+  /* Colour: borders */
+  --color-border-strong: #6b776f;
+  --color-border-subtle: #d5dbd6;
+
+  /* Colour: status */
+  --color-status-danger: #b3261e;
+  --color-status-danger-subtle: #fbe9e7;
+  --color-status-warning-text: #7a4b00;
+  --color-status-warning-subtle: #fdf0d5;
+  --color-status-success: #1f5c40;
+
+  /* Colour: controls and focus */
+  --color-control-disabled-bg: #e4e8e5;
+  --color-focus-ring: #1d4ed8;
+  --color-focus-ring-on-dark: #ffffff;
+
+  /* Colour: map */
+  --color-map-trail: #1f5c40;
+  --color-map-pin: #1f5c40;
+  --color-map-pin-stroke: #ffffff;
+  --color-map-pin-approx-fill: #ffffff;
+  --color-map-pin-approx-stroke: #1f5c40;
+  --color-map-empty: #eceeeb;
+  --color-map-grid: #d5dbd6;
+  --color-map-attribution-bg: rgba(255, 255, 255, 0.85);
+
+  /* Typography: families (D3: system stack, no web font) */
+  --font-family-base: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-family-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Typography: sizes and line heights (rem, root 16px) */
+  --font-size-display: 1.875rem;     /* 30px */
+  --font-line-height-display: 2.25rem; /* 36px */
+  --font-size-title: 1.5rem;         /* 24px */
+  --font-line-height-title: 1.875rem;  /* 30px */
+  --font-size-heading: 1.25rem;      /* 20px */
+  --font-line-height-heading: 1.625rem; /* 26px */
+  --font-size-body: 1.0625rem;       /* 17px */
+  --font-line-height-body: 1.5rem;     /* 24px */
+  --font-size-small: 0.9375rem;      /* 15px */
+  --font-line-height-small: 1.25rem;   /* 20px */
+  --font-size-caption: 0.875rem;     /* 14px */
+  --font-line-height-caption: 1.125rem; /* 18px */
+  --font-size-code: 1.25rem;         /* 20px */
+  --font-line-height-code: 1.75rem;    /* 28px */
+  --font-letter-spacing-code: 0.06em;
+
+  /* Typography: weights */
+  --font-weight-regular: 400;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* Spacing (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  /* Radii */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* Elevation */
+  --elevation-0: none;
+  --elevation-1: 0 1px 2px rgba(23, 32, 27, 0.12), 0 1px 1px rgba(23, 32, 27, 0.08);
+  --elevation-2: 0 4px 12px rgba(23, 32, 27, 0.16);
+  --elevation-3: 0 12px 32px rgba(23, 32, 27, 0.28);
+
+  /* Sizing */
+  --size-target-min: 48px;
+  --size-target-primary: 56px;
+  --size-icon-md: 24px;
+  --size-icon-sm: 18px;
+  --size-topbar: 56px;
+  --size-thumb-min: 96px;
+  --size-focus-width: 3px;
+  --size-focus-offset: 2px;
+  --size-form-max: 480px;
+
+  /* Motion */
+  --motion-duration-fast: 120ms;
+  --motion-duration-base: 200ms;
+  --motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Stacking (the map container uses isolation: isolate) */
+  --z-map: 0;
+  --z-bar: 500;
+  --z-toast: 900;
+  --z-dialog: 1000;
+  --z-viewer: 1100;
+}

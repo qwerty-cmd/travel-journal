@@ -9,7 +9,7 @@ import type { ErrorEnvelope } from "./ErrorEnvelope";
 
 export type CreateBikeApiTripsSlugBikesPostPathParams = {
     /**
-     * @description The trip\'s **rider** slug. Write endpoints reject the viewer slug with a 403, and an unknown slug with a 404.
+     * @description The trip\'s rider or viewer slug. It only locates the trip: the write itself needs a signed-in account with an active membership on it. An unknown slug is a 404, no session a 401, and a non-member or revoked member a 403.
      * @type string
     */
     slug: string;
@@ -29,7 +29,13 @@ export type CreateBikeApiTripsSlugBikesPost201 = BikeOut;
 
 /**
  * ErrorEnvelope
- * @description The slug resolved, but it is the trip\'s **viewer** slug.
+ * @description No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked after the slug and before membership. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.
+*/
+export type CreateBikeApiTripsSlugBikesPost401 = ErrorEnvelope;
+
+/**
+ * ErrorEnvelope
+ * @description Signed in, and the slug located the trip, but the account has no active membership on it: \"You\'re not a rider on this trip.\" for a non-member, \"You\'re no longer a rider on this trip.\" for a revoked one. The slug grants nothing, whichever one it is. Nothing was written.
 */
 export type CreateBikeApiTripsSlugBikesPost403 = ErrorEnvelope;
 
@@ -47,9 +53,15 @@ export type CreateBikeApiTripsSlugBikesPost409 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description The body failed schema validation.
+ * @description The body failed schema validation, or its `id` contains a NUL character, which no stored id can hold.
 */
 export type CreateBikeApiTripsSlugBikesPost422 = ErrorEnvelope;
+
+/**
+ * ErrorEnvelope
+ * @description The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the slug, the session and the membership, so nothing was written. Retry after `Retry-After` seconds.
+*/
+export type CreateBikeApiTripsSlugBikesPost429 = ErrorEnvelope;
 
 /**
  * BikeCreate
@@ -62,5 +74,5 @@ export type CreateBikeApiTripsSlugBikesPostMutation = {
     Response: CreateBikeApiTripsSlugBikesPost200 | CreateBikeApiTripsSlugBikesPost201;
     Request: CreateBikeApiTripsSlugBikesPostMutationRequest;
     PathParams: CreateBikeApiTripsSlugBikesPostPathParams;
-    Errors: CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422;
+    Errors: CreateBikeApiTripsSlugBikesPost401 | CreateBikeApiTripsSlugBikesPost403 | CreateBikeApiTripsSlugBikesPost404 | CreateBikeApiTripsSlugBikesPost409 | CreateBikeApiTripsSlugBikesPost422 | CreateBikeApiTripsSlugBikesPost429;
 };

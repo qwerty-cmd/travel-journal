@@ -24,7 +24,7 @@ from types import ModuleType
 from urllib.parse import unquote
 
 import pytest
-from fastapi.testclient import TestClient
+from conftest import make_test_client
 
 from app.core.config import get_settings
 
@@ -153,7 +153,7 @@ def test_escape_path_actually_reaches_spa_fallback_unnormalised(spa) -> None:
 
 def test_sw_js_is_served_as_javascript(spa) -> None:
     module, _ = spa
-    response = TestClient(module.app).get("/sw.js")
+    response = make_test_client(module.app).get("/sw.js")
     assert response.status_code == HTTPStatus.OK
     assert "javascript" in response.headers["content-type"]
     assert "text/html" not in response.headers["content-type"]
@@ -162,7 +162,7 @@ def test_sw_js_is_served_as_javascript(spa) -> None:
 
 def test_nested_real_file_is_served_as_itself(spa) -> None:
     module, _ = spa
-    response = TestClient(module.app).get("/icons/nested.txt")
+    response = make_test_client(module.app).get("/icons/nested.txt")
     assert response.status_code == HTTPStatus.OK
     assert response.text == "nested file body\n"
 
@@ -170,14 +170,14 @@ def test_nested_real_file_is_served_as_itself(spa) -> None:
 @pytest.mark.parametrize("path", ["/", "/icons", "/icons/"])
 def test_directory_path_serves_index_html(spa, path: str) -> None:
     module, _ = spa
-    response = TestClient(module.app).get(path)
+    response = make_test_client(module.app).get(path)
     assert response.status_code == HTTPStatus.OK
     assert response.text == INDEX
 
 
 def test_deep_link_serves_index_html(spa) -> None:
     module, _ = spa
-    response = TestClient(module.app).get("/t/abc")
+    response = make_test_client(module.app).get("/t/abc")
     assert response.status_code == HTTPStatus.OK
     assert response.text == INDEX
     assert response.headers["content-type"].startswith("text/html")
@@ -185,7 +185,7 @@ def test_deep_link_serves_index_html(spa) -> None:
 
 def test_unknown_api_path_is_404_envelope_even_if_file_exists(spa) -> None:
     module, _ = spa
-    response = TestClient(module.app).get("/api/nope")
+    response = make_test_client(module.app).get("/api/nope")
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert "MUST-NOT-BE-SERVED" not in response.text
     assert response.headers["content-type"] == "application/json"

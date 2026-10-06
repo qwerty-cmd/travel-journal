@@ -1,0 +1,134 @@
+/* Add stop (docs/design/screens/add-stop.md). Tokens only. */
+.add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--size-form-max);
+  margin: 0 auto;
+  padding: var(--space-4);
+  background: var(--color-surface-page);
+}
+
+.add__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.add__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--size-target-min);
+  min-height: var(--size-target-min);
+  background: transparent;
+  border: 0;
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.add__title {
+  font-size: var(--font-size-heading);
+  line-height: var(--font-line-height-heading);
+  font-weight: var(--font-weight-bold);
+}
+
+.add__form,
+.add__map,
+.add__field,
+.add__photos {
+  display: flex;
+  flex-direction: column;
+}
+
+.add__form {
+  gap: var(--space-4);
+}
+
+.add__map,
+.add__field,
+.add__photos {
+  gap: var(--space-2);
+}
+
+.add__label {
+  font-size: var(--font-size-body);
+  line-height: var(--font-line-height-body);
+  font-weight: var(--font-weight-semibold);
+}
+
+.add__textarea {
+  min-height: calc(3 * var(--size-target-min));
+  padding: var(--space-3);
+  font: inherit;
+  background: var(--color-surface-card);
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  resize: vertical;
+}
+
+.add__textarea:focus-visible {
+  border-color: var(--color-brand-primary);
+}
+
+.add__muted,
+.add__note {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.add__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.add__error {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-status-danger);
+}
+
+.add__previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.add__preview {
+  position: relative;
+}
+
+/* 72 px tiles (add-stop.md): no size token, so composed from spacing tokens (48 + 24). */
+.add__thumb {
+  display: block;
+  width: calc(var(--space-12) + var(--space-6));
+  height: calc(var(--space-12) + var(--space-6));
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+}
+
+/* A 48 px target over the tile's top-right corner. */
+.add__remove {
+  position: absolute;
+  top: calc(-1 * var(--space-3));
+  right: calc(-1 * var(--space-3));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-target-min);
+  height: var(--size-target-min);
+  background: transparent;
+  border: 0;
+  color: var(--color-text-on-inverse);
+  cursor: pointer;
+}
+
+.add__remove svg {
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-inverse);
+}

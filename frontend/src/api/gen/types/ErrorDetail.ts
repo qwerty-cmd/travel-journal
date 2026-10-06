@@ -10,7 +10,7 @@ import type { ErrorCode } from "./ErrorCode";
 */
 export type ErrorDetail = {
     /**
-     * @description The complete set of error codes the API can return — six, no more.\n\nA client (notably the offline queue, which decides retry-vs-never-retry from\nthe body alone) can exhaustively match on these. Adding a code is a contract\nchange; a handler must never invent one, which is why `core/errors.py` maps\nevery unrecognised status onto INTERNAL_ERROR rather than improvising.
+     * @description The complete set of error codes the API can return — eight, no more.\n\nA client (notably the offline queue, which decides retry-vs-never-retry from\nthe body alone) can exhaustively match on these. Adding a code is a contract\nchange; a handler must never invent one, which is why `core/errors.py` maps\nevery unrecognised status onto INTERNAL_ERROR rather than improvising.\nUNAUTHENTICATED and RATE_LIMITED are the seventh and eighth, admitted by\ndecision-log Entry 29 (the ruling Entries 6 and 14 require).
      * @type string
     */
     code: ErrorCode;

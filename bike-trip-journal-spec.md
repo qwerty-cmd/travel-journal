@@ -8,6 +8,9 @@
 - **v2 change:** Originally scoped Azure-native (Functions + Static Web Apps + Cosmos DB + Blob). Revised for local-first development and cloud-agnostic deployment — see Section 2.
 
 ## 2. Locked Decisions
+
+> Friend access: Superseded by decision-log Entry 29 (public trips + accounts + leader-approved membership).
+
 | Decision | Choice | Why |
 |---|---|---|
 | Photo storage (archive) | OneDrive (Microsoft Graph API) | Cleaner read/write than Google Photos' 2025 API restrictions. This is fixed regardless of hosting provider — it's your personal archive destination, not part of the app's cloud stack. |

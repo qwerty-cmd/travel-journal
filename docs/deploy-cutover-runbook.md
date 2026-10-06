@@ -261,15 +261,28 @@ devops runs these steps after you have confirmed the cutover.
 Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be **lower case**
 (GHCR rejects upper case). It is the same image path as `infra/azure/README.md`.
 
-- [ ] **You. Log in to GHCR** with a GitHub classic personal access token that has `write:packages`.
-  This is a different token from the `read:packages` one the Container App pulls with. Paste it at the
-  prompt so it stays out of shell history, then press Ctrl-D:
+**Images are built by CI, not by hand.** `.github/workflows/ci.yml` publishes
+`ghcr.io/<owner>/<repo>:<full-commit-sha>` on every merge to `main`, after the backend and frontend
+checks pass. It never deploys: every step below stays manual. See "Image publishing (GitHub Actions to GHCR)"
+at the end of this section for package visibility and access.
+
+- [ ] **devops. Pick the tag.** Use the full 40-character SHA of the `main` commit being deployed. Its
+  CI run must be green, and that run's summary shows the image and digest. `$TAG` is used by every
+  step below:
+  `TAG=<full-commit-sha>`
+  For a public package, `docker buildx imagetools inspect ghcr.io/<owner>/<repo>:$TAG` confirms that
+  the image exists.
+- [ ] **Fallback only: build and push by hand.** Use this only if CI cannot publish (see the
+  `infra/azure/README.md` section named above). **You. Log in to GHCR** with a GitHub classic personal access token that has
+  `write:packages`. This is a different token from the `read:packages` one the Container App pulls with.
+  Paste it at the prompt so it stays out of shell history, then press Ctrl-D:
   `docker login ghcr.io -u <github-user> --password-stdin`
-- [ ] **devops. Build, tag and push** from a clean tree (step 3), with the commit hash as the tag.
-  Never reuse a tag and never use `latest`: rollback depends on each revision naming a distinct image.
-  `--platform linux/amd64` is what Container Apps runs, and it matters if you build on Apple Silicon.
+  **devops. Build, tag and push** from a clean tree (step 3), with the full commit hash as the tag,
+  the same scheme CI uses. Never reuse a tag and never use `latest`: rollback depends on each revision
+  naming a distinct image. `--platform linux/amd64` is what Container Apps runs, and it matters if you
+  build on Apple Silicon.
   ```sh
-  TAG=$(git rev-parse --short=12 HEAD)
+  TAG=$(git rev-parse HEAD)
   docker build --platform linux/amd64 -t bike-trip-journal:$TAG .
   docker tag bike-trip-journal:$TAG ghcr.io/<owner>/<repo>:$TAG
   docker push ghcr.io/<owner>/<repo>:$TAG
@@ -286,10 +299,11 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
   revision keeps serving during and after this, so a migration must keep working with the previous image
   too (see step 8, "Schema is forward-only").
 - [ ] **devops. Update the Container App** to the new tag. In multiple-revision mode this creates a new
-  revision. The suffix makes its name `<app-name>--rel-<tag>`:
+  revision. The suffix makes its name `<app-name>--rel-<tag>`, where `<tag>` is the **first 12
+  characters** of the SHA. The full 40 would push the revision name past Azure's length limit:
   ```sh
   az containerapp update --name <app-name> --resource-group <resource-group> \
-    --image ghcr.io/<owner>/<repo>:$TAG --revision-suffix rel-$TAG
+    --image ghcr.io/<owner>/<repo>:$TAG --revision-suffix rel-${TAG:0:12}
   ```
 - [ ] **devops. Read the new revision's name and check its health**:
   ```sh
@@ -310,6 +324,38 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 - [ ] Write down the new revision name (`<app-name>--rel-<tag>`) and the previous one from the
   "rollback target" step. The previous one is what step 8 rolls back to.
 
+### Image publishing (GitHub Actions to GHCR)
+
+`.github/workflows/ci.yml` builds the repo-root `Dockerfile` (`linux/amd64`)
+and pushes it to GHCR on every push to `main`, and on a manual
+`workflow_dispatch` run on `main`. It publishes only after the `backend` and
+`frontend` jobs pass. Pull requests run those checks but never publish.
+
+- **Tag.** Exactly one tag per image, the full commit SHA:
+  `ghcr.io/<owner>/<repo>:<full-sha>`, lower-cased. Never `latest`, never a
+  floating tag. The run's summary shows the image reference and digest.
+  The deploy steps in this section use that tag for
+  both the app and the OneDrive sync Job.
+- **Build only.** The workflow never logs in to Azure, runs `az`, changes a
+  revision or traffic, or updates the Job. Its only credential is the per-run
+  `GITHUB_TOKEN`, with `packages: write` in the publish job alone. Deploying
+  stays manual, per this section. Building and pushing by hand is now the
+  fallback there.
+- **Package visibility.** The first push creates the GHCR package as
+  **private**. Choose one of these:
+  - **Public.** On GitHub, open the package, then Package settings → Change
+    visibility → Public. The app and Job then need no registry credential:
+    drop the three `--registry-*` flags (`infra/azure/README.md`, app and Job create commands).
+  - **Private.** Keep it private and give the app and the Job a separate
+    GitHub **classic PAT with `read:packages` only** as their registry
+    credential (the `--registry-*` flags in `infra/azure/README.md`). Never use the workflow's
+    `GITHUB_TOKEN` for this: it expires when the run ends.
+- **403 on a later push.** If a publish run fails with `403 Forbidden` on
+  push, the package is not linked to this repository, or the repository lacks
+  write access to it. This happens, for example, if the package was first
+  created by a manual push. Open Package settings → Manage Actions access, add
+  this repository, and give it the **Write** role. Then re-run the workflow.
+
 ## 7. Post-deploy checks
 
 - [ ] **You. HTTPS.** Open `https://<app>.<region>.azurecontainerapps.io`. HTTPS is required, not a nice
@@ -328,11 +374,89 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
   go to family and friends. Tell iPhone riders to add the app to their home screen, paste the link
   there, and capture stops **from the installed app, not from Safari** (decision-log Entry 18).
 
+## 7a. Accounts and membership (Entry 29)
+
+Applies from the first deploy of the accounts milestone (`m5-accounts-membership`) onward. Every
+command here is **owner-only**: run it in your own shell with `DATABASE_URL` pointed at Neon, as in
+step 4. Agents never run these CLIs against production. Use real values only in your terminal; never
+paste a username, trip id or recovery code into an agent chat.
+
+### Migration 0003
+
+- [ ] `backend/migrations/0003_accounts_membership.sql` is applied by the ordinary migrate step in
+  step 6 ("Migrate Neon BEFORE any traffic moves"): `cd backend && uv run python -m app.data.migrate`.
+  It only adds and relaxes (decision-log Entry 29 §12), so the previous image keeps working while traffic
+  is still on it. Record in the handover that 0003 shows as applied.
+
+### Make the owner the trip's first leader
+
+Writes are authorised by an active `trip_members` row, not by the slug, so the trip needs
+a leader before anyone can manage it.
+
+- [ ] **The trip already exists (production today, step 4).** `seed_trip` refuses a second trip, so
+  don't re-seed. Sign up in the deployed app first, then grant yourself leadership:
+  `cd backend && uv run python -m app.data.grant_leader --trip-id <trip-id> --username <username>`
+  Read `<trip-id>` with `SELECT id, name FROM trips`. It is idempotent: a second run reports the
+  account "was already an active leader", and a rider is upgraded to leader.
+- [ ] **A fresh database whose owner already has an account.** Seed and grant in one transaction:
+  `cd backend && uv run python -m app.data.seed_trip --name "<trip name>" --start-date YYYY-MM-DD --leader-username <username>`
+  Without `--leader-username` no membership is created; use `grant_leader` afterwards as above.
+
+### Reset, disable, revoke
+
+- [ ] **Reset a rider who lost both password and recovery code:**
+  `cd backend && uv run python -m app.data.reset_account --username <username>`
+  This issues a new recovery code, signs the account out everywhere and clears any lockout. The code is
+  **printed once, after the commit**, to stdout only. Give it to the rider **out of band** (in person,
+  phone, a private message they own), never through an agent session or a shared channel. The rider
+  uses it at sign-in recovery. If stdout fails, the reset is still committed and the CLI says so; run
+  it again to issue another code.
+- [ ] **Disable an account:**
+  `cd backend && uv run python -m app.data.reset_account --username <username> --disable`
+  This signs it out everywhere and clears its lockout. No recovery code is issued.
+  - **Reset does not re-enable a disabled account.** Running `reset_account` without `--disable` on
+    a disabled account still prints a recovery code, but the account stays disabled and recovery
+    answers 401. That code is useless.
+  - **There is currently no CLI to re-enable an account.** Treat disabling as one-way until one exists.
+- [ ] **Remove someone from a trip (leaders included):**
+  `cd backend && uv run python -m app.data.revoke_member --trip-id <trip-id> --username <username>`
+  It refuses to remove the trip's last active leader; grant another leader first. A second run reports
+  "was already revoked". The account itself stays usable for other trips.
+
+### After deploy: `TRUSTED_PROXY_HOPS` and Host passthrough (`t-am-verify-aca-xff`)
+
+Rate limits are keyed by client IP, taken as the **right-most** `X-Forwarded-For` hop
+(`TRUSTED_PROXY_HOPS`, default `1`, on the premise that the Container Apps ingress appends exactly one
+hop). If that premise is wrong, one client can mint a fresh bucket per request by spoofing the header.
+
+- [ ] **You. Spoofed-XFF burst.** From one network, send 121 requests to a public-read endpoint (120 per
+  minute per IP) with a spoofed header, within a minute:
+  `for i in $(seq 121); do curl -s -o /dev/null -w "%{http_code}\n" -H "X-Forwarded-For: 1.2.3.4" https://<app-host>/api/v2/trips; done | sort | uniq -c`
+  Expected: 120 x `200` and 1 x `429`. Then, inside the same minute, from a **second network** (for
+  example a phone hotspot) send the same spoofed request. Expected: `200`, which shows the bucket follows
+  the real client IP, not the spoofed value. Record both results in the handover.
+- [ ] If the first network never gets a `429`, or the second network gets one, the ingress appends a
+  different number of hops. `TRUSTED_PROXY_HOPS` then has to change in the Container App env, which is
+  `infra/` and needs your explicit approval.
+- [ ] **You. Host passthrough.** The CSRF check compares `Origin` with `Host`, so the ingress must pass
+  the browser's original `Host` through unchanged. Sign in (or sign up) in a real browser on the
+  deployed URL. Expected: it succeeds. A `403` on every same-origin write means the Host is being
+  rewritten. That fails closed (nothing is bypassed), but nobody can write until it is fixed.
+
+### Rolling back past Entry 29 is security-degrading
+
+> **Warning.** Rolling the image back to a build from before Entry 29 restores **slug-bearer writes**:
+> anyone holding a rider link can write again, without an account or membership. No schema rollback is
+> needed (0003 only adds and relaxes, and the old image works against it), and legacy trips keep their
+> slugs, but trips created after the cutover (NULL slugs) become unreachable. It is reversible but
+> **security-degrading**. Treat it as a last resort, and roll forward again as soon as you can.
+
 ## 8. Rollback
 
 - [ ] **devops, after your confirmation.** Send traffic back to the last known-good revision with
   `az containerapp ingress traffic set ... --revision-weight <good-revision>=100`, or reactivate that
-  revision. Don't rebuild forward under pressure.
+  revision. Don't rebuild forward under pressure. **If the good revision predates Entry 29, this
+  rollback is security-degrading**: read the warning at the end of step 7a first.
 - [ ] **After any template change, deactivate the revisions it superseded — but keep one.** In
   multiple-revision mode a superseded revision **stays active until you deactivate it**; moving traffic
   off it is not enough. Each active revision keeps a replica running, and each replica opens its own Neon

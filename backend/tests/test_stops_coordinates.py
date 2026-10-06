@@ -7,6 +7,11 @@ literals ``NaN``, ``Infinity`` and ``-Infinity``, so a raw body can carry them
 even though ``JSON.stringify`` can never produce one (it writes ``null``). The
 raw-body tests send the literal bytes via ``content=`` for exactly that reason.
 Every rejection writes no row.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips). ``test_access_matrix.py`` covers the gate itself.
 """
 
 from __future__ import annotations
@@ -18,8 +23,8 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from conftest import SeededTrip
-from httpx import ASGITransport, AsyncClient
+from conftest import SeededTrip, SignedInAccount, make_async_client
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -31,7 +36,9 @@ STOPS_PATH = "/api/trips/{slug}/stops"
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     import app.main
 
     sessionmaker = async_sessionmaker(migrated_engine, expire_on_commit=False)
@@ -43,8 +50,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)

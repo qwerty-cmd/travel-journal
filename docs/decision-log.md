@@ -49,6 +49,11 @@ empirically disproves another.
 | 26 | Stop and photo times: stored as instants, shown in the reader's zone with the zone labelled | `frontend/src/format.ts`, `models/stop.py`, `api-contract.md`, `progress.json` | **Architect ruling, 2026-09-29, option A.** The review found times rendered with no zone, and the rider's own offset is not stored (`timestamptz` keeps the instant, not the offset). **Option B lost on need, not correctness:** `arrived_offset_minutes` / `taken_offset_minutes` columns would work, but no spec line asks for rider-local time; filed as triggered debt `t-stop-rider-offset`. **Option C is a no-op** (sending a local-offset spelling changes nothing, storage is UTC). **Option D lost on cost** (a timezone lookup from lat/lng adds a dependency) |
 | 27 | Graph credentials on the OneDrive sync Job only, not the web app | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1/§2/§5, `.claude/skills/deploy/SKILL.md` | **Job only** (least privilege) |
 | 28 | Applying the probes: keep the hand-rolled `az rest` PATCH, reject `az containerapp update --yaml` | `infra/azure/README.md`, `deploy-cutover-runbook.md` §1 | `--yaml` **does not wipe secrets** (it re-reads and repopulates via `list_secrets`) — that objection was wrong and is recorded so it is not re-raised. It lost on three other grounds: a temp YAML file breaks this repo's "az CLI blocks in the README, no YAML/Bicep/Terraform" convention, the `containerapp` module pins `CURRENT_API_VERSION = "2025-07-01"`, and its merge depth into the `containers` array could not be verified. Its one real advantage — the SDK polls `Azure-AsyncOperation`/`Location` to completion, which `az rest` cannot — was priced at ~6 lines of retry loop, not a convention change. **Correction 2026-09-30 appended: reopen condition tested, evidence went the other way** — the pin is still `2025-07-01`, merge depth still unverified, and `--yaml` would have hit the *identical* `revisionSuffix` collision (azure-cli#32272: a YAML `revisionSuffix` is dropped from the request), so the built-in poller would have polled a rejected update to a confident finish |
+| 29 | Public trips, local accounts, leader-gated membership (supersedes the two-link access model) | spec §2, `core/security.py`, `core/{passwords,sessions,csrf,ratelimit}.py`, `offline/queue.ts`, `0003_accounts_membership.sql`, `architecture-diagram.md` | **Architect ADR, accepted by the orchestrator under the owner's delegation, 2026-09-29.** Entry 21's per-person trigger fired. Username + argon2id password + one-time recovery code, with a `__Host-` cookie session (hash stored). Passkeys, magic links, OAuth, device tokens and bearer tokens lost. Authorization is session + an active `trip_members` row, read every request; **no slug is a write credential**. Trips are public by default with a 24 h delay; legacy trips migrate to private; private → 404. Join requests are per person; peer leaders can't remove each other. Revoked riders' queued items get 403 with no grace window. **The `ErrorCode` ruling Entries 6/14 require:** `UNAUTHENTICATED` 401 (queue pauses) and `RATE_LIMITED` 429 (retries). New dependency `argon2-cffi`. Invariants unchanged. Reopen on passkeys, or on max-replicas > 1 (rate limits to Postgres) |
+| 30 | Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7 | `frontend/src/styles/{tokens,base}.css`, `main.tsx`, `TripMap.{tsx,css}`, `vite.config.ts`, `frontend/src/icons/LICENSE`, `CLAUDE.md` Stack | **Architect ruling, accepted by the orchestrator under the owner's delegation, 2026-09-29.** `tokens.css` + `base.css` + one BEM-lite `Component.css` per component, with no new dependency. **CSS Modules lost on cost:** tokens and `.leaflet-*` overrides stay global anyway, and switching later is mechanical. **Tailwind lost:** it changes the locked stack, duplicates the tokens and gives nothing a DESIGN.md-driven spec needs. **No `@layer`**, because unlayered Leaflet CSS would beat it. D2 light only, D3 system fonts, D4 16 vendored MIT/ISC icons, D5 stock OSM, D6 56px bottom Add-stop bar, D7 Discover with "Your trips" on top and no redirect. Reopen: class collisions → CSS Modules |
+| 31 | Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted early) | `core/jpeg.py`, `api-contract.md` (Photo upload section), `test_jpeg_strip.py` | **Owner chose Option B, accepted by the orchestrator.** The pre-SOS-only strip let through APPn/COM between scans and everything after EOI (MPF, Motion Photo, gain maps). Now one forward walk to the first top-level EOI; malformed or EOI-less input is 422, never repaired. **Rejected:** Pillow re-encode (lossy, decompression bomb, new dep), `jpegtran -copy none` (subprocess, decode bomb), piexif (APP1 only), exiftool (Perl). ICC dropped; Adobe APP14 kept. Reopen if an original-bytes path ships and P3 colour matters |
+| 32 | Deploy as code: ACA YAML specs + approval-gated GitHub Actions (OIDC); reverses "CI never deploys" and partly supersedes Entry 28 | `infra/azure/*.yaml`, `.github/workflows/{deploy,rollback,deactivate-revisions}.yml`, `deploy-cutover-runbook.md` §6/§8, `.claude/skills/deploy/SKILL.md`, `ci.yml` header | **Owner decisions, 2026-10-06, on the architect plan.** Deploy only by manual `workflow_dispatch` in the `production` environment, owner as required reviewer. **azd, Bicep/ARM, Terraform, k8s lost** (see entry). Committed YAML never has `secrets:`; Jobs updated with `--image` only; fresh `rel-<sha12>` suffix. Private GHCR read-only PAT lives in ACA only, owner rotates. **Entry 28's `az rest` choice reopened and overruled by the owner**; its `revisionSuffix` finding (azure-cli#32272) is an open verification |
+| 33 | Per-session confirmation limit: signed-in wrong passwords no longer count toward the account lockout | `0004_session_confirm_failures.sql`, `data/repositories/sessions.py`, `core/sessions.py`, `routes/v2/auth.py`, `models/account.py`, `api-contract.md` | **Owner yes (option B on `t-am-auth-account-gaps` item 1), 2026-10-06.** Per-session `failed_confirmations`, claimed before argon2; 10th wrong deletes the session and is **401** (not 403); correct password resets; fully decoupled from `failed_logins`/`locked_until`; per-IP bucket unchanged. **Rejected:** keep counting toward the account lock (a stolen session can lock the owner out), and stop counting with no limit (unbounded guessing). Judgement calls: 401 vs 403, and the account lock no longer refuses signed-in password changes |
 
 ---
 
@@ -324,6 +329,9 @@ merely underspecified.
 **What `ba` did — the part worth recording.** It declined to decide. Its stated reasoning: inventing
 a new `ErrorCode` member is a *contract change*, not an implementation detail, and a scoping agent
 does not get to make contract changes by writing them into a task description. It escalated instead.
+
+> **Pointer (2026-09-29):** the next `ErrorCode` ruling this rule requires is **Entry 29**, which adds
+> `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429).
 
 It also refused the silent fix that was available to it. Rather than mapping `405` or `500` onto
 `NOT_FOUND` or `VALIDATION_ERROR` to make the gap disappear, it **deliberately left them on FastAPI's
@@ -1185,6 +1193,9 @@ member is a *contract change*, and a scoping agent does not make contract change
 into a task description. It did not quietly pick `422`, and it did not scope the create endpoint
 with the ambiguity left in.
 
+> **Pointer (2026-09-29):** Entry 29 is the recorded ruling for the seventh and eighth codes,
+> `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429). They were not invented in a task.
+
 **Resolution — the user ruled.** Add a sixth member, **`CONFLICT`, status `409`**. The idempotency
 rule becomes a three-way branch, stated once for all three create endpoints:
 
@@ -1870,6 +1881,9 @@ rotated" note is about the script, not the schema. After rotation:
 Reopen this only if **a leaked rider link is actually seen in use outside the group**, or the user
 wants writes gated **per person**.
 
+> **Pointer (2026-09-29):** this trigger has fired (the owner wants writes gated per person). **Entry 29
+> resolves it** with accounts and membership, not a PIN.
+
 ### Design if reopened
 
 Do not re-derive this. The agreed shape is:
@@ -2187,3 +2201,440 @@ Round three of the probe work (`a42c85c`) put this entry's reasoning against new
 So the built-in's one real advantage — polling the long-running operation to completion — would have polled a *rejected* update to a confident finish. The fix that actually worked (a fresh unique suffix per run, plus reading `properties.deploymentErrors` through a raw `az rest` GET, since that field is absent from the `2026-07-01` swagger and dropped by `az containerapp show`) is available to the `az rest` path and is not something `--yaml` would have supplied. Detail in `progress-notes.md` under `t-probe-patch-script-defects`.
 
 The reopen condition above is unchanged. This note only records that it was checked and not met.
+
+---
+
+## 29. Public trips, local accounts, leader-gated membership (supersedes the two-link access model)
+
+**Ruling:** the `architect` wrote the ADR. The orchestrator accepted it as written on 2026-09-29, under the autonomy the owner delegated for architecture, access-model and API decisions, which includes documented stack changes. The owner did not rule on it personally. It is flagged for the owner's review because it **supersedes a locked spec decision** (spec §2 "Friend access: two links") and adds a dependency.
+
+**Who disagreed:** the owner's new goal (public trips anyone can browse, riders as identified people, a leader who approves who can write) vs the settled two-link model: spec §2, Entry 21's "the rider link stays the only write gate", and Entry 18's slug-addressed routes. This is not an agent-vs-agent dispute. A locked decision is overruled by a changed requirement, and Entry 21's own reopen trigger ("the user wants writes gated **per person**") has fired. The design reuses Entry 21's reopen design for the queue: a `401` pauses the queue and never fails it.
+
+**Starting state the ADR was written against.** Each trip has two slugs: `rider_slug`, a write credential, and `viewer_slug`, for reads. There are no accounts. In `security.py`, `_resolve_trip` returns 404 and then `require_rider_access` returns 403. The queue (`frontend/src/offline/queue.ts`) stores `payload.slug` in IndexedDB `btj-queue`. Its never-retry set is `VALIDATION_ERROR`, `METHOD_NOT_ALLOWED`, `CONFLICT`, `FORBIDDEN` and `NOT_FOUND`. Everything else is retried with backoff capped at 5 min. The client sends `credentials: 'same-origin'` (`api/client.ts` ~L119), so a cookie session rides along on replay. `trips.id` is a UUID4, documented as non-secret, and is the S3 key prefix. Presigned URLs last 3600 s. The `photo.ts` canvas re-encode strips EXIF on the client only. No production trip has been seeded yet, so legacy data exists only locally and in dev. The deployment is one replica that scales to zero, and uvicorn runs without `--forwarded-allow-ips`, so `request.client.host` is the ingress proxy. The password rule comes from NIST SP 800-63B-4: a single-factor password needs at least 15 characters, and the maximum allowed must be at least 64.
+
+### 1. Public exposure
+- `trips.visibility` is `public|private`. Trips created in the app default to `public` (the owner's goal). **Existing trips migrate to `private`**, because they were shared under link-only consent. Publishing one needs a leader's explicit Publish. Reversible.
+- `trips.public_delay_hours` defaults to **24**, range 0–168. Non-members only see stops (with their photos and map points) whose `arrivedAt` is at least that old. This keeps riders' live position and tonight's campsite from going public. Members see everything. A leader may set 0. Reversible.
+- What non-members of a public trip see:
+  - the list entry: `id, name, startDate, riderCount, lastPublicStopAt` (delay applied);
+  - the trip: the same, plus bikes (make/model/year/specs and the rider name on each bike);
+  - stops: name, notes, exact lat/lng, `locationSource`, and `arrivedAt` (exact, because the delay is the privacy control);
+  - the map and trail, built from delay-filtered stops only;
+  - photos: presigned URLs plus the `uploadedBy` display name.
+- Never public: usernames (the login handle), user ids, member lists, request lists, anything session-related, and both slugs.
+- Photo EXIF: the server strips metadata too. It rejects non-JPEG uploads with `422` and drops the APP1–APP15 and COM segments with a plain-Python JPEG segment walker (no new dependency). This is **required before any trip is published**.
+- Presigned URLs stay at 3600 s on a private bucket.
+- **Accepted residual risk:** a trip's first stop is often a rider's home. The Publish dialog warns about it. A per-stop "hide from public" option is filed as ordinary debt.
+
+### 2. Anonymous browsing
+- The public id is the existing `trips.id` (non-secret, immutable). No new column.
+- A new API lives under `/api/v2`, which avoids colliding with the legacy `/api/trips/{slug}`: `GET /api/v2/trips` (public trips sorted by `lastPublicStopAt`, with a cursor and `limit` ≤ 50), `GET /api/v2/trips/{tripId}`, and `/stops`, `/stops/{stopId}/photos` and `/map` under it.
+- SPA routes: `/` Discover, `/trips/$tripId`, `/signin`, `/signup` and `/account`. `/t/$slug` is kept as a legacy route (§12). This supersedes Entry 18's `/` behaviour.
+- A private trip returns **404** to non-members, not 403, so nobody can probe whether it exists.
+- `TripOut` gains `visibility` and `viewer: { role: "anonymous"|"none"|"pending"|"rider"|"leader" }`. The role is a UI hint only; the server enforces access.
+
+### 3. Identity: username + password (argon2id) + one-time recovery code
+The alternatives compared, and why each lost:
+- **Passkeys** were rejected as the sole method. The RP-ID locks accounts to one host, which breaks on a host move, and a passkey still needs a fallback secret. Adding them later is filed as triggered debt.
+- **Password + argon2id** was **chosen**. It needs no third party and works in every browser context.
+- **Email magic links** were rejected because they need an email-provider account.
+- **OAuth with Google or Microsoft** was rejected because it needs an app registration and a third-party sign-in dependency.
+- **A device token + recovery code** was rejected because it is a password in disguise, and the storage isolation between iOS Safari and the installed app (Entry 18) makes it worse.
+
+The design:
+- `username` is unique, case-folded and private. `displayName` is public. A password is 15–128 characters of any printable text.
+- argon2id at the OWASP minimum (m=19 MiB, t=2, p=1), hashed in a thread behind `asyncio.Semaphore(2)`.
+- One new dependency: `argon2-cffi>=25.1,<26` (MIT, standard, wheels for Python 3.12).
+- Session: an opaque 256-bit random token in the cookie `__Host-btj_session` with `HttpOnly; Secure; SameSite=Lax; Path=/`. Only its SHA-256 is stored, in `sessions`. There is no signing secret and no env var. It is a cookie rather than a bearer token because JS and XSS can't read it, it never lands in IndexedDB queue entries, and the existing client already sends it.
+- Lifetime: 90 days, sliding (last-used is written at most once a day), with an absolute cap of 365 days.
+- Revocation: logout deletes the session row. "Sign out everywhere", a password change and an account disable delete all of the user's rows.
+- CSRF: a pure-ASGI middleware runs on every unsafe method under `/api`. If `Sec-Fetch-Site` is present and is not `same-origin` or `none`, the request is rejected. If the header is absent, `Origin` must match `Host`. A rejection is `403 FORBIDDEN`. SameSite=Lax is the second layer (OWASP Fetch Metadata). There is no custom header, so old app versions keep working.
+- Recovery (no email): signup shows a 128-bit recovery code once and stores its hash. `POST /api/v2/auth/recover` (username, code, new password) resets the password, revokes all sessions and issues a new code. The operator CLI `python -m app.data.reset_account` prints a one-time reset code for handing over out of band. **Leaders can never reset another account.**
+- Offline: signing in needs a connection. Queued writes carry no credential; a replay uses whatever session exists at send time. A `401` pauses the queue and shows "Sign in to send N items". Each entry records the `userId` it was captured under (an identifier, not a secret), and the drain holds any entry whose `userId` differs from the signed-in user.
+
+### 4. Trip creation
+`POST /api/v2/trips` (needs a session) takes `{id (client-generated uuid), name, startDate, visibility?=public}`. In one transaction it creates the trip (slugs NULL, `created_by` = the caller) and a `trip_members` row with role `leader`. It returns `201`, and a replay with the same id is idempotent.
+
+### 5. Join requests: one per person
+A request binds to one authenticated account. A group request would grant write access to accounts the leader never saw and that never consented. Groups are served by an optional `message` of up to 280 characters and by bulk approve/reject. Reversible: a `join_parties` table could be added later.
+- States: `pending → approved | rejected | cancelled | blocked`. A partial unique index allows one pending request per (trip, user).
+- A duplicate POST while pending returns `200` with the existing request. An already-active member gets `409 CONFLICT`. The requester may cancel, and may re-request immediately after cancelling. A re-request within **7 days** of a rejection or revocation gets `409`. After "Reject and block", requests are refused until a leader unblocks.
+- Caps: 20 pending requests per user across all trips, and 100 pending per trip.
+- Requests that come through a legacy rider link carry `via = 'legacy_rider_link'`.
+
+### 6. Leadership
+A trip can have several peer leaders. A leader can promote a rider to leader, step down, or leave. A leader **cannot remove or demote another leader**, which prevents takeovers; a rogue leader is removed with the operator CLI. **The last leader cannot leave or step down** (`409`) and must promote someone first. Reversible.
+
+### 7. Write authorization: one gate
+`core/security.py` gains `require_session`, `require_trip_writer` and `require_trip_leader`. They run in this order:
+1. Resolve the trip. A missing trip is 404, and so is a private trip for a non-member.
+2. Resolve the session. No session is `401 UNAUTHENTICATED`.
+3. Require an active `trip_members` row with the right role. Anything else is `403 FORBIDDEN`.
+
+Membership is read from Postgres on every request with no cache, so a revocation takes effect on the next request.
+
+The legacy slug write routes (`POST /api/trips/{slug}/stops`, `/photos`, `/bikes`, and `PATCH /bikes/{id}`) keep their paths. The slug now only **locates** the trip, and access goes through the same membership gate. **No slug is a write credential any more.**
+
+`test_route_dependency_audit.py` is extended so that every non-GET route must declare a writer or leader dependency.
+
+`stops`, `photos` and `bikes` gain `created_by`. The server sets `uploadedBy` from the account's `displayName`. The form field is still accepted, for old queued items, but ignored.
+
+### 8. Revocation and the offline queue
+`DELETE /api/v2/trips/{id}/members/{userId}` sets `revoked_at` and `revoked_by` and keeps the row. The revoked rider's queued items, including replays of ids already stored, get `403 FORBIDDEN` "You're no longer a rider on this trip". `FORBIDDEN` is never-retry, so each item is marked failed, its blob is kept, and the rider sees it. Nothing is silently dropped and nothing is accepted. The new client adds "Save photo to this device" on failed photo items. A **grace window for items captured before the revocation was rejected**: `arrivedAt` and `takenAt` are asserted by the client and could be backdated.
+
+The new codes:
+- `401 UNAUTHENTICATED`. The new queue pauses and prompts sign-in; the item is not failed.
+- `429 RATE_LIMITED`, with `Retry-After`. The item is retried.
+
+An old client's `isNeverRetry` treats both as retryable, so nothing is lost.
+
+### 9. Public photos
+Reading goes through the read gate (the trip is public, or the caller is a member), and then `storage/` presigns a GET on the private bucket. Uploading needs `require_trip_writer`. There is no public bucket and no FastAPI proxy.
+
+### 10. Abuse controls
+`app/core/ratelimit.py` is an in-process token bucket with no dependency. It is keyed by the right-most `X-Forwarded-For` hop, using a `TRUSTED_PROXY_HOPS=1` setting, and falls back to the socket address. A limited request gets `429` with `Retry-After` and the error envelope.
+
+| Surface | Limit |
+|---|---|
+| Public GETs | 120/min per IP |
+| Signup | 5/hour per IP; 50/day global |
+| Login / recovery | 10 per 15 min per IP |
+| Trip creation | 3/day per user; max 20 trips created per user |
+| Join requests | 10/hour per user (+ §5 caps) |
+| Stop/photo/bike writes | 600/hour per user (the burst after a dead zone must drain) |
+| Photo size | 15 MiB cap |
+
+The per-account lockout is stored in Postgres (`users.failed_logins`, `locked_until`): 10 failures lock the account for 15 minutes, and the lock survives restarts. Scaling to zero resets only the in-memory buckets. **Triggered debt:** move the buckets to Postgres if max-replicas goes above 1.
+
+### 11. Migrating existing data
+`0003_accounts_membership.sql` is forward-only. It adds the tables `users`, `sessions`, `trip_members` and `join_requests`. `trips` gains `visibility` (default `'private'`), `public_delay_hours` (24), `created_by` and `created_at`. `stops`, `photos` and `bikes` gain `created_by`. `trips.rider_slug` and `viewer_slug` become NULLable (the CHECK and UNIQUE constraints still hold with NULLs; see Entries 3 and 8). No data is deleted.
+- A rider slug grants nothing by itself. A signed-in user who redeems one through `POST /api/v2/trips/claim` (slug in the body, never the URL) gets a **pending join request** with `via='legacy_rider_link'`, never automatic access.
+- The leader of a legacy trip can only be set with the operator CLI, `grant_leader --trip-id --username`. No secret a user holds converts to leadership. `seed_trip` gains `--leader-username`.
+- A viewer slug keeps read access to its (private) legacy trip through the legacy GETs until the removal window closes.
+
+### 12. Rollout and rollback
+The service worker's `autoUpdate` means the next load runs the new code, which drains the same `btj-queue`. Old slug-addressed items replay against the membership-gated legacy write paths with the current session cookie. A still-open tab from the old version is same-origin, so it passes Fetch Metadata. It gets 401 or 429 (both retried) until the user signs in, or 403 if the user is not a member.
+
+The legacy `/t/$slug` and `/api/trips/{slug}/*` stay for at least 120 days **and** until no legacy trip is still private. Removing them is its own task, gated on 14 days of zero hits to `/api/trips/<redacted>` in the (redacted) access logs.
+
+Rollback: rolling back the image restores slug-bearer writes on a schema that no longer requires slugs. That is safe for legacy trips, whose slugs are intact, while new trips (NULL slugs) become unreachable. No schema rollback is needed, because 0003 only adds and relaxes and the old image still works against it. Rollback is reversible but **security-degrading**, since the old model returns. It must be written into the runbook.
+
+### 13. Architecture impact
+**The invariants are unchanged:** one artifact; Postgres and S3 are the only synchronous dependencies; no provider SDK outside `data/` and `storage/`.
+- New modules: `core/passwords.py`, `core/sessions.py`, `core/csrf.py` and `core/ratelimit.py`.
+- New repositories: `users`, `sessions`, `memberships` and `join_requests`.
+- One new dependency: `argon2-cffi`.
+- Supersedes spec §2 "Friend access" (a locked decision) and reopens Entry 21.
+- `architecture-diagram.md` updated on the patch that recorded this entry: the client box now reads "Anonymous viewer / signed-in rider", the arrow reads "HTTPS /api/* (session cookie)", there is an identity note, and there is an access-model bullet.
+
+### 14. Trade-offs, i.e. the losing positions and why they lost
+
+| Choice | Rejected | Why | Reversible |
+|---|---|---|---|
+| Password + recovery code | Passkeys | RP-ID lock-in, still needs a fallback, device-test risk before departure | Yes (add passkeys) |
+| Cookie session | Bearer token | XSS exfiltration; token would be persisted in queue | Costly |
+| 24 h public delay | Live public | Live location of riders | Yes |
+| Legacy trips private | Auto-publish | Consent under old model | Yes |
+| No grace for queued writes after revocation | Capture-time grace | Client time forgeable | Yes |
+| Per-person requests | Group requests | Grants must bind to an account | Yes |
+| Peer leaders, no mutual removal | Creator-owner | Prevents takeover; small groups | Yes |
+| `/api/v2` prefix | id-or-slug on one path | Mixing credential lookup and locator lookup | No (shared URLs) |
+
+Magic links, OAuth and device tokens also lost (§3). A group join request lost to per-person requests (§5).
+
+**Defaults chosen where the requirements were silent:** the 7-day cooldown, 90/365-day sessions, the rate limits in §10, the 15-character minimum password and 3600 s presigning. Any of them can be changed without reopening this entry.
+
+**Accepted risks:** passwords can be phished; there is no breached-password check, because that needs a third party; a first stop can be a home (§1).
+
+### 15. Test obligations (contract-first)
+1. Route × identity matrix {anonymous, signed-in non-member, pending, rider, revoked, leader} × {public, private} → exactly 401/403/404/2xx as specified.
+2. Private trip gives non-members the byte-identical 404 of a nonexistent trip.
+3. Legacy slug write routes reject a valid rider slug with no session (401) and slug + non-member session (403).
+4. Route audit fails if any unsafe route lacks a writer/leader dependency.
+5. Revocation effective next request, including id-replay (403, nothing written to DB or S3).
+6. Last leader cannot leave/step down (409); leader cannot remove another leader (403).
+7. Join lifecycle: duplicate → 200; cooldown → 409; block enforced; rider-slug claim never grants access.
+8. CSRF: cross-site `Sec-Fetch-Site` or mismatched `Origin` rejected on every unsafe method.
+9. Sessions: expired/deleted token → 401; only hash stored; logout and password change revoke; cookie attributes asserted.
+10. Recovery single-use; reset revokes sessions; lockout survives restart.
+11. Public delay filters stops, map, trail and photos consistently; no username/user id/slug/email in any public response.
+12. Stored JPEG has no APP1/EXIF segment; non-JPEG → 422.
+13. Migration: existing trips become private with slugs intact; no rows lost; no memberships created.
+14. Queue: 401 pauses (not failed); 403 fails and keeps blob; 429 retries after Retry-After; different-userId entries held; old-client classification still retries both new codes.
+15. Rate limits → 429 with envelope; keyed on right-most XFF hop; spoofed left-most ignored.
+16. No password, recovery code or session token in logs, error messages or pytest output (caplog).
+
+### Orchestrator ruling (2026-09-29)
+The owner delegated architecture, access-model and API decisions to the Architect and permitted documented stack changes. The ADR is accepted as written, including:
+- the new dependency `argon2-cffi>=25.1,<26`;
+- superseding spec §2 "Friend access: two links";
+- reopening Entry 21;
+- the new ErrorCodes `UNAUTHENTICATED` (401) and `RATE_LIMITED` (429).
+
+**This is the `ErrorCode` ruling that Entries 6 and 14 require.** A new member is a contract change, and it needs a recorded decision rather than a scoping agent's choice. The enum goes from six members to eight, and the change lands in `docs/api-contract.md` before any route uses it.
+
+To verify during implementation: that Azure Container Apps ingress appends exactly one right-most XFF hop (the `TRUSTED_PROXY_HOPS=1` premise), and iOS standalone-PWA cookie isolation on a real device (the Entry 18 premise, now carrying the session).
+
+### What follows
+- Contract first: `docs/api-contract.md` gains the `/api/v2` surface, the two codes, `TripOut.visibility`/`viewer`, and the new queue classification (401 pauses, 429 retries). Only then does `ba` scope tasks.
+- The spec §2 "Friend access" line carries a supersession pointer to this entry.
+- Entry 21 is resolved by this entry. Its PIN design is **not** built; the part reused is the "401 pauses the queue" state.
+- Entry 18's `/` redirect/paste-link behaviour gives way to the Discover page. `/t/$slug` survives only as a legacy route.
+- Rationale that must live beside code when it is built: the no-grace revocation rule in `frontend/src/offline/queue.ts` (retry classification) and the revocation route; the 404-not-403 rule for private trips and the gate order in `core/security.py`; right-most-hop keying in `core/ratelimit.py`; cookie-not-bearer in `core/sessions.py`. `docs` cannot place these (they are app source), so `dev` should add them in the implementing patches.
+- The rollback runbook gains the "security-degrading" warning from §12.
+
+### Reopen triggers
+- **"Add passkeys"**: triggered debt from §3. Add them *alongside* passwords, never as the sole method, unless the RP-ID/host-move objection has gone away.
+- **"max-replicas > 1"**: move the rate-limit buckets to Postgres **before** scaling out, because in-process buckets would split per replica.
+- **The ingress premise fails**: if Container Apps turns out not to append exactly one right-most XFF hop, re-derive the rate-limit key.
+- **The iOS cookie premise fails**: if the standalone PWA does not keep the session cookie on a real device, revisit the sign-in UX for the installed app. The cookie-vs-bearer row in §14 is marked *costly*, so start by rereading the XSS/queue-persistence reasons.
+- **A group sign-up need** (e.g. the leader asks for one link for a whole group): §5's `join_parties` table, which still binds grants to accounts.
+- **Live public position requested**: the 24 h default was chosen for rider safety, and changing it for all trips needs that reason answered.
+- **Per-stop hiding**: promote the ordinary-debt "hide from public" item if a published first stop is seen to be a home.
+
+### Contract-level defaults (BA, accepted)
+Where the ADR was silent, `ba` chose these while writing the contract. The orchestrator accepted them as written (2026-09-29), and they now stand in `docs/api-contract.md`. Each can be reversed without reopening this entry. Defaults 1, 3 and 10 are the three places the ADR was ambiguous or missing something; the others fill smaller gaps.
+1. **Session check first on v2 writes:** session → trip → role on v2, while legacy keeps the ADR's slug → session → role; this avoids a never-retry 404 on private-trip queue items whose only problem is an expired session.
+2. **"Non-member" for private-trip 404s:** for v2 writes and the members list it means no membership row at all (a revoked member gets 403 "no longer a rider"); for v2 reads it means anyone who isn't an active member.
+3. **Photo cap is 422, not 413:** 413 maps to INTERNAL_ERROR and would retry forever, a new code would need its own ruling; a `Content-Length` over 16 MiB is refused before the body is read.
+4. **`CONFLICT` covers state conflicts:** username taken, caps, cooldown, block, last leader, re-deciding a request, unblocking one that isn't blocked, the 20-trip lifetime cap.
+5. **Locked account returns 429 with `Retry-After` even for correct credentials:** signup's 409 already reveals username existence, and an unknown username still runs a dummy argon2 verify, so nothing new leaks.
+6. **Wrong-credential statuses:** wrong current password on password change or rotation → 403 (so the app doesn't treat it as signed out); signin and recover failures → 401; a disabled account → the same 401.
+7. **401 carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`:** RFC 9110 requires it, the scheme triggers no browser dialog, and a 401 clears the cookie when one was sent.
+8. **Input rules:** username `^[a-z0-9][a-z0-9_.-]{2,31}$` after lowercasing; displayName 1–40; password NFKC, 15–128 code points, no control characters, not trimmed; trip name 1–100; `TripCreate.id` a canonical UUID, the one create that validates id format.
+9. **Recovery code format:** 26 Crockford base32 characters, stored as SHA-256 (128-bit random, so no argon2 needed); input ignores case, hyphens and spaces.
+10. **Two added endpoints:** `POST /api/v2/auth/recovery-code` (rotation, password re-entry required) and `GET /api/v2/me/trips`.
+11. **Session re-issue:** a password change or recovery revokes all sessions then signs in the requesting device; signing up while signed in deletes the previous session.
+12. **Cookie refresh:** when `last_used_at` is bumped (at most daily), the cookie is re-issued with a fresh `Max-Age`.
+13. **CSRF details:** the `Origin` check compares host and port only (TLS terminates at the ingress), `Origin: null` fails, and the CSRF 403 is middleware-level and not listed per endpoint, like 405.
+14. **Rate limits:** "public GETs" is every `/api` GET/HEAD except health; unbucketed session-gated unsafe routes share the 600/hour `writes` bucket; `signin` also covers password change and rotation; trip-create replays spend no token; signout, health and the catch-all are unlimited; `TRUSTED_PROXY_HOPS` defaults to 1 in `config.py` and `.env.example` is untouched.
+15. **Public list:** trips with no visible stops are listed last; sort is `lastPublicStopAt` descending nulls last, then `id`; the cursor is opaque; `limit` defaults to 20 within 1–50; the list is identical for every caller.
+16. **`TripOut` is one model for both paths:** it gains `visibility`, `viewer`, `publicDelayHours`, `riderCount` and `lastPublicStopAt`; `access` is kept, deprecated, and derived from membership.
+17. **Revoked and blocked users report `viewer.role` = `none`:** the requester sees `blocked` as `rejected`.
+18. **Unblock:** `blocked` → `rejected`, keeping the original `decided_at`, so the 7-day cooldown still counts from the original decision; no new state.
+19. **Self-leave doesn't start the cooldown:** only a revocation by someone else does.
+20. **Decisions are one per request:** bulk approve/reject is the UI looping over the endpoint; the same decision repeated is idempotent, a different one is 409.
+21. **Legacy writes accept either slug as the locator:** the membership gate is the only authorisation.
+22. **Legacy GETs stay full and undelayed** for either slug, rider slugs included, until the removal task.
+23. **Photos store a name snapshot:** `photos.uploaded_by` holds the account's `display_name` at upload time, and `created_by` records the account.
+24. **Delete behaviour:** `trip_members.user_id` and `join_requests.user_id` are `ON DELETE RESTRICT`, authorship columns `SET NULL`, sessions `CASCADE`; `trip_members` has a surrogate id plus a partial unique index on active rows, so revocation history is kept.
+25. **No EXIF backfill for existing S3 objects:** production hasn't been seeded, and local legacy photos went through the client's canvas re-encode.
+26. **Membership changes lock the trip row** (`SELECT … FOR UPDATE`) to keep the last-leader rule safe under concurrency.
+27. **Tests use `https://testserver` and a default `Origin` header** so Secure cookies and CSRF behave as in production.
+28. **Local dev on Safari is not supported** for `__Host-`/Secure cookies over `http://localhost`; Chrome and Firefox accept them.
+
+**Passkeys trigger (orchestrator, 2026-09-29).** The ADR filed passkeys as triggered debt without a concrete trigger, and `ba` declined to derive one. The orchestrator supplied it: a rider is locked out with no recovery code, a phishing incident against a trip account, or the owner asks for passwordless sign-in (`t-am-passkeys`).
+
+---
+
+## 30. Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7
+
+**Ruling:** the `architect`, for `t-am-styling-ruling`. The orchestrator accepted it on 2026-09-29 under the autonomy the owner delegated (Entry 29's delegation covers documented stack changes). The owner did not rule on it personally. HIGH confidence. No escalation, because there is no new dependency and no config change.
+
+**Who disagreed:** this is not an agent-vs-agent dispute. CLAUDE.md makes the styling approach, fonts, icon set and map theme locked-stack calls that the `designer` **recommends and never assumes**. `t-am-design-spec` left them open as recommendations (D1–D7), and the architect ruled on each one. Three styling approaches were compared, and the two that lost are recorded below so they are not re-proposed without new evidence.
+
+### D1: plain CSS with custom properties (chosen)
+- **Layout.**
+  - `frontend/src/styles/tokens.css` holds `:root { --… }` and nothing else.
+  - `frontend/src/styles/base.css` holds the reset, `html`/`body` type, the focus ring, `.visually-hidden`, and a `prefers-reduced-motion` rule that zeroes the `--motion-*` tokens.
+  - Both are imported once, tokens first, at the top of `frontend/src/main.tsx`.
+  - Each component gets a plain `Component.css` beside `Component.tsx`, which imports it.
+  - Class names are BEM-lite with one block per file (`.btn`, `.btn--primary`, `.btn__icon`), and the block is named after the component.
+- **Tokens.** Names follow the DESIGN.md §4 rule: replace `/` with `-` and add a `--` prefix (`color/brand/primary` → `--color-brand-primary`, `space/4` → `--space-4`). Sizes are in rem (§4.2). Breakpoints can't be custom properties inside `@media`, so they are literal `768px`/`1024px` with a comment naming the token. The `theme_color` in `vite.config.ts` stays a literal and **must equal `--color-brand-primary`**, because nothing enforces that.
+- **Leaflet.** Keep `import "leaflet/dist/leaflet.css"` in `TripMap.tsx` and import `./TripMap.css` after it, so the `.leaflet-*` overrides win by source order.
+  - **No `@layer`.** Leaflet's CSS is unlayered, and unlayered rules beat layered ones, so layering our overrides would make them lose.
+  - `base.css` may set `img { max-width: 100% }`, because Leaflet 1.9's `!important` `.leaflet-container img` rule protects the tiles.
+  - The map frame gets `isolation: isolate`, which keeps Leaflet's z-indexes (up to 1000) under the bars, toasts and dialogs.
+- **Vitest/jsdom.** No CSS config is needed, because CSS imports become empty modules. This was verified: `TripMap.test.tsx` passes while it imports `leaflet.css`. Tests assert role, text and ARIA, and never computed style.
+- **Service-worker precache.** `globPatterns` already include CSS. Vite emits CSS per chunk and Workbox precaches all of it, which adds a few KB.
+
+### Rejected alternatives: the losing positions
+- **(b) CSS Modules.** The case for them: locally scoped class names, so two components can never collide. Why they lost on cost:
+  - the tokens and the `.leaflet-*` overrides have to stay global anyway, so the scoping covers only part of the CSS;
+  - they add `styles.x` ceremony, hashed class names in the DOM and `*.module.css` typings.
+
+  Switching later is mechanical (rename the file, swap string class names for `styles.x`), so nothing is lost by waiting until collisions actually appear.
+- **(c) Tailwind.** The case for it: utility classes, and parity with Stitch's exported markup. Why it lost:
+  - **it changes the locked stack and adds a build dependency;**
+  - it duplicates the tokens in its own config, so DESIGN.md's tokens would live in two places;
+  - it produces long class strings and makes design review harder.
+
+  Stitch export parity isn't needed, because DESIGN.md is the spec and a Stitch export is only a mockup.
+
+### D2–D7: design defaults, confirmed as recommended
+- **D2.** No dark mode in v1. Ship `color-scheme: light`.
+- **D3.** System font stack, no web font.
+- **D4.** 16 in-house icons with no runtime icon package.
+  - SVG paths may only be vendored from Lucide (ISC; Feather-derived parts MIT), Feather (MIT) or Tabler (MIT).
+  - The upstream copyright/permission notice goes in `frontend/src/icons/LICENSE`, and each file gets a source comment.
+  - No GPL, CC-BY-SA or unlicensed sources.
+- **D5.** Stock OSM tiles with visible attribution. Revisit after the trip.
+- **D6.** Add stop is a full-width bottom bar, 56px tall, with the safe-area inset.
+- **D7.** A returning rider lands on Discover with "Your trips" on top, with no auto-redirect. This confirms DESIGN.md C10, and it is consistent with Entry 29 replacing Entry 18's `/` redirect.
+
+### What follows
+- `t-am-fe-styling-foundation` implements D1 exactly as laid out above. CLAUDE.md's Frontend stack line now names the approach and cites this entry (`t-am-claude-md`).
+- **Rationale that must live beside code when it is built.** The files don't exist yet, and `docs` can't write app source, so `dev` should add these comments in the implementing patch:
+  - in `TripMap.css`, why there is no `@layer` and why the import order matters;
+  - in `tokens.css`, the `theme_color` = `--color-brand-primary` pairing and the literal-breakpoint rule;
+  - a pointer to this entry at the top of `base.css`.
+
+  Those are the places where someone would reintroduce `@layer` or a framework.
+
+### Reopen triggers
+- **Class collisions appear** (two blocks fight over a name, or BEM-lite discipline breaks down in review): move to **CSS Modules**. It is a per-file mechanical upgrade and needs no dependency.
+- **The owner asks for Tailwind, or a design tool's export becomes the source of truth instead of DESIGN.md:** reopen (c). That is a locked-stack change and needs the owner, not just the delegation.
+- **Leaflet ships layered CSS** (or the map library changes): revisit the no-`@layer` rule.
+- **A dark-mode request** reopens D2. The tokens make it a `:root` override, not a rewrite.
+- **A brand font is wanted** reopens D3. Check the precache size and the licence first.
+- **More icons than the in-house set can sensibly carry**, or an icon from a source outside the D4 licence list, reopens D4.
+- **After the trip, or if OSM tile usage policy / attribution becomes a problem**, reopens D5.
+
+---
+
+## 31. Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted ahead of its trigger)
+
+**Ruling:** the owner chose Option B (strip the whole file); the orchestrator accepted the design. The task was filed as triggered debt (promotion event: an upload path that sends original bytes) and is promoted early by the owner. This is a choice among approaches, not an agent-vs-agent dispute.
+
+### Context
+The pre-SOS-only strip lets through APPn/COM between progressive scans and any data after EOI: MPF secondary images with their own EXIF, Motion Photo MP4 trailers, Ultra HDR gain maps. No consumer exercises this today, because `frontend/src/photo.ts` re-encodes on a canvas. The owner promoted it anyway.
+
+### Decision: one forward walk over the whole file, ending at the first top-level EOI
+1. **Segment rules at every top-level marker, before and between scans.**
+   - Drop: COM; APP1-APP13 and APP15; any APP0 that is not exactly `JFIF\0` with length 16 (JFXX and thumbnail-bearing JFIF are dropped); any APP14 that is not exactly `Adobe` with length 14.
+   - Keep: SOI, plain JFIF APP0, Adobe APP14 (decoders need its colour-transform flag; libjpeg-turbo `jdapimin.c`), DQT, SOF*, DHT, DAC, DRI, DNL, SOS headers, and any other length-bearing marker (lenient, as today). TEM and RSTn outside a scan are skipped, as today.
+2. **ICC (APP2) is dropped.** It is a fingerprinting surface, it was already dropped, and canvas output is sRGB. Reopen if an original-bytes path ships and P3 matters.
+3. **Entropy-coded data.** After each SOS header, one compiled search `re.compile(rb"\xff[^\x00\xd0-\xd7\xff]")` finds the next real marker. FF00 stuffing, RST0-7 and fill FFs never match, and there is no `\xff+` quantifier, so no quadratic backtracking. Fill bytes before the marker stay in the kept scan run (valid per T.81 B.1.1.2). The walk resumes the segment rules at the marker.
+4. **Termination.** The first EOI after at least one SOS ends the output. Everything after it is discarded.
+
+### Malformed input is 422 VALIDATION_ERROR, never best-effort repair
+Input ends before EOI (truncated scan, no EOI, only fill at the end); length < 2 or past the end (inside or after scans); SOI or FF00 at a marker position; TEM followed by non-marker bytes; EOI before any SOS.
+
+### Out of threat model
+Deliberate steganography in kept segments or entropy data. The goal is stripping device-added metadata the rider did not notice.
+
+### Rejected options
+- **Pillow re-encode:** lossy, decompression bomb at 65535 x 65535, native-library CVEs, new dependency.
+- **`jpegtran -copy none`:** subprocess, full-coefficient decode bomb, new dependency.
+- **piexif:** handles APP1 only.
+- **exiftool:** Perl.
+
+### Bounds and consequences
+- Linear time. Measured worst case at 15 MiB is 1.6 s (scans alternating with COM), in the existing worker thread. Memory is about 2x output at most. A marker-count cap stays in `t-am-jpeg-gaps` (1).
+- Canvas uploads are unchanged (byte-identical). Trailers, between-scan metadata and APP0 thumbnails are gone. RGB and CMYK JPEGs keep correct colour.
+- Truncated or EOI-less files that used to pass are now 422. No current client produces them.
+
+### What follows
+- `api-contract.md`, "Photo upload: JPEG only, metadata stripped, 15 MiB cap": first two bullets replaced.
+- `t-am-jpeg-after-sos` implements it in `backend/app/core/jpeg.py` and its tests. Scope, AC and validation are in `docs/progress-notes.md` under that ID.
+- **Rationale that must live beside code.** `dev` should put the marker-search regex rationale (why no `\xff+`, why `\xd0-\xd7` is excluded) and the Adobe APP14 keep-rule in the `core/jpeg.py` docstring, since those are the lines someone would "simplify".
+
+---
+
+## 32. Deploy as code: ACA YAML specs + approval-gated GitHub Actions (OIDC); reversal of "CI never deploys"
+
+**Ruling:** the owner decided on 2026-10-06, on the architect's plan. This reverses a standing rule ("CI builds and publishes only; it never deploys", in `ci.yml` and the deploy skill) and reopens Entry 28 (`az rest` PATCH, no `az containerapp update --yaml`). Two earlier positions are overruled, so both are recorded below.
+
+### Context
+Deploys were a hand-run sequence of `az` commands from the runbook (§6 to §7). It works, but each step depends on the owner's memory, nothing records which revision replaced which, and rollback is improvised. The owner wants a repeatable, reviewable path that still needs a human to approve every release.
+
+### Decision
+1. **Approach: committed ACA YAML specs applied by GitHub Actions.** Files: `infra/azure/app.yaml`, `migrate-job.yaml`, `sync-job.yaml`, applied with `az containerapp create|update --yaml`. New deployment config under `infra/` is approved (this lifts the `infra/` off-limits rule for these files only). The sync-job YAML carries `GRAPH_*` names and `secretRef`s only, never values; `onedrive_sync.py` is untouched.
+2. **"CI never deploys" is reversed, with guardrails.** `ci.yml` stays build-and-publish only. A separate `deploy.yml` may deploy, but only by manual `workflow_dispatch` (input `sha`), in the GitHub `production` environment with the owner as required reviewer, with `concurrency: deploy`, `permissions: id-token: write, contents: read`. No push, pull_request or schedule trigger, ever. `rollback.yml` (input `revision`; warns when the target predates Entry 29) and `deactivate-revisions.yml` (refuses the active or rollback-target revision) carry the same gate.
+3. **Azure identity: OIDC, no stored credential.** A user-assigned managed identity with a federated credential (subject `repo:<owner>/<repo>:environment:production`) and Contributor on the app's resource group only, never the subscription. The workflow uses `azure/login`; `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` are GitHub environment **variables** (IDs, not secrets).
+4. **GHCR stays private; ACA pulls with a classic PAT scoped `read:packages` only.** The owner sets it once as the registry credential of the app and both Jobs, directly in ACA. It is never in GitHub, never in YAML. The YAML may name the secret (`passwordSecretRef`), never hold the value. The owner rotates it and records the expiry in the handover.
+
+### Deploy sequence (`deploy.yml`)
+1. Verify CI is green for the SHA and the GHCR tag exists. 2. `azure/login`. 3. Record the current revision and pin traffic to it. 4. Start the migrate Job with `--image <sha>` and poll to Succeeded. 5. `az containerapp update --yaml app.yaml` (image and suffix substituted), poll Healthy, shift 100% traffic. 6. `job update --image` on the sync Job and assert app and Job images are equal. 7. Smoke: `/api/health` 200; `/` serves the SPA; `http://` does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403; optional single-network XFF burst (121 requests, one 429). 8. Step summary names the new and previous revision.
+
+### YAML caveats (the lines someone would "simplify")
+- **Committed YAML must never contain `secrets:`.** A partial list deletes the secrets it omits; omitting the section keeps them.
+- **Fresh `rel-<sha12>` revision suffix every deploy.** Redeploying the same SHA takes the traffic-only branch instead of creating a revision.
+- **Jobs are updated with `--image` only.** Whether `job update --yaml` keeps secrets is unverified, so Job YAML is used at create time only (header comment says so).
+- **Never override `--command` on `job start`.** An override replaces the whole template including env and secretRefs. `python -m app.data.migrate` is baked into the migrate Job YAML.
+- **Registry block:** `registries:` references the secretRef the owner set; verify once that `update --yaml` keeps it (owner step in the `t-iac-app-yaml` patch).
+- **OPEN, flagged against Entry 28's correction:** azure-cli#32272 reported that a `revisionSuffix` in `--yaml` is dropped from the request. Entry 28 hit this. The plan substitutes the suffix into the YAML, so `t-iac-app-yaml` / `t-iac-deploy-workflow` must verify it takes effect, or pass `--revision-suffix` alongside `--yaml` and assert the resulting revision name. Do not assume it works.
+
+### Rejected options
+- **azd:** puts Bicep under the YAML and assumes ACR (billable, not used).
+- **Bicep/ARM:** not YAML; a second language for three resources.
+- **Terraform:** HCL plus a state store that costs money or needs hosting.
+- **Kubernetes manifests:** ACA exposes no Kubernetes API.
+- **Keep `az rest` PATCH (Entry 28):** Entry 28 rejected `--yaml` on convention ("az CLI blocks in the README, no YAML") and on an unverified merge depth. The owner overruled the convention: a reviewable, approval-gated workflow beats README command blocks. Entry 28's finding that `--yaml` does not wipe secrets stands and is consistent with the "omit `secrets:`" rule above. Its merge-depth doubt is handled by keeping the spec complete and by the owner's dry diff against `az containerapp show -o yaml`.
+- **Public GHCR package or ACR:** public leaks nothing secret but was not the owner's choice for now; ACR is billable. Reopen if the PAT rotation proves a burden: making the package public removes the credential entirely.
+- **Key Vault for the PAT:** billable; not used.
+
+### Cost and invariants
+Free tier is shared by the app and Jobs (180k vCPU-s, 360k GiB-s, 2M requests a month). Log Analytics is billable past its free ingestion; the owner confirms on the budget alert. Actions minutes are free for a public repo. All architecture invariants hold: one image (Jobs reuse it), Postgres and S3-compatible storage remain the only synchronous dependencies, no new sync dependency, `data/` and `storage/` untouched. `docs/architecture-diagram.md` needs no change on invariants, but any "CI never deploys" wording needs updating (flagged in the task report).
+
+### Stays manual
+Neon/R2/Graph sign-up and app registration; Graph refresh-token consent, re-mint and `job secret set`; entering initial secret values in ACA; the GHCR PAT (creation, setting, rotation); the one-time OIDC identity and the `production` environment; approving each deploy; `grant_leader` / `reset_account` in the owner's shell (their output and input would land in logs); real-device and iOS cookie tests; the second-network XFF check (`t-am-verify-aca-xff`); handover TODOs.
+
+### Owner setup (one-time; placeholders only, never paste real values into the repo)
+Needs Owner or User Access Administrator on the resource group. Run in the owner's shell.
+
+```bash
+# 1. Managed identity + GitHub OIDC federated credential + RG-scoped Contributor
+az identity create -g <rg> -n <identity-name>
+CLIENT_ID=$(az identity show -g <rg> -n <identity-name> --query clientId -o tsv)
+PRINCIPAL_ID=$(az identity show -g <rg> -n <identity-name> --query principalId -o tsv)
+az identity federated-credential create -g <rg> --identity-name <identity-name> \
+  --name github-production \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:<owner>/<repo>:environment:production" \
+  --audiences api://AzureADTokenExchange
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal --role Contributor \
+  --scope /subscriptions/<subscription-id>/resourceGroups/<rg>
+az account show --query tenantId -o tsv   # tenant id; the three IDs are not secrets
+
+# 2. GitHub production environment: owner as required reviewer, three variables
+#    (Settings > Environments > New environment "production" > Required reviewers: <owner>)
+gh variable set AZURE_CLIENT_ID       --env production --body "$CLIENT_ID"
+gh variable set AZURE_TENANT_ID       --env production --body "<tenant-id>"
+gh variable set AZURE_SUBSCRIPTION_ID --env production --body "<subscription-id>"
+
+# 3. Private-GHCR pull credential: classic PAT, read:packages only, entered without echo
+read -rs GHCR_PAT
+az containerapp registry set -g <rg> -n <app-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+az containerapp job registry set -g <rg> -n <migrate-job-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+az containerapp job registry set -g <rg> -n <sync-job-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+unset GHCR_PAT
+```
+
+Record the PAT's expiry date in the handover. The `passwordSecretRef` name ACA generates must match what the YAML files reference (check with `az containerapp show -g <rg> -n <app-name> --query properties.configuration.registries`).
+
+### What follows
+Milestone `m6-iac-deploy` in `progress.json` (13 tasks), details in `docs/progress-notes.md` per task ID. Tasks 2 to 8 of the plan are scoped there; `t-iac-first-deploy` supersedes `t-owner-cutover` for future deploys. Wording that still says CI never deploys is owned by `t-iac-deploy-workflow` (`ci.yml` header) and `t-iac-runbook-skill` (deploy `SKILL.md`, runbook).
+
+---
+
+## 33. Per-session confirmation limit: signed-in wrong passwords stop counting toward the account lockout
+
+**Ruling:** the owner said yes on 2026-10-06 to option B on debt `t-am-auth-account-gaps` item 1; the orchestrator accepted the architect's design. The owner accepted the two judgement calls below implicitly, because they follow from "signed-in failures stop counting".
+
+### Context
+`POST /auth/password` and `POST /auth/recovery-code` counted wrong passwords toward `users.failed_logins`. Someone holding a stolen session could therefore lock the owner out of signin and recovery. The coupling is in `_confirm_own_password` and `_hand_back_claim` (`backend/app/api/routes/v2/auth.py`), which call `reserve_login_attempt`, `lock_if_saturated` and `reset_lockout`. `sessions` had no counter, and `SessionUser` did not carry `token_hash`.
+
+### Decision
+1. **Storage.** Migration 0004 adds `sessions.failed_confirmations integer NOT NULL DEFAULT 0` with CHECK `sessions_failed_confirmations_check` (>= 0). The threshold of 10 stays in code.
+2. **Claim-first.** `reserve_confirmation` is a conditional `UPDATE ... WHERE failed_confirmations < :threshold RETURNING`, run before argon2, so parallel wrong requests cost at most 10 argon2 checks. `reset_confirmations` zeroes the counter; `delete` is reused for revocation. `SessionUser` gains an internal `token_hash`.
+3. **Semantics.** Attempts 1-9 wrong: `403`. The 10th wrong attempt deletes the session in the same commit and returns `401` with the cookie cleared. A claim that finds the session already at 10 is the same `401` with no argon2 check. A correct password resets the counter, and if the reset finds the row gone (concurrent revocation), the request rolls back with `401`.
+4. **Full decoupling.** These two routes no longer read or write `users.failed_logins` or `locked_until`. The only `429` left is the per-IP `signin` bucket, unchanged. This makes debt item (2) of `t-am-auth-account-gaps` moot.
+
+### Judgement calls (MEDIUM confidence; the rest is HIGH)
+- **401, not 403, on the 10th failure.** The session no longer exists, so a `403` would leave the client holding a cookie that is dead on its next request. The message is distinct and only the session holder sees it.
+- **The account lock no longer refuses signed-in password changes.** A locked account can still change its password from a live session, and a success does not reset the lock. Reason: if the routes still read the account lock, someone guessing at signin with only the username could block a signed-in owner, which is the same coupling in reverse.
+
+### Rejected options
+- **Keep counting toward the account lock (and add a per-session limit on top).** Leaves the lock-out-the-owner attack open for anyone with a stolen session, which is the problem.
+- **Stop counting, with no limit.** Removes the lockout lever but leaves a stolen session free to guess the password without bound, bounded only by the per-IP bucket, which rotating IPs defeats. The per-session cap holds regardless of IP.
+
+### Rollback
+The column is additive with a default: the old image ignores it and its inserts get 0. Redeploy the old image; the column can stay. No backfill.
+
+### What follows
+`t-am-session-confirm-limit` (`docs/progress-notes.md`) implements it. Contract text is already updated: `api-contract.md` "Rate limits and lockout", "Sessions" revocation, the password-change and recovery-code-rotation paragraphs, the `UNAUTHENTICATED` row, and the "Migration 0004" note. `dev` must update the route "How it works" text in `auth.py` and the `currentPassword`/`password` field descriptions in `models/account.py`.

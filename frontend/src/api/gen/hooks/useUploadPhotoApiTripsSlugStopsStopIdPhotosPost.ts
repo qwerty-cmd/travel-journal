@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
+import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost401, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422, UploadPhotoApiTripsSlugStopsStopIdPhotosPost429 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
-import type { UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest, UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams, UploadPhotoApiTripsSlugStopsStopIdPhotosPost403, UploadPhotoApiTripsSlugStopsStopIdPhotosPost404, UploadPhotoApiTripsSlugStopsStopIdPhotosPost409, UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 } from "../types/UploadPhotoApiTripsSlugStopsStopIdPhotosPost";
-import { mutationOptions, useMutation } from "@tanstack/react-query";
 import { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from "../clients/uploadPhotoApiTripsSlugStopsStopIdPhotosPost";
+import { mutationOptions, useMutation } from "@tanstack/react-query";
 
 export const uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationKey = () => [{ url: '/api/trips/:slug/stops/:stop_id/photos' }] as const
 
@@ -16,7 +16,7 @@ export type UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationKey = ReturnType
 export function uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions<TContext = unknown>(config: Partial<RequestConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>> & { client?: Client } = {}) {
 
         const mutationKey = uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationKey()
-        return mutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>({
+        return mutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>({
           mutationKey,
           mutationFn: async({ stop_id, slug, data }) => {
             return uploadPhotoApiTripsSlugStopsStopIdPhotosPost({ stop_id, slug, data }, config)
@@ -27,14 +27,24 @@ export function uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions<TCon
 
 /**
  * @description **Context.** This is how a photo gets into the journal. Multipart: form fields
- * (`id`, `uploadedBy`, `takenAt`) alongside the binary `file` part. Rider slug
- * only. Task `t-photo-upload-endpoint`.
- * **How it works.** `{slug}` is resolved by `require_rider_access` (403 on viewer,
- * 404 on unknown). `{stop_id}` is verified to belong to the resolved trip.
+ * (`id`, `takenAt`, and an optional, ignored `uploadedBy`) alongside the binary
+ * `file` part. Only a signed-in, active member of the trip can upload; either slug
+ * just locates the trip (decision-log Entry 29, contract default 21). Tasks
+ * `t-photo-upload-endpoint`, `t-am-write-gate-legacy`, `t-am-photo-exif-strip`.
+ * **How it works.** `require_trip_writer` checks the slug (404), the session (401)
+ * and an active membership (403), in that order, before anything else — a replay
+ * is not an exception to it. The one check ahead of it is the request-size cap: a
+ * `Content-Length` over 16 MiB (or a body that streams past it) is a 422 before
+ * the body is read. `{stop_id}` is verified to belong to the resolved trip.
+ * The stored `uploadedBy` is the signed-in account's display name at upload time,
+ * whatever the form sent, and `created_by` is the account.
  * The `id` form field decides the three-way idempotency branch: unseen -> 201,
- * same stop -> 200 replay, different stop -> 409. The file is stored in S3 with
- * object key `{trip_id}/{stop_id}/{photo_id}`, and only the key is persisted in
- * the database.
+ * same stop -> 200 replay, different stop -> 409. A replay is answered before the
+ * file is looked at. Otherwise the file must be a JPEG of at most 15 MiB (422 if
+ * not), and its metadata segments -- APP1-APP15 (EXIF, GPS, XMP, ICC) and COM --
+ * are removed before storage; the image data is stored byte-for-byte. The
+ * stripped file is stored in S3 with object key `{trip_id}/{stop_id}/{photo_id}`,
+ * and only the key is persisted in the database.
  * **Related APIs.** `GET /api/trips/{slug}/stops/{stop_id}/photos` lists what this
  * endpoint writes, `POST /api/trips/{slug}/stops` creates the stop this photo
  * attaches to.
@@ -43,7 +53,7 @@ export function uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions<TCon
  */
 export function useUploadPhotoApiTripsSlugStopsStopIdPhotosPost<TContext>(options: 
 {
-  mutation?: UseMutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext> & { client?: QueryClient },
+  mutation?: UseMutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext> & { client?: QueryClient },
   client?: Partial<RequestConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest>> & { client?: Client },
 }
  = {}) {
@@ -52,13 +62,13 @@ export function useUploadPhotoApiTripsSlugStopsStopIdPhotosPost<TContext>(option
           const { client: queryClient, ...mutationOptions } = mutation;
           const mutationKey = mutationOptions.mutationKey ?? uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationKey()
 
-          const baseOptions = uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions(config) as UseMutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>
+          const baseOptions = uploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationOptions(config) as UseMutationOptions<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>
           
 
-          return useMutation<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>({
+          return useMutation<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>({
             ...baseOptions,
             mutationKey,
             ...mutationOptions,
-          }, queryClient) as UseMutationResult<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>
+          }, queryClient) as UseMutationResult<UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationResponse, ResponseErrorConfig<UploadPhotoApiTripsSlugStopsStopIdPhotosPost401 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost403 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost404 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost409 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost422 | UploadPhotoApiTripsSlugStopsStopIdPhotosPost429>, {stop_id: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["stop_id"], slug: UploadPhotoApiTripsSlugStopsStopIdPhotosPostPathParams["slug"], data: UploadPhotoApiTripsSlugStopsStopIdPhotosPostMutationRequest}, TContext>
       
 }

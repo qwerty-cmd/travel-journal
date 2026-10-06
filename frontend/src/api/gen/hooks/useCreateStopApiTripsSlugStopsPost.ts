@@ -4,10 +4,10 @@
 */
 
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
+import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost401, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422, CreateStopApiTripsSlugStopsPost429 } from "../types/CreateStopApiTripsSlugStopsPost";
 import type { UseMutationOptions, UseMutationResult, QueryClient } from "@tanstack/react-query";
-import type { CreateStopApiTripsSlugStopsPostMutationRequest, CreateStopApiTripsSlugStopsPostMutationResponse, CreateStopApiTripsSlugStopsPostPathParams, CreateStopApiTripsSlugStopsPost403, CreateStopApiTripsSlugStopsPost404, CreateStopApiTripsSlugStopsPost409, CreateStopApiTripsSlugStopsPost422 } from "../types/CreateStopApiTripsSlugStopsPost";
-import { mutationOptions, useMutation } from "@tanstack/react-query";
 import { createStopApiTripsSlugStopsPost } from "../clients/createStopApiTripsSlugStopsPost";
+import { mutationOptions, useMutation } from "@tanstack/react-query";
 
 export const createStopApiTripsSlugStopsPostMutationKey = () => [{ url: '/api/trips/:slug/stops' }] as const
 
@@ -16,7 +16,7 @@ export type CreateStopApiTripsSlugStopsPostMutationKey = ReturnType<typeof creat
 export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknown>(config: Partial<RequestConfig<CreateStopApiTripsSlugStopsPostMutationRequest>> & { client?: Client } = {}) {
 
         const mutationKey = createStopApiTripsSlugStopsPostMutationKey()
-        return mutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
+        return mutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
           mutationKey,
           mutationFn: async({ slug, data }) => {
             return createStopApiTripsSlugStopsPost({ slug, data }, config)
@@ -29,12 +29,16 @@ export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknow
  * @description **Context.** This is how a stop gets into the journal, and the one write the app
  * makes most: the rider taps "Add stop" on the Stuart Hwy, often with no signal, so
  * the stop is captured on the device with an id the *client* generates and queued
- * until there is a connection. Rider slug only — a viewer link can read this trip's
- * stops but not add one. Task `t-stops-create-endpoint`.
- * **How it works.** `{slug}` is resolved by `require_rider_access`, which raises a
- * 404 if no trip has this slug and a 403 if it is the trip's viewer slug; the stop
- * is stored against the `trip_id` that dependency resolved, never against anything
- * in the path or the body. `StopCreate.id` then decides one of **three** branches
+ * until there is a connection. Only a signed-in, active member of the trip can add
+ * one; either slug just locates the trip (decision-log Entry 29, contract default
+ * 21). Tasks `t-stops-create-endpoint`, `t-am-write-gate-legacy`.
+ * **How it works.** `require_trip_writer` checks, in order: the slug (404 if no
+ * trip has it), the session (401), and an active membership on the trip, read fresh
+ * on every request (403 "You're not a rider on this trip." or, for a revoked
+ * member, "You're no longer a rider on this trip."). The stop is stored against the
+ * `trip_id` that dependency resolved, never against anything in the path or the
+ * body, with `created_by` set to the signed-in account. `StopCreate.id` then decides
+ * one of **three** branches
  * (`docs/api-contract.md`, "Idempotency"; decision-log Entry 14):
  * - an **unseen** id creates the stop — `201`, body is the new stop;
  * - an id **already on this trip** is a replay — `200`, body is the **stored**
@@ -52,7 +56,8 @@ export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknow
  * rider crossing timezones has no offset worth guessing (decision-log Entry 15).
  * **Related APIs.** `GET /api/trips/{slug}/stops` lists what this endpoint writes,
  * `GET /api/trips/{slug}` is the trip header above it (its `access` field is the
- * UI hint for whether to offer this write at all),
+ * UI hint for whether to offer this write at all: `rider` iff the caller is an
+ * active member),
  * `POST /api/trips/{slug}/stops/{id}/photos` attaches photos to a stop created
  * here, and `GET /api/trips/{slug}/map` renders these stops as GeoJSON.
  * @summary Add a stop to a trip
@@ -60,7 +65,7 @@ export function createStopApiTripsSlugStopsPostMutationOptions<TContext = unknow
  */
 export function useCreateStopApiTripsSlugStopsPost<TContext>(options: 
 {
-  mutation?: UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext> & { client?: QueryClient },
+  mutation?: UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext> & { client?: QueryClient },
   client?: Partial<RequestConfig<CreateStopApiTripsSlugStopsPostMutationRequest>> & { client?: Client },
 }
  = {}) {
@@ -69,13 +74,13 @@ export function useCreateStopApiTripsSlugStopsPost<TContext>(options:
           const { client: queryClient, ...mutationOptions } = mutation;
           const mutationKey = mutationOptions.mutationKey ?? createStopApiTripsSlugStopsPostMutationKey()
 
-          const baseOptions = createStopApiTripsSlugStopsPostMutationOptions(config) as UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
+          const baseOptions = createStopApiTripsSlugStopsPostMutationOptions(config) as UseMutationOptions<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
           
 
-          return useMutation<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
+          return useMutation<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>({
             ...baseOptions,
             mutationKey,
             ...mutationOptions,
-          }, queryClient) as UseMutationResult<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
+          }, queryClient) as UseMutationResult<CreateStopApiTripsSlugStopsPostMutationResponse, ResponseErrorConfig<CreateStopApiTripsSlugStopsPost401 | CreateStopApiTripsSlugStopsPost403 | CreateStopApiTripsSlugStopsPost404 | CreateStopApiTripsSlugStopsPost409 | CreateStopApiTripsSlugStopsPost422 | CreateStopApiTripsSlugStopsPost429>, {slug: CreateStopApiTripsSlugStopsPostPathParams["slug"], data: CreateStopApiTripsSlugStopsPostMutationRequest}, TContext>
       
 }

@@ -1,5 +1,16 @@
 """
-Slug access-control tests — the 403/404 boundary the whole app sits behind.
+Slug access-control tests — the 401/403/404 boundary on the legacy slug gates.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``)** a slug only
+*locates* a trip. The write gate (``require_trip_writer``) checks the slug
+(404), then the session (401), then an active membership (403), and legacy
+writes accept **either** slug as the locator (contract default 21). The read
+gate's ``access`` is derived from membership, not from which slug was followed.
+The probe clients below act as the ``rider_session`` fixture (an active rider on
+both seeded trips) unless a test says otherwise; section 2 is the one intended
+inversion of the pre-Entry 29 behaviour, and says so. The rest of this
+docstring describes the slug-only model the file was written against; its
+404-vs-403 reasoning still holds.
 
 ``app/core/security.py`` is the only thing standing between a stranger with a
 guessed URL and a trip: there are no accounts, no passwords and no second
@@ -46,27 +57,29 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncIterator
-from datetime import date
 from http import HTTPStatus
 from pathlib import Path as FilePath
 from typing import Annotated, Any, get_args
 
 import pytest
-from conftest import SeededTrip
+from conftest import SeededTrip, SignedInAccount, make_async_client
 from fastapi import Depends, FastAPI, params
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.errors import ApiError, register_exception_handlers
 from app.core.security import (
     TripContext,
-    access_for_slug,
-    require_rider_access,
+    TripWriterContext,
+    access_for_membership,
     require_trip_access,
+    require_trip_writer,
 )
 from app.data.db import get_session
+from app.data.repositories.memberships import MembershipRecord
 from app.data.repositories.trips import TripRecord, get_by_slug
 from app.models.common import ErrorCode, ErrorDetail, ErrorEnvelope
+from app.models.member import MemberRole
 from app.models.trip import Access
 
 READ_PATH = "/probe/trips/{slug}"
@@ -110,16 +123,16 @@ def build_probe_app() -> FastAPI:
 
     @app.post(WRITE_PATH)
     async def probe_write(
-        context: Annotated[TripContext, Depends(require_rider_access)],
+        context: Annotated[TripWriterContext, Depends(require_trip_writer)],
     ) -> dict[str, str]:
         return {"id": context.trip.id, "name": context.trip.name, "access": context.access.value}
 
     return app
 
 
-@pytest.fixture
-async def probe_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
-    """The probe app, talking to the migrated test database in this test's event loop."""
+async def _probe(
+    migrated_engine: AsyncEngine, headers: dict[str, str] | None
+) -> AsyncIterator[AsyncClient]:
     app = build_probe_app()
     sessionmaker = async_sessionmaker(migrated_engine, expire_on_commit=False)
 
@@ -129,8 +142,28 @@ async def probe_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClien
 
     app.dependency_overrides[get_session] = session_override
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://probe") as client:
+    async with make_async_client(app, headers=headers) as client:
+        yield client
+
+
+@pytest.fixture
+async def probe_client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
+    """
+    The probe app on the test database, acting as ``rider_session``.
+
+    Since Entry 29 a write needs a member's session, so this is the client every
+    test that used to rely on the rider slug alone now uses.
+    """
+    async for client in _probe(migrated_engine, rider_session.headers):
+        yield client
+
+
+@pytest.fixture
+async def anonymous_probe_client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+    """The same probe app with no session cookie at all."""
+    async for client in _probe(migrated_engine, None):
         yield client
 
 
@@ -185,87 +218,110 @@ async def test_rider_slug_on_write_resolves_rider_access(
 
 
 # --------------------------------------------------------------------------
-# 2. The viewer slug on a write — 403, and specifically not 404
+# 2. The viewer slug on a write — an intended inversion (contract default 21)
 # --------------------------------------------------------------------------
+# Before Entry 29 these tests asserted "viewer slug on a write -> 403": the slug
+# was the credential and the viewer's was read-only. That is superseded, not
+# regressed. Contract default 21 (decision-log Entry 29, "Contract-level
+# defaults"): "Legacy writes accept either slug as the locator: the membership
+# gate is the only authorisation." So the same viewer-slug write is now a 401
+# with no session and a success with an active member's session. The 403 has
+# moved to the membership gate (test_access_matrix.py).
 
 
-async def test_viewer_slug_on_write_is_forbidden_status(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+async def test_viewer_slug_on_write_without_a_session_is_unauthenticated_status(
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
-    """A read-only link may not write."""
+    """A viewer-slug write with no session is a 401: the slug located the trip, nobody signed in."""
     trip = seeded_trips[0]
 
-    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
 
-    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert_envelope(response)
 
 
-async def test_viewer_slug_on_write_is_forbidden_code(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+async def test_viewer_slug_on_write_without_a_session_is_unauthenticated_code(
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
-    """...and reports FORBIDDEN, asserted apart from the status.
+    """...and reports UNAUTHENTICATED, asserted apart from the status.
 
-    The offline queue branches on ``code``, not on the status line, to decide
-    whether a queued write can ever succeed — so the code is its own assertion.
+    The offline queue branches on ``code``, not on the status line: it pauses on
+    UNAUTHENTICATED and resumes after sign-in, where FORBIDDEN would fail the
+    item for good.
     """
     trip = seeded_trips[0]
 
-    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
 
-    assert assert_envelope(response).code is ErrorCode.FORBIDDEN
+    assert assert_envelope(response).code is ErrorCode.UNAUTHENTICATED
 
 
 async def test_viewer_slug_on_write_is_not_a_not_found(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
     """
     The collapse this must never make: 404 for a viewer-slug write.
 
-    Stated as its own negative assertion rather than left implied by the two
-    above, because this is the half that harms a legitimate user — a guest told
-    "not found" concludes the link they were sent is broken and asks for a new
-    one, which is how a rider ends up handing out their *write* link.
+    Still true under Entry 29: the slug located a real trip, so answering
+    "not found" would tell the caller their link is broken when it isn't.
     """
     trip = seeded_trips[0]
 
-    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
 
     assert response.status_code != HTTPStatus.NOT_FOUND
     assert assert_envelope(response).code is not ErrorCode.NOT_FOUND
 
 
 async def test_viewer_slug_on_write_message_is_rider_readable(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
     """
-    The message explains the situation to a human, without naming internals.
+    The 401 message explains the situation to a human, without naming internals.
 
     ``ErrorDetail.message`` is contractually safe to display, so this is the
-    text a guest actually reads. It must say the link is read-only rather than
-    surface a stack frame, a column name or a SQL fragment.
+    text a rider actually reads: sign in, not a stack frame or a column name.
     """
     trip = seeded_trips[0]
 
-    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
 
     message = assert_envelope(response).message
-    assert "read-only" in message.lower()
+    assert "sign in" in message.lower()
     for internal in ("Traceback", "viewer_slug", "rider_slug", "SELECT", "ApiError"):
         assert internal not in message
 
 
 async def test_viewer_slug_write_body_has_exactly_the_contract_keys(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
-    """The 403 body is the envelope and nothing else — extras are contract drift."""
+    """The 401 body is the envelope and nothing else — extras are contract drift."""
     trip = seeded_trips[0]
 
-    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
 
     body = response.json()
     assert set(body.keys()) == {"error"}
     assert set(body["error"].keys()) == {"code", "message"}
+
+
+async def test_viewer_slug_on_write_with_a_member_session_is_allowed(
+    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+) -> None:
+    """
+    The same viewer-slug write succeeds for an active member (contract default 21).
+
+    The slug is a locator, and either one locates the trip; the member's session
+    is what authorises the write.
+    """
+    trip = seeded_trips[0]
+
+    response = await probe_client.post(WRITE_PATH.format(slug=trip.viewer_slug))
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["id"] == trip.id
+    assert response.json()["access"] == Access.RIDER.value
 
 
 # --------------------------------------------------------------------------
@@ -378,7 +434,7 @@ async def test_read_with_viewer_slug_succeeds(
 
 
 async def test_read_with_viewer_slug_reports_viewer_access(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+    anonymous_probe_client: AsyncClient, seeded_trips: list[SeededTrip]
 ) -> None:
     """
     ...and is reported as **viewer** access.
@@ -388,10 +444,13 @@ async def test_read_with_viewer_slug_reports_viewer_access(
     frontend renders write UI from — and they fail independently. An ``access``
     stuck at ``rider`` would show a guest an Add stop button that always errors,
     with the enforcement still perfectly correct.
+
+    Since Entry 29 ``access`` follows membership, not the slug, so this is
+    asked with no session: a member would be ``rider`` through either slug.
     """
     trip = seeded_trips[0]
 
-    response = await probe_client.get(READ_PATH.format(slug=trip.viewer_slug))
+    response = await anonymous_probe_client.get(READ_PATH.format(slug=trip.viewer_slug))
 
     assert response.json()["access"] == Access.VIEWER.value
 
@@ -431,7 +490,9 @@ async def test_write_resolves_the_second_trip_not_the_first(
 
 
 async def test_one_trips_viewer_slug_cannot_write_to_the_other(
-    probe_client: AsyncClient, seeded_trips: list[SeededTrip]
+    probe_client: AsyncClient,
+    seeded_trips: list[SeededTrip],
+    non_member_session: SignedInAccount,
 ) -> None:
     """
     Trip B's viewer slug is still 403 while trip A sits in the table.
@@ -442,7 +503,11 @@ async def test_one_trips_viewer_slug_cannot_write_to_the_other(
     """
     _, second = seeded_trips
 
-    response = await probe_client.post(WRITE_PATH.format(slug=second.viewer_slug))
+    # Since Entry 29 the 403 comes from the membership gate, so the request is
+    # sent as a signed-in non-member (a member may write through either slug).
+    response = await probe_client.post(
+        WRITE_PATH.format(slug=second.viewer_slug), headers=non_member_session.headers
+    )
 
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert assert_envelope(response).code is ErrorCode.FORBIDDEN
@@ -490,42 +555,33 @@ async def test_no_slug_appears_in_any_response_body(
 # --------------------------------------------------------------------------
 # 7. Access derivation, apart from enforcement
 # --------------------------------------------------------------------------
+# Before Entry 29 ``access`` was derived from which slug matched
+# (``access_for_slug``). It is now derived from membership: ``rider`` iff the
+# session user is an active member, whichever slug was followed.
 
 
 @pytest.mark.parametrize(
-    ("which", "expected"),
-    [("rider_slug", Access.RIDER), ("viewer_slug", Access.VIEWER)],
+    ("membership", "expected"),
+    [
+        (MembershipRecord(role=MemberRole.RIDER, active=True), Access.RIDER),
+        (MembershipRecord(role=MemberRole.LEADER, active=True), Access.RIDER),
+        (MembershipRecord(role=MemberRole.RIDER, active=False), Access.VIEWER),
+        (MembershipRecord(role=MemberRole.LEADER, active=False), Access.VIEWER),
+        (None, Access.VIEWER),
+    ],
+    ids=["active-rider", "active-leader", "revoked-rider", "revoked-leader", "no-membership"],
 )
-def test_access_is_derived_from_the_matched_record(which: str, expected: Access) -> None:
+def test_access_is_derived_from_the_membership(
+    membership: MembershipRecord | None, expected: Access
+) -> None:
     """
-    ``access_for_slug`` reads the record's own columns, so it is testable alone.
+    ``access_for_membership`` is a pure function, so it is testable alone.
 
-    No database and no request: the derivation is a pure comparison, and keeping
-    it separable is what lets a bug in the *flag* fail a test even when the
-    *guard* is still rejecting writes correctly.
+    No database and no request: keeping the derivation separable is what lets a
+    bug in the *flag* fail a test even when the *gate* is still rejecting writes
+    correctly.
     """
-    record = TripRecord(
-        id="trip-1",
-        name="Test trip",
-        start_date=date(2026, 6, 1),
-        rider_slug="rider-token",
-        viewer_slug="viewer-token",
-    )
-
-    assert access_for_slug(getattr(record, which), record) is expected
-
-
-def test_access_defaults_to_viewer_for_an_unrelated_string() -> None:
-    """Anything that is not the rider slug is a viewer — the lesser permission wins."""
-    record = TripRecord(
-        id="trip-1",
-        name="Test trip",
-        start_date=date(2026, 6, 1),
-        rider_slug="rider-token",
-        viewer_slug="viewer-token",
-    )
-
-    assert access_for_slug("something-else", record) is Access.VIEWER
+    assert access_for_membership(membership) is expected
 
 
 # --------------------------------------------------------------------------
@@ -595,6 +651,8 @@ async def test_repository_carries_both_slugs_and_the_trip_fields(
         start_date=trip.start_date,
         rider_slug=trip.rider_slug,
         viewer_slug=trip.viewer_slug,
+        visibility="private",
+        public_delay_hours=24,
     )
 
 
@@ -632,7 +690,7 @@ def _declared_dependencies(func: Any) -> list[Any]:
     return found
 
 
-@pytest.mark.parametrize("dependency", [require_trip_access, require_rider_access])
+@pytest.mark.parametrize("dependency", [require_trip_access, require_trip_writer])
 def test_dependencies_take_a_session_from_get_session(dependency: Any) -> None:
     """
     Both guards get their session through ``get_session``.
@@ -644,7 +702,7 @@ def test_dependencies_take_a_session_from_get_session(dependency: Any) -> None:
     assert get_session in _declared_dependencies(dependency)
 
 
-@pytest.mark.parametrize("dependency", [require_trip_access, require_rider_access])
+@pytest.mark.parametrize("dependency", [require_trip_access, require_trip_writer])
 def test_dependencies_declare_the_slug_path_parameter(dependency: Any) -> None:
     """
     Both take ``slug`` with a real ``description`` — this feeds the OpenAPI spec.

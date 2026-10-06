@@ -5,7 +5,7 @@
 
 import fetch from "../../client";
 import type { Client, RequestConfig, ResponseErrorConfig } from "../../client";
-import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422 } from "../types/GetTripApiTripsSlugGet";
+import type { GetTripApiTripsSlugGetQueryResponse, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429 } from "../types/GetTripApiTripsSlugGet";
 
 function getGetTripApiTripsSlugGetUrl({ slug }: { slug: GetTripApiTripsSlugGetPathParams["slug"] }) {
   const res = { method: 'GET', url: `/api/trips/${slug}` as const }
@@ -13,28 +13,35 @@ function getGetTripApiTripsSlugGetUrl({ slug }: { slug: GetTripApiTripsSlugGetPa
 }
 
 /**
- * @description **Context.** The rider shares one trip through two unguessable links: a rider
- * link that can write and a viewer link that can only read. This is the endpoint
- * both of them open first, and for a viewer it is the whole journal header. It
- * answers three questions in one round trip — which trip is this, which bikes are
- * on it, and may I write to it — because the app is used on the Stuart Hwy where a
- * second request is a second chance to be offline. Task `t-trip-metadata-endpoint`.
+ * @description **Context.** A trip from before accounts was shared through two links, a rider
+ * link and a viewer link. Since decision-log Entry 29 either link only *locates*
+ * the trip; what the caller may do is decided by their membership. This is the
+ * endpoint both links open first. It answers three questions in one round trip —
+ * which trip is this, which bikes are on it, and should the UI offer writes —
+ * because the app is used on the Stuart Hwy where a second request is a second
+ * chance to be offline. Tasks `t-trip-metadata-endpoint`, `t-am-write-gate-legacy`.
  * **How it works.** `{slug}` is resolved by the shared `require_trip_access`
- * dependency, which accepts **either** slug and raises a 404 if neither matches;
- * a viewer slug is a perfectly ordinary success here, not a 403, because this is a
- * read. The dependency also derives `access` from the matched row, and that value
- * is passed straight through to `TripOut.access` — the handler never recomputes
- * it. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
+ * dependency, which accepts **either** slug and raises a 404 if neither matches.
+ * The session is optional here and never produces a 401. The dependency derives
+ * `access`: `rider` iff the session user has an active membership on this trip
+ * (read fresh on every request), `viewer` for everyone else — anonymous, a
+ * signed-in non-member, a pending requester or a revoked member. Which slug was
+ * followed plays no part. `viewer.role` is derived alongside it (`anonymous`,
+ * `none`, `pending`, `rider` or `leader`), and `access` is `rider` exactly when
+ * that role is `rider` or `leader`. `visibility`, `publicDelayHours`, `riderCount`
+ * and `lastPublicStopAt` are filled as on `GET /api/v2/trips/{tripId}`; this read
+ * itself stays full and undelayed for either slug. The trip's bikes are fetched by `data/repositories/bikes.list_by_trip`,
  * filtered to this trip; a trip with no bikes returns `"bikes": []`, which is a
  * normal trip and not a 404. Neither slug is in the response: `TripOut` has no
  * slug field, and the slug is the credential.
- * `access` is a **UI hint**, not the enforcement point. It tells the frontend
- * whether to render Add stop / upload photo / edit bikes. The write endpoints
- * reject a viewer slug themselves regardless of what the UI chose to show.
+ * `access` is a **UI hint**, deprecated, and not the enforcement point. It tells
+ * the frontend whether to render Add stop / upload photo / edit bikes. The write
+ * endpoints check the session and membership themselves regardless of what the UI
+ * chose to show.
  * **Related APIs.** `GET /api/trips/{slug}/stops` for the stops this header sits
  * above, `GET /api/trips/{slug}/map` for the same trip as GeoJSON, and
  * `POST /api/trips/{slug}/bikes` / `PATCH /api/trips/{slug}/bikes/{id}` for the
- * rider-only writes behind the `bikes` list returned here.
+ * member-only writes behind the `bikes` list returned here.
  * @summary Get a trip's metadata and its bikes
  * {@link /api/trips/:slug}
  */
@@ -43,6 +50,6 @@ export async function getTripApiTripsSlugGet({ slug }: { slug: GetTripApiTripsSl
 
 
 
-  const res = await request<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422>, unknown>({ method : "GET", url : getGetTripApiTripsSlugGetUrl({ slug }).url.toString(), ... requestConfig })
+  const res = await request<GetTripApiTripsSlugGetQueryResponse, ResponseErrorConfig<GetTripApiTripsSlugGet404 | GetTripApiTripsSlugGet422 | GetTripApiTripsSlugGet429>, unknown>({ method : "GET", url : getGetTripApiTripsSlugGetUrl({ slug }).url.toString(), ... requestConfig })
   return res.data
 }

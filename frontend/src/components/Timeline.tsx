@@ -4,7 +4,8 @@ import { formatInstant } from "../format";
 
 // Design feature: chronological stop feed on the trip home (spec Section 6).
 // Clicking (or Enter on) an item opens that stop's detail screen.
-// Design format: prop `stops: StopOut[]`. Empty → "No stops yet.". Otherwise an
+// Design format: prop `stops: StopOut[]`; optional `onOpenStop(stopId)` replaces
+// the default /t/$slug/stops/$stopId navigation (used by /trips/$tripId). Empty → "No stops yet.". Otherwise an
 // unstyled list, one row per stop: bold name; arrival time via formatInstant
 // (reader's zone, with a zone label) plus " · approximate location" for a
 // manual (map-tap) location; notes if not null. GET /stops promises no order,
@@ -12,7 +13,7 @@ import { formatInstant } from "../format";
 // compare correctly — never by string), ties broken by id.
 // APIs called: none itself. The trip home passes the result of
 // GET /api/trips/{slug}/stops.
-export function Timeline({ stops }: { stops: StopOut[] }) {
+export function Timeline({ stops, onOpenStop }: { stops: StopOut[]; onOpenStop?: (stopId: string) => void }) {
   const navigate = useNavigate();
   if (stops.length === 0) return <p>No stops yet.</p>;
 
@@ -20,8 +21,10 @@ export function Timeline({ stops }: { stops: StopOut[] }) {
     (a, b) => Date.parse(a.arrivedAt) - Date.parse(b.arrivedAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
 
-  const open = (stopId: string) =>
-    navigate({ from: "/t/$slug", to: "/t/$slug/stops/$stopId", params: (prev) => ({ ...prev, stopId }) });
+  const open =
+    onOpenStop ??
+    ((stopId: string) =>
+      navigate({ from: "/t/$slug", to: "/t/$slug/stops/$stopId", params: (prev) => ({ ...prev, stopId }) }));
 
   return (
     <ol style={{ listStyle: "none", padding: 0 }}>

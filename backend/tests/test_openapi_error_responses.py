@@ -21,14 +21,25 @@ ERROR_ENVELOPE_REF = "#/components/schemas/ErrorEnvelope"
 # Criterion 3: the declared non-2xx statuses per operation. 405/500 are
 # framework-level and deliberately undeclared (api-contract.md, error envelope).
 EXPECTED_ERROR_STATUSES = {
-    ("get", "/api/trips/{slug}"): {"404", "422"},
-    ("get", "/api/trips/{slug}/stops"): {"404", "422"},
-    ("get", "/api/trips/{slug}/stops/{stop_id}/photos"): {"404", "422"},
-    ("get", "/api/trips/{slug}/map"): {"404", "422"},
-    ("post", "/api/trips/{slug}/stops"): {"403", "404", "409", "422"},
-    ("post", "/api/trips/{slug}/stops/{stop_id}/photos"): {"403", "404", "409", "422"},
-    ("post", "/api/trips/{slug}/bikes"): {"403", "404", "409", "422"},
-    ("patch", "/api/trips/{slug}/bikes/{id}"): {"403", "404", "422"},
+    # 429 on every limited operation since t-am-rate-limits: `public-read` on the
+    # reads, `writes` on the writes.
+    ("get", "/api/trips/{slug}"): {"404", "422", "429"},
+    ("get", "/api/trips/{slug}/stops"): {"404", "422", "429"},
+    ("get", "/api/trips/{slug}/stops/{stop_id}/photos"): {"404", "422", "429"},
+    ("get", "/api/trips/{slug}/map"): {"404", "422", "429"},
+    # 401 on the writes since decision-log Entry 29 (t-am-write-gate-legacy): the
+    # write gate needs a session.
+    ("post", "/api/trips/{slug}/stops"): {"401", "403", "404", "409", "422", "429"},
+    ("post", "/api/trips/{slug}/stops/{stop_id}/photos"): {
+        "401",
+        "403",
+        "404",
+        "409",
+        "422",
+        "429",
+    },
+    ("post", "/api/trips/{slug}/bikes"): {"401", "403", "404", "409", "422", "429"},
+    ("patch", "/api/trips/{slug}/bikes/{id}"): {"401", "403", "404", "422", "429"},
 }
 CREATE_OPERATIONS = [op for op, codes in EXPECTED_ERROR_STATUSES.items() if "409" in codes]
 READ_OPERATIONS = [op for op in EXPECTED_ERROR_STATUSES if op[0] == "get"]

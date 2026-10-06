@@ -1,14 +1,52 @@
 """
-Every registered ``/api`` route declares the right access guard for its method.
+Every registered ``/api`` route declares the access guard its route class requires.
 
 The failure this exists to catch is silent. ``require_trip_access`` and
-``require_rider_access`` have the same signature and return the same
+``require_trip_writer`` take the same ``{slug}`` and both hand the handler a
 ``TripContext``, so a write endpoint that declares the read guard by mistake
-still compiles, still resolves the slug, still returns 200 — and now accepts the
-*viewer* slug on a write. Nothing in a per-endpoint test suite notices, because
-each endpoint's own tests assert the behaviour of the guard it happens to
-declare. The guard is declared by hand, once per route, in five different
-modules; it only takes one.
+still compiles, still resolves the slug, still returns 200 — and now accepts a
+write from anyone holding either link, signed in or not. The same goes for an account route that forgets
+``require_session``: it still answers, for nobody in particular. Nothing in a
+per-endpoint test suite notices, because each endpoint's own tests assert the
+behaviour of the guard it happens to declare. The guard is declared by hand,
+once per route, in several modules; it only takes one.
+
+**Route classes, not HTTP methods** (``t-am-auth-sessions``). The guard used to
+be looked up by method alone (GET → read guard, POST → rider guard). Entry 29
+added routes where the method doesn't decide it: ``GET /api/v2/auth/me`` is a
+read that needs a *session*, not a trip. So every route falls into exactly one
+class, decided by name first and path second:
+
+- **Anonymous** (``ANONYMOUS_BY_DESIGN``, by route name): no guard at all.
+  Health, the ``/api`` catch-all, signup, signin, signout, recover and the public trip list (``list_public_trips``). A guard declared on one of these fails too — signout, for one, must
+  answer ``204`` whether or not a session was sent.
+- **Account-scoped** (``ACCOUNT_SCOPED``, by route name): exactly
+  ``require_session``, reads and unsafe methods alike, and only under
+  ``/api/v2``.
+- **Trip-scoped** (everything else): must sit under ``/api/trips`` or
+  ``/api/v2/trips``. A read (GET/HEAD) declares the trip read guard for its
+  surface: ``require_trip_access`` (by slug) under ``/api/trips``,
+  ``require_trip_reader`` (by trip id, private trips hidden) under
+  ``/api/v2/trips`` (``t-am-v2-trip-reads``). Swapping them is a failure too:
+  the legacy gate on a v2 path would serve private trips to anyone. A v2 read
+  named in ``MEMBER_READ`` declares ``require_trip_member_read`` instead
+  (``t-am-trip-leadership``): the reader gate would show a public trip's member
+  list to anyone. A v2 read named in ``LEADER_READ`` declares
+  ``require_trip_leader`` (``t-am-join-leader``). An unsafe
+  method declares exactly one membership gate for its surface —
+  ``require_trip_writer`` (by slug) under ``/api/trips``,
+  ``require_trip_writer_by_id`` (by trip id, session first) under
+  ``/api/v2/trips`` (``t-am-v2-rider-writes``), and ``require_trip_leader``
+  (``t-am-trip-create``), which a leader action named in ``LEADER_ONLY`` must
+  declare — and nothing else
+  (``t-am-write-gate-legacy``, Entry 29 obligation 4). Swapping the two writer
+  gates fails too: the slug gate cannot even resolve a ``{tripId}``, and the
+  trip-id gate on a slug path would look a slug up as an id. ``require_session`` alone is not enough on a trip write: it
+  says who is asking, not whether they may write to this trip.
+
+Both allowlists are by *name*, so renaming a path cannot quietly widen an
+exemption, and each name must match routes on exactly one path, so a
+same-named handler elsewhere cannot ride on it.
 
 Two things about how this is written are load-bearing, and both come from
 decision-log entry 7b — a green test that is green because it checked nothing
@@ -18,7 +56,9 @@ looks exactly like a green test that checked everything:
 ``from app.main import app``, then walk. A route added tomorrow is audited
 tomorrow with no edit here. A hand-maintained list of paths would reintroduce
 precisely the blind spot this module exists to close: the route someone forgot
-to add to the list is the same route they forgot to guard.
+to add to the list is the same route they forgot to guard. (The two allowlists
+above list *exemptions*, which is the direction that fails safe: a route
+missing from them is held to the strictest rule, the trip-scoped one.)
 
 **The walk descends through FastAPI's lazy router inclusion.** Since FastAPI
 0.141 ``app.routes`` does *not* contain the routes of an included router; it
@@ -54,38 +94,158 @@ rather than growing two.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
+from fastapi import APIRouter, Depends
 
-from app.core.security import require_rider_access, require_trip_access
+from app.core.security import (
+    require_session,
+    require_trip_access,
+    require_trip_join_requester,
+    require_trip_leader,
+    require_trip_member_read,
+    require_trip_reader,
+    require_trip_writer,
+    require_trip_writer_by_id,
+)
 from app.main import app
 
-# The guard each HTTP method must declare. A method absent from this mapping —
-# a DELETE endpoint, say — is a hard failure rather than a skip: a new verb is a
-# new access-control decision, and it should be made here deliberately, not
-# inherited by omission.
-EXPECTED_GUARD = {
-    "GET": require_trip_access,
-    "HEAD": require_trip_access,
-    "POST": require_rider_access,
-    "PATCH": require_rider_access,
+# Every guard the audit recognises. `_declared_guards` reports any of these found
+# at any depth of a route's dependency tree.
+GUARDS = (
+    require_trip_access,
+    require_trip_reader,
+    require_trip_writer,
+    require_trip_writer_by_id,
+    require_trip_leader,
+    require_trip_member_read,
+    require_trip_join_requester,
+    require_session,
+)
+
+# Methods that only read, and methods that change something. A method in
+# neither set — a PUT endpoint, say — is a hard failure rather than a skip:
+# a new verb is a new access-control decision, and it should be made here
+# deliberately, not inherited by omission. DELETE was agreed with its first
+# route, the member revoke (t-am-member-revoke): it is held to the unsafe rule.
+READ_METHODS = frozenset({"GET", "HEAD"})
+UNSAFE_METHODS = frozenset({"POST", "PATCH", "DELETE"})
+
+# The trip guard a trip-scoped read must declare, by surface: the legacy slug
+# gate under /api/trips, the trip-id reader gate under /api/v2/trips.
+LEGACY_TRIP_READ_GUARD = require_trip_access
+V2_TRIP_READ_GUARD = require_trip_reader
+
+# The membership gates an unsafe trip-scoped route may declare, exactly one of,
+# by surface. `require_trip_leader` joined the v2 set with `t-am-trip-create`.
+LEGACY_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer})
+V2_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer_by_id, require_trip_leader})
+
+# Leader actions, by route name: each must declare exactly `require_trip_leader`.
+# Without this, a leader route declaring the rider gate would pass the rule
+# above (it is one of the v2 unsafe guards) and let every rider change it.
+#
+#   patch_trip     — PATCH /api/v2/trips/{tripId}, the trip's settings.
+#   promote_member — POST /api/v2/trips/{tripId}/members/{userId}/promote.
+#   step_down      — POST /api/v2/trips/{tripId}/step-down.
+#   revoke_member  — DELETE /api/v2/trips/{tripId}/members/{userId}.
+#   decide_join_request  — POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision.
+#   unblock_join_request — POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock.
+LEADER_ONLY = {
+    "patch_trip",
+    "promote_member",
+    "step_down",
+    "revoke_member",
+    "decide_join_request",
+    "unblock_join_request",
 }
 
-# The only two routes under /api that legitimately carry no trip guard, excluded
-# by route *name* so that renaming a path cannot quietly widen the exemption:
+# v2 reads that only active members may make, by route name: each must declare
+# exactly `require_trip_member_read` instead of the public reader gate, which
+# would hand a public trip's member list to anyone (t-am-trip-leadership).
+#
+#   list_members — GET/HEAD /api/v2/trips/{tripId}/members.
+MEMBER_READ = {"list_members"}
+
+# v2 reads that only active leaders may make, by route name: each must declare
+# exactly `require_trip_leader`. The reader gate would hand a public trip's
+# join requests to anyone, the member-read gate to every rider (t-am-join-leader).
+#
+#   list_trip_join_requests — GET/HEAD /api/v2/trips/{tripId}/join-requests.
+LEADER_READ = {"list_trip_join_requests"}
+
+# The one v2 trip write whose caller is, by design, not a member: asking to
+# join. By route name it must declare exactly `require_trip_join_requester`
+# (session, then the reader's rule; never 403), and no other route may declare
+# that gate, which would let any signed-in user past a write the public trip's
+# members own (t-am-join-requester).
+#
+#   create_join_request — POST /api/v2/trips/{tripId}/join-requests.
+JOIN_REQUESTER = {"create_join_request"}
+
+# Trip-scoped routes live under one of these (legacy slug routes, v2 trip-id routes).
+TRIP_PATH_PREFIXES = ("/api/trips/", "/api/v2/trips")
+
+# Routes under /api that legitimately carry no guard at all, by route *name*:
 #
 #   health            — the container liveness probe. It reads no trip, takes no
 #                       {slug}, and must answer before any trip exists.
 #   unknown_api_path  — the /api/{rest:path} catch-all that turns an unmatched
 #                       API path into the JSON error envelope instead of letting
 #                       it fall through to the SPA's index.html. It has no trip
-#                       to guard; it exists to 404.
+#                       to guard; it exists to 404. It also carries every verb,
+#                       so it is exempt from the method classes above.
+#   signup, signin    — how a caller *gets* a session; they can't require one
+#                       (contract, "The gates": none (anonymous)).
+#   signout           — anonymous with the session optional: always 204, and it
+#                       clears the cookie whether or not a session was sent.
+#   recover           — how a caller who forgot the password gets a session back
+#                       with the recovery code; it can't require one either.
+#   list_public_trips — GET/HEAD /api/v2/trips, the Discover list. Public trips
+#                       only, the same for every caller; it reads no session and
+#                       no single trip, so there is nothing to gate (contract,
+#                       "The gates": none (anonymous)).
+ANONYMOUS_BY_DESIGN = {
+    "health",
+    "unknown_api_path",
+    "signup",
+    "signin",
+    "signout",
+    "recover",
+    "list_public_trips",
+}
+
+# Routes about the caller's own account rather than a trip, by route name. Each
+# declares exactly `require_session`, and sits under /api/v2.
 #
-# Nothing else is exempt. Every other /api route is asserted to sit under
-# /api/trips and to declare a guard — so an unguarded /api/whatever added later
-# fails this suite rather than shipping.
-UNGUARDED_BY_DESIGN = {"health", "unknown_api_path"}
+#   get_me               — GET/HEAD /api/v2/auth/me, the signed-in account.
+#   signout_all          — POST /api/v2/auth/signout-all, every session of the account.
+#   change_password      — POST /api/v2/auth/password, re-confirms the current password.
+#   rotate_recovery_code — POST /api/v2/auth/recovery-code, re-confirms the password.
+#   list_my_trips        — GET/HEAD /api/v2/me/trips, the caller's own memberships.
+#   create_trip          — POST /api/v2/trips. Creates a trip rather than acting on
+#                          one, so there is no trip to gate yet (contract, "The
+#                          gates": `require_session`).
+#   list_my_join_requests — GET/HEAD /api/v2/me/join-requests, the caller's own requests.
+#   cancel_join_request  — POST /api/v2/join-requests/{requestId}/cancel. Located by
+#                          request id, and only the caller's own (contract, "The
+#                          gates": `require_session` for cancel).
+#   claim_trip           — POST /api/v2/trips/claim. Locates its trip by a legacy
+#                          rider slug in the body, which grants nothing; the result
+#                          is the caller's own pending request (contract, "The
+#                          gates": `require_session` for claim; "Claim").
+ACCOUNT_SCOPED = {
+    "get_me",
+    "signout_all",
+    "change_password",
+    "rotate_recovery_code",
+    "list_my_trips",
+    "create_trip",
+    "list_my_join_requests",
+    "cancel_join_request",
+    "claim_trip",
+}
 
 
 def _walk_tree(routes: Any) -> tuple[list[Any], list[Any]]:
@@ -137,10 +297,99 @@ def _declared_guards(route: Any) -> set[Any]:
     stack = list(route.dependant.dependencies)
     while stack:
         dependant = stack.pop()
-        if dependant.call in (require_trip_access, require_rider_access):
+        if dependant.call in GUARDS:
             found.add(dependant.call)
         stack.extend(dependant.dependencies)
     return found
+
+
+def _route_class(route: Any) -> str:
+    """``"anonymous"``, ``"account"`` or ``"trip"`` — which rule ``route`` is held to."""
+    if route.name in ANONYMOUS_BY_DESIGN:
+        return "anonymous"
+    if route.name in ACCOUNT_SCOPED:
+        return "account"
+    return "trip"
+
+
+def _names(guards: set[Any]) -> list[str]:
+    return sorted(guard.__name__ for guard in guards)
+
+
+def _violation(method: str, route: Any) -> str | None:
+    """
+    Why ``method`` on ``route`` breaks its class's rule, or ``None`` if it doesn't.
+
+    One function for the live audit and for the self-test that feeds it
+    miswired routes, so the rules the self-test proves are the rules applied.
+    """
+    label = f"{method} {route.path} (`{route.name}`)"
+    guards = _declared_guards(route)
+    route_class = _route_class(route)
+
+    if route_class == "anonymous":
+        if guards:
+            return f"{label} is anonymous by design but declares {_names(guards)}"
+        return None
+
+    if method not in READ_METHODS | UNSAFE_METHODS:
+        return (
+            f"{label} uses a verb with no agreed guard — add it to READ_METHODS or "
+            "UNSAFE_METHODS with a decision, do not leave it unaudited"
+        )
+
+    if route_class == "account":
+        if not route.path.startswith("/api/v2/"):
+            return f"{label} is account-scoped but sits outside /api/v2"
+        if guards != {require_session}:
+            return f"{label} is account-scoped and must declare exactly `require_session`; " + (
+                f"it declares {_names(guards) or 'no guard'}"
+            )
+        return None
+
+    if not route.path.startswith(TRIP_PATH_PREFIXES):
+        return (
+            f"{label} is neither under /api/trips or /api/v2/trips nor exempt by name — "
+            "give it a trip guard under a trip path, or a reasoned entry in "
+            "ANONYMOUS_BY_DESIGN or ACCOUNT_SCOPED"
+        )
+    if method in READ_METHODS:
+        read_guard = (
+            V2_TRIP_READ_GUARD if route.path.startswith("/api/v2/") else LEGACY_TRIP_READ_GUARD
+        )
+        if route.name in MEMBER_READ and route.path.startswith("/api/v2/"):
+            read_guard = require_trip_member_read
+        if route.name in LEADER_READ and route.path.startswith("/api/v2/"):
+            read_guard = require_trip_leader
+        if guards != {read_guard}:
+            return (
+                f"{label} is a trip-scoped read and must declare exactly "
+                f"`{read_guard.__name__}`; it declares {_names(guards) or 'no trip guard'}"
+            )
+        return None
+
+    if route.name in JOIN_REQUESTER and route.path.startswith("/api/v2/"):
+        if guards != {require_trip_join_requester}:
+            return (
+                f"{label} is the join-request create and must declare exactly "
+                f"`require_trip_join_requester`; it declares {_names(guards) or 'no trip guard'}"
+            )
+        return None
+
+    unsafe_guards = (
+        V2_TRIP_UNSAFE_GUARDS if route.path.startswith("/api/v2/") else LEGACY_TRIP_UNSAFE_GUARDS
+    )
+    if len(guards) != 1 or not guards <= unsafe_guards:
+        return (
+            f"{label} is a trip-scoped write and must declare exactly one of "
+            f"{_names(set(unsafe_guards))}; it declares {_names(guards) or 'no trip guard'}"
+        )
+    if route.name in LEADER_ONLY and guards != {require_trip_leader}:
+        return (
+            f"{label} is a leader action and must declare exactly `require_trip_leader`; "
+            f"it declares {_names(guards)}"
+        )
+    return None
 
 
 def _api_routes() -> list[tuple[str, Any]]:
@@ -153,9 +402,7 @@ def _api_routes() -> list[tuple[str, Any]]:
     ]
 
 
-AUDITED = [
-    (method, route) for method, route in _api_routes() if route.name not in UNGUARDED_BY_DESIGN
-]
+AUDITED = _api_routes()
 
 
 def test_audit_is_not_vacuous() -> None:
@@ -164,25 +411,54 @@ def test_audit_is_not_vacuous() -> None:
 
     An audit that walks zero routes passes every parametrised case below by
     having none, and is indistinguishable from a clean bill of health. So assert
-    the shape of what was found: real routes, and at least one of every method
-    the guard mapping covers. If FastAPI changes its route tree again, this is
-    the test that goes red instead of the suite going quietly green.
+    the shape of what was found: every route class is populated, and trip-scoped
+    routes cover every agreed method. If FastAPI changes its route tree again,
+    this is the test that goes red instead of the suite going quietly green.
     """
     assert AUDITED, "route enumeration found nothing — the walk is broken, not the app"
 
-    # Equality, both directions on purpose: a guarded method dropping to zero
-    # routes is a walk that lost part of the tree, and a method with no agreed
-    # guard is a decision nobody made. The message names which side failed, so a
-    # new verb does not read as "a method is missing" (t-route-audit-new-verb-
-    # double-failure) — its per-route case below fails with the actionable text.
-    methods = {method for method, _ in AUDITED}
-    missing = sorted(set(EXPECTED_GUARD) - methods)
-    unagreed = sorted(methods - set(EXPECTED_GUARD))
-    assert methods == set(EXPECTED_GUARD), (
-        f"audited methods {sorted(methods)} differ from the guarded set {sorted(EXPECTED_GUARD)}: "
+    classes = {_route_class(route) for _, route in AUDITED}
+    assert classes == {"anonymous", "account", "trip"}, (
+        f"route classes found: {sorted(classes)} — a whole class has no routes, so the walk "
+        "lost part of the tree or the allowlists no longer name live routes"
+    )
+
+    # Equality, both directions on purpose: an agreed method dropping to zero
+    # trip routes is a walk that lost part of the tree, and a method with no
+    # agreed class is a decision nobody made. The message names which side
+    # failed, so a new verb does not read as "a method is missing" (t-route-
+    # audit-new-verb-double-failure) — its per-route case below fails with the
+    # actionable text.
+    agreed = READ_METHODS | UNSAFE_METHODS
+    methods = {method for method, route in AUDITED if _route_class(route) == "trip"}
+    missing = sorted(agreed - methods)
+    unagreed = sorted(methods - agreed)
+    assert methods == agreed, (
+        f"trip-scoped methods {sorted(methods)} differ from the agreed set {sorted(agreed)}: "
         f"no route found for {missing or 'none'} (the walk lost them, or the routes are gone); "
         f"routes with no agreed guard: {unagreed or 'none'} (see the per-route failure)"
     )
+
+
+def test_every_allowlisted_name_is_one_live_path() -> None:
+    """
+    Each name in ``ANONYMOUS_BY_DESIGN`` and ``ACCOUNT_SCOPED`` matches routes on one path.
+
+    None: the entry is stale, and would silently exempt whatever route next
+    takes that name. More than one path: a same-named handler elsewhere is
+    riding on an exemption made for a different route.
+    """
+    paths_by_name: dict[str, set[str]] = defaultdict(set)
+    for _, route in AUDITED:
+        paths_by_name[route.name].add(route.path)
+
+    assert not ANONYMOUS_BY_DESIGN & ACCOUNT_SCOPED, "a route name is in both allowlists"
+    wrong = {
+        name: sorted(paths_by_name.get(name, ()))
+        for name in sorted(ANONYMOUS_BY_DESIGN | ACCOUNT_SCOPED)
+        if len(paths_by_name.get(name, ())) != 1
+    }
+    assert not wrong, f"allowlisted names that don't match exactly one /api path: {wrong}"
 
 
 def test_nothing_that_could_serve_api_escapes_the_audit() -> None:
@@ -203,7 +479,7 @@ def test_nothing_that_could_serve_api_escapes_the_audit() -> None:
     ]
     assert not escaped, (
         f"routes that could answer under /api but carry no FastAPI dependency tree: {escaped} — "
-        "register them as APIRoutes with a trip guard, or move them outside /api"
+        "register them as APIRoutes with a guard, or move them outside /api"
     )
 
 
@@ -234,12 +510,19 @@ def test_audit_covers_every_documented_operation() -> None:
     )
 
 
-def test_every_audited_route_is_under_trips() -> None:
-    """Anything else under /api is either exempt by name above, or unguardable."""
-    stray = sorted({route.path for _, route in AUDITED if not route.path.startswith("/api/trips")})
+def test_every_guarded_route_is_under_trips_or_v2() -> None:
+    """Anything under /api outside /api/trips and /api/v2 is exempt by name, or unguardable."""
+    stray = sorted(
+        {
+            route.path
+            for _, route in AUDITED
+            if route.name not in {"health", "unknown_api_path"}
+            and not route.path.startswith(("/api/trips/", "/api/v2/"))
+        }
+    )
     assert not stray, (
-        f"/api routes outside /api/trips and not exempt by name: {stray} — "
-        "either they need a trip guard or UNGUARDED_BY_DESIGN needs a reasoned entry"
+        f"/api routes outside /api/trips and /api/v2 and not exempt by name: {stray} — "
+        "either they need a guard under one of those prefixes or a reasoned exemption"
     )
 
 
@@ -250,12 +533,15 @@ def test_schema_excluded_head_routes_are_audited() -> None:
     HEAD is registered as a second route with ``include_in_schema=False`` so the
     OpenAPI document does not grow a duplicate operation (see
     ``test_head_method.py``). That flag makes them invisible to anything derived
-    from ``app.openapi()`` — but they run the same handler against the same
-    ``{slug}``, so an unguarded HEAD leaks exactly what an unguarded GET does.
+    from ``app.openapi()`` — but they run the same handler with the same guard,
+    so an unguarded HEAD leaks exactly what an unguarded GET does.
     """
-    head = [route for method, route in AUDITED if method == "HEAD"]
+    head = [route for method, route in AUDITED if method == "HEAD" and route.methods == {"HEAD"}]
     assert head, "no HEAD routes audited — they are being filtered out somewhere"
     assert all(not route.include_in_schema for route in head)
+    assert any(_route_class(route) == "account" for route in head), (
+        "the account-scoped HEAD sibling (/api/v2/auth/me) is not audited"
+    )
 
 
 @pytest.mark.parametrize(
@@ -263,24 +549,230 @@ def test_schema_excluded_head_routes_are_audited() -> None:
     AUDITED,
     ids=[f"{method} {route.path}" for method, route in AUDITED],
 )
-def test_route_declares_the_guard_its_method_requires(method: str, route: Any) -> None:
+def test_route_declares_the_guard_its_class_requires(method: str, route: Any) -> None:
     """
-    Reads take either slug; writes take the rider slug only.
+    Anonymous routes declare nothing; account routes a session; trip routes a trip guard.
 
-    Asserted as an exact set, so declaring *both* guards fails too: two
-    resolutions of one ``{slug}`` is an ambiguity about which one enforces, and
+    Asserted as an exact set, so declaring *two* guards fails too: two
+    resolutions of one request is an ambiguity about which one enforces, and
     the answer would depend on parameter ordering.
     """
-    assert method in EXPECTED_GUARD, (
-        f"{method} {route.path} uses a verb with no agreed guard — "
-        f"add it to EXPECTED_GUARD with a decision, do not leave it unaudited"
+    violation = _violation(method, route)
+    assert violation is None, violation
+
+
+def test_the_rules_reject_miswired_routes() -> None:
+    """
+    ``_violation`` fails each kind of miswiring — the rules are not vacuous either.
+
+    Real ``APIRoute`` objects on a scratch router, never mounted on the app:
+    an account read without its session, a trip write with the read guard, an
+    anonymous route with a guard, a trip route outside a trip path, an unagreed
+    verb, and a correctly wired pair that must pass.
+    """
+    scratch = APIRouter()
+
+    async def get_me() -> None:  # the account-scoped name, but no session
+        return None
+
+    async def write(guard: Annotated[Any, Depends(require_trip_access)]) -> None:
+        return None
+
+    async def signin(user: Annotated[Any, Depends(require_session)]) -> None:
+        return None
+
+    async def stray(guard: Annotated[Any, Depends(require_trip_writer)]) -> None:
+        return None
+
+    async def read(guard: Annotated[Any, Depends(require_trip_access)]) -> None:
+        return None
+
+    scratch.add_api_route("/api/v2/auth/me", get_me, methods=["GET"])
+    scratch.add_api_route("/api/trips/{slug}/things", write, methods=["POST"])
+    scratch.add_api_route("/api/v2/auth/signin", signin, methods=["POST"])
+    scratch.add_api_route("/api/elsewhere/{slug}", stray, methods=["POST"])
+    scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["PUT"])
+    scratch.add_api_route("/api/trips/{slug}/things", read, methods=["GET"])
+    scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["PATCH"])
+
+    # A trip write with only a session: who is asking, but not whether they may
+    # write to this trip (t-am-write-gate-legacy).
+    async def session_only(user: Annotated[Any, Depends(require_session)]) -> None:
+        return None
+
+    # A trip write declaring the membership gate *and* another guard.
+    async def doubled(
+        guard: Annotated[Any, Depends(require_trip_writer)],
+        read: Annotated[Any, Depends(require_trip_access)],
+    ) -> None:
+        return None
+
+    scratch.add_api_route("/api/trips/{slug}/session-only", session_only, methods=["POST"])
+    scratch.add_api_route("/api/trips/{slug}/doubled", doubled, methods=["POST"])
+
+    # Each surface's read guard on the other surface's path (t-am-v2-trip-reads):
+    # the legacy slug gate on a v2 read would serve a private trip to anyone.
+    async def v2_read(guard: Annotated[Any, Depends(require_trip_reader)]) -> None:
+        return None
+
+    scratch.add_api_route("/api/v2/trips/{tripId}/things", read, methods=["GET"])
+    scratch.add_api_route("/api/trips/{slug}/v2-guarded", v2_read, methods=["GET"])
+    scratch.add_api_route("/api/v2/trips/{tripId}/fine", v2_read, methods=["GET"])
+
+    # Each surface's writer gate on the other surface's path (t-am-v2-rider-writes).
+    async def v2_write(guard: Annotated[Any, Depends(require_trip_writer_by_id)]) -> None:
+        return None
+
+    scratch.add_api_route("/api/v2/trips/{tripId}/slug-gated", stray, methods=["POST"])
+    scratch.add_api_route("/api/trips/{slug}/id-gated", v2_write, methods=["POST"])
+    scratch.add_api_route("/api/v2/trips/{tripId}/write-fine", v2_write, methods=["POST"])
+
+    # A leader action behind the rider gate, and behind the leader gate (t-am-trip-create).
+    async def leader(guard: Annotated[Any, Depends(require_trip_leader)]) -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/rider-gated", v2_write, methods=["PATCH"], name="patch_trip"
+    )
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/leader-gated", leader, methods=["PATCH"], name="patch_trip"
     )
 
-    expected = EXPECTED_GUARD[method]
-    assert _declared_guards(route) == {expected}, (
-        f"{method} {route.path} (`{route.name}`) must declare `{expected.__name__}`; "
-        f"it declares {sorted(g.__name__ for g in _declared_guards(route)) or 'no trip guard'}"
+    # A member list behind the public reader gate, behind the member-read gate,
+    # and the member-read gate on an ordinary read (t-am-trip-leadership).
+    async def member_read(guard: Annotated[Any, Depends(require_trip_member_read)]) -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/members-public", v2_read, methods=["GET"], name="list_members"
     )
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/members-gated", member_read, methods=["GET"], name="list_members"
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/member-read", member_read, methods=["GET"])
+
+    # A trip's join-request list behind the reader gate, the member-read gate and
+    # the leader gate; a decision behind the rider gate (t-am-join-leader).
+    for path, guard in (
+        ("/api/v2/trips/{tripId}/requests-public", v2_read),
+        ("/api/v2/trips/{tripId}/requests-members", member_read),
+        ("/api/v2/trips/{tripId}/requests-leaders", leader),
+    ):
+        scratch.add_api_route(path, guard, methods=["GET"], name="list_trip_join_requests")
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/decide-rider-gated",
+        v2_write,
+        methods=["POST"],
+        name="decide_join_request",
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/leader-read", leader, methods=["GET"])
+
+    # The revoke behind the rider gate, and an unguarded DELETE (t-am-member-revoke):
+    # DELETE is an agreed verb now, so it must fail on its guard, not its verb.
+    async def unguarded() -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/revoke-rider-gated",
+        v2_write,
+        methods=["DELETE"],
+        name="revoke_member",
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/delete-unguarded", unguarded, methods=["DELETE"])
+
+    # The join-request create behind the writer gate, behind its own gate, and
+    # its own gate on an ordinary write (t-am-join-requester).
+    async def join(guard: Annotated[Any, Depends(require_trip_join_requester)]) -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/join-writer", v2_write, methods=["POST"], name="create_join_request"
+    )
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/join-fine", join, methods=["POST"], name="create_join_request"
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/join-gated", join, methods=["POST"])
+    routes = {(next(iter(r.methods)), r.path): r for r in scratch.routes}
+
+    must_fail = [
+        ("GET", "/api/v2/auth/me"),
+        ("POST", "/api/trips/{slug}/things"),
+        ("POST", "/api/v2/auth/signin"),
+        ("POST", "/api/elsewhere/{slug}"),
+        ("PUT", "/api/trips/{slug}/things/{id}"),
+        ("POST", "/api/trips/{slug}/session-only"),
+        ("POST", "/api/trips/{slug}/doubled"),
+        ("GET", "/api/v2/trips/{tripId}/things"),
+        ("GET", "/api/trips/{slug}/v2-guarded"),
+        ("POST", "/api/v2/trips/{tripId}/slug-gated"),
+        ("POST", "/api/trips/{slug}/id-gated"),
+        ("PATCH", "/api/v2/trips/{tripId}/rider-gated"),
+        ("GET", "/api/v2/trips/{tripId}/members-public"),
+        ("GET", "/api/v2/trips/{tripId}/member-read"),
+        ("POST", "/api/v2/trips/{tripId}/join-writer"),
+        ("POST", "/api/v2/trips/{tripId}/join-gated"),
+        ("GET", "/api/v2/trips/{tripId}/requests-public"),
+        ("GET", "/api/v2/trips/{tripId}/requests-members"),
+        ("POST", "/api/v2/trips/{tripId}/decide-rider-gated"),
+        ("GET", "/api/v2/trips/{tripId}/leader-read"),
+        ("DELETE", "/api/v2/trips/{tripId}/revoke-rider-gated"),
+        ("DELETE", "/api/v2/trips/{tripId}/delete-unguarded"),
+    ]
+    for key in must_fail:
+        assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
+
+    for key in [
+        ("GET", "/api/trips/{slug}/things"),
+        ("PATCH", "/api/trips/{slug}/things/{id}"),
+        ("GET", "/api/v2/trips/{tripId}/fine"),
+        ("POST", "/api/v2/trips/{tripId}/write-fine"),
+        ("PATCH", "/api/v2/trips/{tripId}/leader-gated"),
+        ("GET", "/api/v2/trips/{tripId}/members-gated"),
+        ("POST", "/api/v2/trips/{tripId}/join-fine"),
+        ("GET", "/api/v2/trips/{tripId}/requests-leaders"),
+    ]:
+        assert _violation(key[0], routes[key]) is None, f"{key} was wrongly rejected"
+
+
+def test_a_synthetic_app_with_an_unguarded_trip_post_fails_the_audit() -> None:
+    """
+    An app with one unguarded ``POST`` under ``/api/trips/{slug}`` fails, end to end.
+
+    ``test_the_rules_reject_miswired_routes`` feeds routes straight to
+    ``_violation``. This drives the whole audit path the live app goes through
+    — mount a router on a ``FastAPI`` app, walk the lazily-included tree, take
+    every ``/api`` (method, route) pair — so a walk that silently skipped the
+    route would fail here too. A guarded sibling is the control: the audit must
+    single out the unguarded write, not reject everything.
+    """
+    from fastapi import FastAPI
+
+    synthetic = FastAPI()
+    router = APIRouter(prefix="/api/trips/{slug}")
+
+    async def unguarded(slug: str) -> None:
+        return None
+
+    async def guarded(guard: Annotated[Any, Depends(require_trip_writer)]) -> None:
+        return None
+
+    router.add_api_route("/leaky", unguarded, methods=["POST"])
+    router.add_api_route("/fine", guarded, methods=["POST"])
+    synthetic.include_router(router)
+
+    pairs = [
+        (method, route)
+        for route in _walk(synthetic.routes)
+        if route.path.startswith("/api")
+        for method in sorted(route.methods or ())
+    ]
+    violations = {route.path: _violation(method, route) for method, route in pairs}
+
+    assert set(violations) == {"/api/trips/{slug}/leaky", "/api/trips/{slug}/fine"}, (
+        f"the walk did not find both synthetic routes: {sorted(violations)}"
+    )
+    assert violations["/api/trips/{slug}/leaky"] is not None, "an unguarded trip POST passed"
+    assert violations["/api/trips/{slug}/fine"] is None, violations["/api/trips/{slug}/fine"]
 
 
 # --------------------------------------------------------------------------

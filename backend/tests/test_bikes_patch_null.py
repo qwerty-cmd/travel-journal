@@ -7,6 +7,11 @@ null". Every bike column is NOT NULL, so before this fix an explicit null went
 straight into the ``UPDATE`` and came back as a 500. It is now rejected at
 validation as ``422`` / ``VALIDATION_ERROR`` and the stored bike is untouched.
 The OpenAPI schema says the same thing: optional, never nullable.
+
+**Since decision-log Entry 29 (``t-am-write-gate-legacy``).** A slug only
+locates the trip; the write gate needs a signed-in, active member. Every request
+here acts as the ``rider_session`` fixture (an active rider on both seeded
+trips). ``test_access_matrix.py`` covers the gate itself.
 """
 
 from __future__ import annotations
@@ -15,8 +20,8 @@ from collections.abc import AsyncIterator
 from http import HTTPStatus
 
 import pytest
-from conftest import SeededBike, SeededTrip
-from httpx import ASGITransport, AsyncClient
+from conftest import SeededBike, SeededTrip, SignedInAccount, make_async_client
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -29,7 +34,9 @@ FIELDS = ["riderName", "make", "model", "year", "specs"]
 
 
 @pytest.fixture
-async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(
+    migrated_engine: AsyncEngine, rider_session: SignedInAccount
+) -> AsyncIterator[AsyncClient]:
     import app.main
 
     sessionmaker = async_sessionmaker(migrated_engine, expire_on_commit=False)
@@ -41,8 +48,10 @@ async def client(migrated_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     application = app.main.app
     application.dependency_overrides[get_session] = session_override
     try:
-        transport = ASGITransport(app=application)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+        # Every request acts as `rider_session`, an active member of both seeded
+        # trips: since decision-log Entry 29 the slug only locates the trip and the
+        # write gate needs a member's session (t-am-write-gate-legacy).
+        async with make_async_client(application, headers=rider_session.headers) as http_client:
             yield http_client
     finally:
         application.dependency_overrides.pop(get_session, None)

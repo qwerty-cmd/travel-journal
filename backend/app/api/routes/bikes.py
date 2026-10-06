@@ -4,8 +4,9 @@ Bike routes -- ``POST /api/trips/{slug}/bikes`` and
 
 POST uses the same three-way idempotency branch as stops: unseen id -> 201,
 same trip -> 200 replay, different trip -> 409.  PATCH is a plain partial
-update, last-write-wins by design.  Rider slug only (403 on viewer, 404 on
-unknown).
+update, last-write-wins by design.  Both go through ``require_trip_writer``:
+either slug locates the trip (404 on unknown), then a session (401), then an
+active membership (403).
 """
 
 from http import HTTPStatus
@@ -13,14 +14,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Response
 
-from app.api.responses import error_responses
+from app.api.responses import WRITES_429, error_responses
 from app.core.errors import ApiError
-from app.core.security import TripContext, require_rider_access
+from app.core.ratelimit import limit_writes
+from app.core.security import TripWriterContext, require_trip_writer
 from app.data.db import SessionDep
 from app.data.repositories.bikes import BikeIdOnAnotherTrip, create, patch
 from app.models.bike import BikeCreate, BikeOut, BikePatch
 
-# POST /trips/{slug}/bikes -- add a bike (rider-slug only, 403 on viewer slug).
+# POST/PATCH /trips/{slug}/bikes -- add or edit a bike (active members only).
 router = APIRouter(prefix="/trips/{slug}/bikes", tags=["bikes"])
 
 ID_ALREADY_USED_MESSAGE = (
@@ -28,9 +30,18 @@ ID_ALREADY_USED_MESSAGE = (
     "changed here. Sending it again unchanged will keep failing -- it needs a new id."
 )
 
+# A NUL byte in the body's `id`: no stored id can contain one.
+ID_HAS_NUL_MESSAGE = (
+    "This bike couldn't be saved: its id contains a NUL character, which no id can hold. "
+    "Nothing was stored. Sending it again unchanged will keep failing -- it needs a new id."
+)
+
+BIKE_NOT_FOUND_MESSAGE = "No bike with this id exists on this trip."
+
 
 @router.post(
     "",
+    dependencies=[Depends(limit_writes)],
     status_code=HTTPStatus.CREATED,
     summary="Add a bike to a trip",
     response_description="The bike as stored -- the one just created (201), or the one "
@@ -44,38 +55,67 @@ ID_ALREADY_USED_MESSAGE = (
         },
         **error_responses(
             {
-                HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug.",
+                HTTPStatus.UNAUTHORIZED: "No valid session: none sent, expired, signed out or revoked, or the account is "
+                "disabled. Checked after the slug and before membership. If a session cookie was "
+                "sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes "
+                "after sign-in. Nothing was written.",
+                HTTPStatus.FORBIDDEN: "Signed in, and the slug located the trip, but the account has no active "
+                'membership on it: "You\'re not a rider on this trip." for a non-member, '
+                '"You\'re no longer a rider on this trip." for a revoked one. The slug grants '
+                "nothing, whichever one it is. Nothing was written.",
                 HTTPStatus.NOT_FOUND: "No trip has this slug.",
                 HTTPStatus.CONFLICT: "The `id` in the body already belongs to a bike on a "
                 "**different** trip. Nothing was created, nothing about the conflicting record "
                 "is disclosed.",
-                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+                HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation, or its "
+                "`id` contains a NUL character, which no stored id can hold.",
+                HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
             }
         ),
     },
     description="""
 **Context.** Bikes are registered per trip so the journal records who is riding
-what. Rider slug only -- a viewer link can read bikes (via `GET /trips/{slug}`)
-but not add one. Task `t-bikes-create-endpoint`.
+what. Only a signed-in, active member of the trip can add one; either slug just
+locates the trip (decision-log Entry 29, contract default 21). The server sets
+`created_by` from the session. Tasks `t-bikes-create-endpoint`,
+`t-am-write-gate-legacy`.
 
 **How it works.** Same three-way idempotency branch as `POST /trips/{slug}/stops`
 (decision-log Entry 14): unseen id creates the bike (201), id already on this
 trip is a replay (200, stored record returned unchanged), id on a different trip
-is a 409 with nothing disclosed about the conflicting record.
+is a 409 with nothing disclosed about the conflicting record. `require_trip_writer`
+runs first: slug (404), session (401), active membership (403).
 
 **Related APIs.** `GET /api/trips/{slug}` returns bikes in `TripOut.bikes`,
 `PATCH /api/trips/{slug}/bikes/{id}` edits a bike created here.
 """,
 )
 async def create_bike(
-    context: Annotated[TripContext, Depends(require_rider_access)],
+    context: Annotated[TripWriterContext, Depends(require_trip_writer)],
     session: SessionDep,
     bike: BikeCreate,
     response: Response,
 ) -> BikeOut:
     """Create the bike, or hand back the one this id already named on this trip."""
+    return await store_bike(session, context, bike, response)
+
+
+async def store_bike(
+    session: SessionDep, context: TripWriterContext, bike: BikeCreate, response: Response
+) -> BikeOut:
+    """
+    The create after the gate, shared by the legacy and v2 routes.
+
+    The three-way branch lives here once, so the two surfaces cannot answer the
+    same id differently. A NUL byte in the client id is a ``422`` before any
+    query: Postgres ``text`` cannot hold one, so the lookup would be a ``500``.
+    """
+    if "\x00" in bike.id:
+        raise ApiError.validation(ID_HAS_NUL_MESSAGE)
     try:
-        created_bike, created = await create(session, context.trip.id, bike)
+        created_bike, created = await create(
+            session, context.trip.id, bike, created_by=context.user.user_id
+        )
     except BikeIdOnAnotherTrip:
         raise ApiError.conflict(ID_ALREADY_USED_MESSAGE) from None
 
@@ -87,20 +127,30 @@ async def create_bike(
 
 @router.patch(
     "/{id}",
+    dependencies=[Depends(limit_writes)],
     summary="Update a bike on a trip",
     response_description="The bike after applying the patch.",
     responses=error_responses(
         {
-            HTTPStatus.FORBIDDEN: "The slug resolved, but it is the trip's **viewer** slug.",
+            HTTPStatus.UNAUTHORIZED: "No valid session: none sent, expired, signed out or revoked, or the account is "
+            "disabled. Checked after the slug and before membership. If a session cookie was "
+            "sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes "
+            "after sign-in. Nothing was written.",
+            HTTPStatus.FORBIDDEN: "Signed in, and the slug located the trip, but the account has no active "
+            'membership on it: "You\'re not a rider on this trip." for a non-member, '
+            '"You\'re no longer a rider on this trip." for a revoked one. The slug grants '
+            "nothing, whichever one it is. Nothing was written.",
             HTTPStatus.NOT_FOUND: "No trip has this slug, or no bike with this id exists on "
             "the trip.",
             HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed schema validation.",
+            HTTPStatus.TOO_MANY_REQUESTS: WRITES_429,
         }
     ),
     description="""
 **Context.** Partial update of a bike registered on this trip. Only the fields
 present in the request body are changed — absent fields stay as they are.
-Rider slug only. Task `t-bikes-patch-endpoint`.
+Active members only, through `require_trip_writer` (slug 404, session 401,
+membership 403). Tasks `t-bikes-patch-endpoint`, `t-am-write-gate-legacy`.
 
 **How it works.** Last-write-wins: no conflict detection, no ETags, no version
 field. Two concurrent patches both succeed; whichever one the database sees
@@ -111,13 +161,26 @@ place. `GET /api/trips/{slug}` returns the current state in `TripOut.bikes`.
 """,
 )
 async def patch_bike(
-    context: Annotated[TripContext, Depends(require_rider_access)],
+    context: Annotated[TripWriterContext, Depends(require_trip_writer)],
     session: SessionDep,
     id: str,
     body: BikePatch,
 ) -> BikeOut:
     """Apply a partial update to a bike on this trip."""
-    updated = await patch(session, context.trip.id, id, body)
+    return await apply_bike_patch(session, context, id, body)
+
+
+async def apply_bike_patch(
+    session: SessionDep, context: TripWriterContext, bike_id: str, body: BikePatch
+) -> BikeOut:
+    """
+    The patch after the gate, shared by the legacy and v2 routes.
+
+    A bike id with a NUL byte is the unknown bike's ``404`` without a query (no
+    stored id can hold one; the driver would raise a ``500``), the same guard
+    as ``photos.stop_belongs_to_trip``.
+    """
+    updated = None if "\x00" in bike_id else await patch(session, context.trip.id, bike_id, body)
     if updated is None:
-        raise ApiError.not_found("No bike with this id exists on this trip.")
+        raise ApiError.not_found(BIKE_NOT_FOUND_MESSAGE)
     return updated
