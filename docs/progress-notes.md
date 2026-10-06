@@ -2896,6 +2896,8 @@ DONE 2026-10-06. `/trips/$tripId/settings` (leader-only via `viewerRole()`; one 
 - **Rationale beside the code (Entry 29):** `queue.ts` carries a comment on the no-grace rule: a revoked rider's queued items fail with 403, with no grace period.
 **Validation.** `cd frontend && npm test && npm run build`
 
+DONE 2026-10-06. `offline/queue.ts`: 401 → pause (entry untouched, no attempt, `btj.queue.paused` survives reload, cleared by a 2xx or an `auth` signin broadcast); 429 + Retry-After → retry at that delay, attempt counted, backoff unchanged; five-code NEVER_RETRY unchanged; 403 keeps the blob; no-grace comment. `QueueNotice.tsx`: "Sign in to send N items" and "Save photo to this device" (object URL + `<a download>`, revoked after 1 s). No existing queue test changed. Tests: queueClassification 12; frontend 592 + build. QA PASS, 4/4 mutants. Debt: t-am-queue-classification-gaps; Retry-After skip routed to t-am-fe-rider-add-stop.
+
 ## t-am-queue-userid
 **Goal.** Queued items belong to the account that captured them, and v2 payloads route by tripId (obligation 14, `userId` half; scrum change 19).
 **Blockers.** `t-am-queue-classification` (the same file, serialised) and `t-am-v2-rider-writes`.
@@ -2921,6 +2923,8 @@ DONE 2026-10-06. `/trips/$tripId/settings` (leader-only via `viewerRole()`; one 
 **Validation.** `cd frontend && npm test && npm run build`
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
+**Added AC (from t-am-queue-classification QA, triggered debt promoted here).** Once the queue posts to the v2 rider-write endpoints (which do send 401/429), a trigger during a 429 (the `again` loop, `visibilitychange`) runs the drain again immediately and skips the Retry-After wait. Make triggers respect a pending Retry-After (and the backoff) and test it.
 
 ## t-am-fe-bikes-v2
 **Goal.** Part (b) of scrum change 21: bikes on v2.
@@ -3169,3 +3173,7 @@ ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$t
 ## t-am-fe-ui-primitives
 
 ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders. Trip settings (dev on t-am-fe-trip-settings): one Save instead of per-field saves, no Make private ConfirmDialog, "Saved." instead of the designed toasts, no "What the public sees" card, no TopBar, delay chips not 48px. Also no home-page notice after leaving a trip ("You left <trip>").
+
+## t-am-queue-classification-gaps
+
+ORDINARY DEBT (dev + QA on t-am-queue-classification). (1) Retry-After isn't bounded: 0 retries at once and > ~2,147,483 s overflows setTimeout and fires at once (backend never sends either). (2) The pause flag is cleared only by a 2xx or a signin message; if paused entries later fail for another reason the notice says "Sign in to send…" until a send succeeds. (3) The download filename is `${stopName} ${id}.jpg` from rider text (browsers sanitise it). (4) `offline/README.md` still lists only the five never-retry codes; `btj.queue.paused` bypasses `localStore.ts`.
