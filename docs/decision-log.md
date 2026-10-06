@@ -52,6 +52,7 @@ empirically disproves another.
 | 29 | Public trips, local accounts, leader-gated membership (supersedes the two-link access model) | spec §2, `core/security.py`, `core/{passwords,sessions,csrf,ratelimit}.py`, `offline/queue.ts`, `0003_accounts_membership.sql`, `architecture-diagram.md` | **Architect ADR, accepted by the orchestrator under the owner's delegation, 2026-09-29.** Entry 21's per-person trigger fired. Username + argon2id password + one-time recovery code, with a `__Host-` cookie session (hash stored). Passkeys, magic links, OAuth, device tokens and bearer tokens lost. Authorization is session + an active `trip_members` row, read every request; **no slug is a write credential**. Trips are public by default with a 24 h delay; legacy trips migrate to private; private → 404. Join requests are per person; peer leaders can't remove each other. Revoked riders' queued items get 403 with no grace window. **The `ErrorCode` ruling Entries 6/14 require:** `UNAUTHENTICATED` 401 (queue pauses) and `RATE_LIMITED` 429 (retries). New dependency `argon2-cffi`. Invariants unchanged. Reopen on passkeys, or on max-replicas > 1 (rate limits to Postgres) |
 | 30 | Styling approach: plain CSS with custom properties (D1) and design defaults D2–D7 | `frontend/src/styles/{tokens,base}.css`, `main.tsx`, `TripMap.{tsx,css}`, `vite.config.ts`, `frontend/src/icons/LICENSE`, `CLAUDE.md` Stack | **Architect ruling, accepted by the orchestrator under the owner's delegation, 2026-09-29.** `tokens.css` + `base.css` + one BEM-lite `Component.css` per component, with no new dependency. **CSS Modules lost on cost:** tokens and `.leaflet-*` overrides stay global anyway, and switching later is mechanical. **Tailwind lost:** it changes the locked stack, duplicates the tokens and gives nothing a DESIGN.md-driven spec needs. **No `@layer`**, because unlayered Leaflet CSS would beat it. D2 light only, D3 system fonts, D4 16 vendored MIT/ISC icons, D5 stock OSM, D6 56px bottom Add-stop bar, D7 Discover with "Your trips" on top and no redirect. Reopen: class collisions → CSS Modules |
 | 31 | Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted early) | `core/jpeg.py`, `api-contract.md` (Photo upload section), `test_jpeg_strip.py` | **Owner chose Option B, accepted by the orchestrator.** The pre-SOS-only strip let through APPn/COM between scans and everything after EOI (MPF, Motion Photo, gain maps). Now one forward walk to the first top-level EOI; malformed or EOI-less input is 422, never repaired. **Rejected:** Pillow re-encode (lossy, decompression bomb, new dep), `jpegtran -copy none` (subprocess, decode bomb), piexif (APP1 only), exiftool (Perl). ICC dropped; Adobe APP14 kept. Reopen if an original-bytes path ships and P3 colour matters |
+| 32 | Deploy as code: ACA YAML specs + approval-gated GitHub Actions (OIDC); reverses "CI never deploys" and partly supersedes Entry 28 | `infra/azure/*.yaml`, `.github/workflows/{deploy,rollback,deactivate-revisions}.yml`, `deploy-cutover-runbook.md` §6/§8, `.claude/skills/deploy/SKILL.md`, `ci.yml` header | **Owner decisions, 2026-10-06, on the architect plan.** Deploy only by manual `workflow_dispatch` in the `production` environment, owner as required reviewer. **azd, Bicep/ARM, Terraform, k8s lost** (see entry). Committed YAML never has `secrets:`; Jobs updated with `--image` only; fresh `rel-<sha12>` suffix. Private GHCR read-only PAT lives in ACA only, owner rotates. **Entry 28's `az rest` choice reopened and overruled by the owner**; its `revisionSuffix` finding (azure-cli#32272) is an open verification |
 
 ---
 
@@ -2526,3 +2527,84 @@ Deliberate steganography in kept segments or entropy data. The goal is stripping
 - `api-contract.md`, "Photo upload: JPEG only, metadata stripped, 15 MiB cap": first two bullets replaced.
 - `t-am-jpeg-after-sos` implements it in `backend/app/core/jpeg.py` and its tests. Scope, AC and validation are in `docs/progress-notes.md` under that ID.
 - **Rationale that must live beside code.** `dev` should put the marker-search regex rationale (why no `\xff+`, why `\xd0-\xd7` is excluded) and the Adobe APP14 keep-rule in the `core/jpeg.py` docstring, since those are the lines someone would "simplify".
+
+---
+
+## 32. Deploy as code: ACA YAML specs + approval-gated GitHub Actions (OIDC); reversal of "CI never deploys"
+
+**Ruling:** the owner decided on 2026-10-06, on the architect's plan. This reverses a standing rule ("CI builds and publishes only; it never deploys", in `ci.yml` and the deploy skill) and reopens Entry 28 (`az rest` PATCH, no `az containerapp update --yaml`). Two earlier positions are overruled, so both are recorded below.
+
+### Context
+Deploys were a hand-run sequence of `az` commands from the runbook (§6 to §7). It works, but each step depends on the owner's memory, nothing records which revision replaced which, and rollback is improvised. The owner wants a repeatable, reviewable path that still needs a human to approve every release.
+
+### Decision
+1. **Approach: committed ACA YAML specs applied by GitHub Actions.** Files: `infra/azure/app.yaml`, `migrate-job.yaml`, `sync-job.yaml`, applied with `az containerapp create|update --yaml`. New deployment config under `infra/` is approved (this lifts the `infra/` off-limits rule for these files only). The sync-job YAML carries `GRAPH_*` names and `secretRef`s only, never values; `onedrive_sync.py` is untouched.
+2. **"CI never deploys" is reversed, with guardrails.** `ci.yml` stays build-and-publish only. A separate `deploy.yml` may deploy, but only by manual `workflow_dispatch` (input `sha`), in the GitHub `production` environment with the owner as required reviewer, with `concurrency: deploy`, `permissions: id-token: write, contents: read`. No push, pull_request or schedule trigger, ever. `rollback.yml` (input `revision`; warns when the target predates Entry 29) and `deactivate-revisions.yml` (refuses the active or rollback-target revision) carry the same gate.
+3. **Azure identity: OIDC, no stored credential.** A user-assigned managed identity with a federated credential (subject `repo:<owner>/<repo>:environment:production`) and Contributor on the app's resource group only, never the subscription. The workflow uses `azure/login`; `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` are GitHub environment **variables** (IDs, not secrets).
+4. **GHCR stays private; ACA pulls with a classic PAT scoped `read:packages` only.** The owner sets it once as the registry credential of the app and both Jobs, directly in ACA. It is never in GitHub, never in YAML. The YAML may name the secret (`passwordSecretRef`), never hold the value. The owner rotates it and records the expiry in the handover.
+
+### Deploy sequence (`deploy.yml`)
+1. Verify CI is green for the SHA and the GHCR tag exists. 2. `azure/login`. 3. Record the current revision and pin traffic to it. 4. Start the migrate Job with `--image <sha>` and poll to Succeeded. 5. `az containerapp update --yaml app.yaml` (image and suffix substituted), poll Healthy, shift 100% traffic. 6. `job update --image` on the sync Job and assert app and Job images are equal. 7. Smoke: `/api/health` 200; `/` serves the SPA; `http://` does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403; optional single-network XFF burst (121 requests, one 429). 8. Step summary names the new and previous revision.
+
+### YAML caveats (the lines someone would "simplify")
+- **Committed YAML must never contain `secrets:`.** A partial list deletes the secrets it omits; omitting the section keeps them.
+- **Fresh `rel-<sha12>` revision suffix every deploy.** Redeploying the same SHA takes the traffic-only branch instead of creating a revision.
+- **Jobs are updated with `--image` only.** Whether `job update --yaml` keeps secrets is unverified, so Job YAML is used at create time only (header comment says so).
+- **Never override `--command` on `job start`.** An override replaces the whole template including env and secretRefs. `python -m app.data.migrate` is baked into the migrate Job YAML.
+- **Registry block:** `registries:` references the secretRef the owner set; verify once that `update --yaml` keeps it (owner step in the `t-iac-app-yaml` patch).
+- **OPEN, flagged against Entry 28's correction:** azure-cli#32272 reported that a `revisionSuffix` in `--yaml` is dropped from the request. Entry 28 hit this. The plan substitutes the suffix into the YAML, so `t-iac-app-yaml` / `t-iac-deploy-workflow` must verify it takes effect, or pass `--revision-suffix` alongside `--yaml` and assert the resulting revision name. Do not assume it works.
+
+### Rejected options
+- **azd:** puts Bicep under the YAML and assumes ACR (billable, not used).
+- **Bicep/ARM:** not YAML; a second language for three resources.
+- **Terraform:** HCL plus a state store that costs money or needs hosting.
+- **Kubernetes manifests:** ACA exposes no Kubernetes API.
+- **Keep `az rest` PATCH (Entry 28):** Entry 28 rejected `--yaml` on convention ("az CLI blocks in the README, no YAML") and on an unverified merge depth. The owner overruled the convention: a reviewable, approval-gated workflow beats README command blocks. Entry 28's finding that `--yaml` does not wipe secrets stands and is consistent with the "omit `secrets:`" rule above. Its merge-depth doubt is handled by keeping the spec complete and by the owner's dry diff against `az containerapp show -o yaml`.
+- **Public GHCR package or ACR:** public leaks nothing secret but was not the owner's choice for now; ACR is billable. Reopen if the PAT rotation proves a burden: making the package public removes the credential entirely.
+- **Key Vault for the PAT:** billable; not used.
+
+### Cost and invariants
+Free tier is shared by the app and Jobs (180k vCPU-s, 360k GiB-s, 2M requests a month). Log Analytics is billable past its free ingestion; the owner confirms on the budget alert. Actions minutes are free for a public repo. All architecture invariants hold: one image (Jobs reuse it), Postgres and S3-compatible storage remain the only synchronous dependencies, no new sync dependency, `data/` and `storage/` untouched. `docs/architecture-diagram.md` needs no change on invariants, but any "CI never deploys" wording needs updating (flagged in the task report).
+
+### Stays manual
+Neon/R2/Graph sign-up and app registration; Graph refresh-token consent, re-mint and `job secret set`; entering initial secret values in ACA; the GHCR PAT (creation, setting, rotation); the one-time OIDC identity and the `production` environment; approving each deploy; `grant_leader` / `reset_account` in the owner's shell (their output and input would land in logs); real-device and iOS cookie tests; the second-network XFF check (`t-am-verify-aca-xff`); handover TODOs.
+
+### Owner setup (one-time; placeholders only, never paste real values into the repo)
+Needs Owner or User Access Administrator on the resource group. Run in the owner's shell.
+
+```bash
+# 1. Managed identity + GitHub OIDC federated credential + RG-scoped Contributor
+az identity create -g <rg> -n <identity-name>
+CLIENT_ID=$(az identity show -g <rg> -n <identity-name> --query clientId -o tsv)
+PRINCIPAL_ID=$(az identity show -g <rg> -n <identity-name> --query principalId -o tsv)
+az identity federated-credential create -g <rg> --identity-name <identity-name> \
+  --name github-production \
+  --issuer https://token.actions.githubusercontent.com \
+  --subject "repo:<owner>/<repo>:environment:production" \
+  --audiences api://AzureADTokenExchange
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal --role Contributor \
+  --scope /subscriptions/<subscription-id>/resourceGroups/<rg>
+az account show --query tenantId -o tsv   # tenant id; the three IDs are not secrets
+
+# 2. GitHub production environment: owner as required reviewer, three variables
+#    (Settings > Environments > New environment "production" > Required reviewers: <owner>)
+gh variable set AZURE_CLIENT_ID       --env production --body "$CLIENT_ID"
+gh variable set AZURE_TENANT_ID       --env production --body "<tenant-id>"
+gh variable set AZURE_SUBSCRIPTION_ID --env production --body "<subscription-id>"
+
+# 3. Private-GHCR pull credential: classic PAT, read:packages only, entered without echo
+read -rs GHCR_PAT
+az containerapp registry set -g <rg> -n <app-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+az containerapp job registry set -g <rg> -n <migrate-job-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+az containerapp job registry set -g <rg> -n <sync-job-name> \
+  --server ghcr.io --username <github-user> --password "$GHCR_PAT"
+unset GHCR_PAT
+```
+
+Record the PAT's expiry date in the handover. The `passwordSecretRef` name ACA generates must match what the YAML files reference (check with `az containerapp show -g <rg> -n <app-name> --query properties.configuration.registries`).
+
+### What follows
+Milestone `m6-iac-deploy` in `progress.json` (13 tasks), details in `docs/progress-notes.md` per task ID. Tasks 2 to 8 of the plan are scoped there; `t-iac-first-deploy` supersedes `t-owner-cutover` for future deploys. Wording that still says CI never deploys is owned by `t-iac-deploy-workflow` (`ci.yml` header) and `t-iac-runbook-skill` (deploy `SKILL.md`, runbook).

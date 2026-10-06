@@ -3198,3 +3198,111 @@ ORDINARY DEBT (dev + QA on t-am-queue-classification). (1) Retry-After isn't bou
 ## t-am-queue-userid-gaps
 
 ORDINARY DEBT (dev + QA on t-am-queue-userid). (1) `useMe()` clears `btj.me` on a 401 without broadcasting or a queue emit, so QueueNotice keeps listing the user's own entries as waiting until the next emit (sending is still correctly blocked). (2) The queue has no bike kind; v2 bike create/patch aren't routed through it (no caller queues bikes today).
+
+## t-iac-decision-entry-32
+
+Goal: Entry 32 records the ACA-YAML + Actions-OIDC design and the owner's reversal of "CI never deploys" (2026-10-06).
+Blockers: none.
+Scope: docs/decision-log.md (index row + entry) only. Flag, don't edit, CLAUDE.md and ci.yml "never deploys" wording (t-iac-deploy-workflow and the orchestrator own those).
+AC: Entry states decision, rejected options (azd, Bicep/ARM, Terraform, k8s) with reasons, the guardrails (workflow_dispatch only, production environment + required reviewer, concurrency), the YAML caveats (never `secrets:`, fresh `rel-<sha12>` suffix, Jobs updated with --image only, no --command override on job start), the private-GHCR PAT decision (set in ACA only, expiry recorded, owner rotates), the cost note, and that the architecture invariants still hold. Index row added.
+Validation: grep -n "Entry 32" docs/decision-log.md shows the index row and the heading; the heading numbering is contiguous with Entry 31.
+
+**DONE.** Entry 32 and index row written; owner setup commands included. Flagged (not edited): `.claude/skills/deploy/SKILL.md:19` and `.github/workflows/ci.yml:3` say CI never deploys.
+
+## t-iac-app-yaml
+
+Goal: committed ACA app spec for `az containerapp update --yaml`.
+Blockers: Entry 32. Approval: owner-approved infra/ file (plan, decision 2).
+Scope: infra/azure/app.yaml only.
+AC: no `secrets:` key; env entries use `secretRef` only, names match .env.example (kebab-case secret names); registries block uses passwordSecretRef naming the owner-set secret, no value; probes, ingress (external, https-only), scale min 0 max 1, `activeRevisionsMode: Multiple`; image and revisionSuffix are explicit placeholders (`${IMAGE}`, `${REVISION_SUFFIX}`) for the workflow to substitute; no GRAPH_* anywhere.
+Validation: [V-common]; `! grep -n GRAPH_ infra/azure/app.yaml`. Owner step, in the PR description: diff against `az containerapp show -o yaml`, verify that `update --yaml` keeps the registry credential.
+
+[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github`. If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
+
+## t-iac-migrate-job-yaml
+
+Goal: manual-trigger Job spec that runs migrations on the same image.
+Blockers: t-iac-app-yaml.
+Scope: infra/azure/migrate-job.yaml only.
+AC: triggerType Manual; command `python -m app.data.migrate` baked into the container; same secretRefs and registry reference as app.yaml; no `secrets:`; image placeholder.
+Validation: [V-common]; grep -n "app.data.migrate" infra/azure/migrate-job.yaml.
+
+## t-iac-sync-job-yaml
+
+Goal: create-time-only spec for the OneDrive sync Job.
+Blockers: t-iac-app-yaml. Approval: owner-approved (plan, decision 2). Touches no token handling code.
+Scope: infra/azure/sync-job.yaml only; header comment says "create-only: later updates use `job update --image`".
+AC: GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_REFRESH_TOKEN appear as secretRef names only; plain GRAPH_ONEDRIVE_FOLDER placeholder; no `secrets:`; schedule matches the README's existing Job.
+Validation: [V-common]; `git diff --stat` shows no change to backend/app/storage/onedrive_sync.py.
+
+## t-iac-owner-identity
+
+Goal: Azure identity the workflow signs in as, with minimum scope.
+Blockers: Entry 32. Needs Owner or User Access Administrator.
+Scope: Azure only; no repo change; commands are in the Entry 32 "Owner setup" subsection.
+AC: user-assigned managed identity exists; federated credential subject is exactly `repo:<owner>/<repo>:environment:production`; role Contributor scoped to the app's resource group only (not the subscription); owner pastes the three IDs (not secrets) into the tracker note.
+Validation (owner): `az identity federated-credential list` shows the subject; `az role assignment list --assignee <client-id> -o table` shows one Contributor row on the RG scope.
+
+## t-iac-owner-github-env
+
+Goal: gate every deploy behind the owner's approval.
+Blockers: t-iac-owner-identity.
+Scope: GitHub repo settings only.
+AC: environment `production` has the owner as required reviewer; variables (not secrets) AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID are set; no repository-level Azure secrets exist.
+Validation (owner): `gh api repos/<owner>/<repo>/environments/production` shows the reviewer rule; `.../environments/production/variables` lists three names.
+
+## t-iac-owner-ghcr-pat
+
+Goal: ACA can pull the private image.
+Blockers: Entry 32. Credential handling: owner only.
+Scope: ACA registry settings of the app, migrate Job and sync Job. Not GitHub, not YAML.
+AC: classic PAT with `read:packages` only; set via `az containerapp registry set` and `az containerapp job registry set` (or the portal), entered without echo; expiry date recorded in the handover; `passwordSecretRef` name matches what the YAML files reference.
+Validation (owner): `az containerapp show --query properties.configuration.registries` shows server and secret name, no password.
+
+## t-iac-smoke-script
+
+Goal: reusable post-deploy checks, runnable by the workflow and by hand.
+Blockers: Entry 32.
+Scope: infra/azure/smoke.sh only (arg: base URL; no secrets read).
+AC: asserts /api/health 200; / returns the SPA (HTML); http:// does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403 (Host passthrough); optional `--xff-burst` flag sends 121 requests from one network and expects exactly one 429; non-zero exit on any failure.
+Validation: `bash -n infra/azure/smoke.sh`; `shellcheck infra/azure/smoke.sh` if installed; `bash infra/azure/smoke.sh` with no args exits non-zero with usage. The live run is an owner step (t-iac-first-deploy).
+
+## t-iac-deploy-workflow
+
+Goal: approval-gated deploy by workflow_dispatch.
+Blockers: the three YAMLs and smoke script. Approval: workflow config owner-approved (plan, decision 1).
+Scope: .github/workflows/deploy.yml; .github/workflows/ci.yml header comment only (rewrite the "never deploys" scope text to point to deploy.yml; no job changes).
+AC: trigger is workflow_dispatch only, input `sha`; `environment: production`; `concurrency: deploy`; `permissions: id-token: write, contents: read`; steps follow the plan: verify CI green and GHCR tag, azure/login via vars, record current revision and pin traffic, migrate Job start with --image and poll Succeeded, `update --yaml` with fresh `rel-<sha12>` suffix, poll Healthy and shift traffic, sync `job update --image` and assert images equal, run smoke.sh, write step summary with new and previous revision. No `secrets:` use beyond GITHUB_TOKEN; no secret values.
+Validation: `actionlint .github/workflows/deploy.yml .github/workflows/ci.yml` if installed; [V-common]; `grep -n "workflow_dispatch" .github/workflows/deploy.yml` and `! grep -nE '^\s*(push|pull_request|schedule):' .github/workflows/deploy.yml`.
+
+## t-iac-rollback-workflows
+
+Goal: gated rollback and revision cleanup.
+Blockers: t-iac-deploy-workflow.
+Scope: .github/workflows/rollback.yml, .github/workflows/deactivate-revisions.yml.
+AC: same trigger, environment, concurrency and OIDC rules as deploy.yml; rollback takes a `revision` input, verifies it exists, shifts 100% traffic, runs smoke.sh, and warns (annotation) when the target predates Entry 29 (security-degrading, runbook §7a); deactivate refuses to deactivate the active or the rollback-target revision.
+Validation: actionlint if installed; [V-common]; the grep for no push/pull_request triggers as above.
+
+## t-iac-runbook-skill
+
+Goal: docs match reality.
+Blockers: both workflow tasks.
+Scope: docs/deploy-cutover-runbook.md §6 and §8, with §7/§7a cross-links; .claude/skills/deploy/SKILL.md (orchestrator writes it).
+AC: §6 describes dispatching deploy.yml and approving it; manual steps kept only for the fallback and the owner-only list (secret entry, grant_leader/reset_account, real-device tests); the SKILL "never deploys" and "owner runs migrations" text is replaced; old `az` command blocks are moved under "manual fallback".
+Validation: `! grep -n "never deploys" docs/deploy-cutover-runbook.md .claude/skills/deploy/SKILL.md`; grep -n "deploy.yml" on both files.
+
+## t-iac-first-deploy
+
+Goal: prove the pipeline end to end.
+Blockers: all setup and workflow tasks. NEEDS THE USER.
+Scope: GitHub Actions UI and the live app.
+AC: owner dispatches deploy with a green main SHA and approves; run is green; summary names new and previous revisions; app and Job images equal; owner runs the second-network XFF check and records the result against t-am-verify-aca-xff.
+Validation (owner): the run URL is recorded in the tracker; `az containerapp revision list` shows the new revision with 100% traffic.
+
+## t-iac-retire-manual
+
+Goal: remove superseded manual paths.
+Blockers: t-iac-first-deploy.
+Scope: the az rest probe script in infra/azure/ and the superseded create commands in infra/azure/README.md (the README's probe section runs from about line 182 to 320; devops locates the exact range).
+AC: probe script deleted; README keeps one-time bootstrap (environment creation, secret entry) and points to the YAML and workflows for everything else; no dangling links.
+Validation: `grep -rn "<probe-script-name>" . --include=*.md --include=*.yml` returns nothing; [V-common].
