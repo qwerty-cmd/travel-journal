@@ -114,12 +114,18 @@ jobs:
       # and the MinIO image needs `server /data`. moto is pinned so a new
       # release cannot change CI behaviour silently. Note moto does not verify
       # SigV4 signatures; test_presign_public_endpoint.py checks them itself.
+      # The bucket is created here, like minio-init does locally: with
+      # S3_REGION=auto, boto3's create_bucket (the tests' fallback) sends no
+      # LocationConstraint and moto refuses it as IllegalLocationConstraint,
+      # so every storage test would fail in setup. A plain PUT has no region.
       - name: Start S3 stub (moto)
         run: |
           nohup uvx --from 'moto[server]==5.2.3' moto_server -H 127.0.0.1 -p 9000 > "$RUNNER_TEMP/moto.log" 2>&1 &
           for _ in $(seq 1 60); do
             if curl -s -o /dev/null http://127.0.0.1:9000/; then
               echo "moto is up"
+              curl -sf -X PUT "http://127.0.0.1:9000/$S3_BUCKET_NAME" -o /dev/null
+              echo "bucket $S3_BUCKET_NAME created"
               exit 0
             fi
             sleep 1
