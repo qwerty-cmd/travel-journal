@@ -165,9 +165,7 @@ describe("AC3: thumbnail grid", () => {
     imgs.forEach((img, i) => {
       expect(img.getAttribute("src")).toBe(PHOTOS[i].url);
       expect(img.getAttribute("loading")).toBe("lazy");
-      expect(img.style.objectFit).toBe("cover");
-      expect(img.style.width).toBeTruthy();
-      expect(img.style.width).toBe(img.style.height);
+      expect(img.className).toBe("legacy__thumb-img"); // square + object-fit cover live in t.$slug.css
     });
     expect(photoRequests()).toEqual([`/api/trips/abc/stops/${GPS.id}/photos`]);
   });

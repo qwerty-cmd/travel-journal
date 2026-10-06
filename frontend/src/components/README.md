@@ -4,7 +4,6 @@ Shared UI used by the routes:
 
 - `TripMap.tsx`: Leaflet map of pins and trail; also the add-stop location picker.
 - `Timeline.tsx`: the chronological stop list on the trip home.
-- `DisplayNamePrompt.tsx`: the rider's one-time "Your name" form.
 - Auth-screen pieces (DESIGN.md §5, used by `/signin`, `/signup`, `/account`):
   `Button`, `TextField`, `PasswordField`, `StatusNotice`, `Dialog`,
   `RecoveryCodeBlock`, `RecoveryCodeStep` and the `AuthPage` frame, each with
