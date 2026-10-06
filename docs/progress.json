@@ -35,22 +35,22 @@
     { "id": "s-deploy-cutover", "milestoneId": "m4-polish-deploy", "title": "Azure Container Apps production cutover", "status": "in_progress" },
     { "id": "s-handover-docs", "milestoneId": "m4-polish-deploy", "title": "Handover documentation", "status": "in_progress" },
 
-    { "id": "s-am-contract", "milestoneId": "m5-accounts-membership", "title": "Accounts & membership contract, Entry 29 record, architecture diagram, contract models", "status": "in_progress" },
-    { "id": "s-am-schema", "milestoneId": "m5-accounts-membership", "title": "Migration 0003 — users, sessions, memberships, join requests, trip visibility", "status": "not_started" },
-    { "id": "s-am-identity", "milestoneId": "m5-accounts-membership", "title": "Local accounts — argon2id passwords, cookie sessions, CSRF, auth endpoints, lockout", "status": "not_started" },
-    { "id": "s-am-abuse-controls", "milestoneId": "m5-accounts-membership", "title": "Abuse controls — in-process rate limits keyed on the right-most XFF hop", "status": "not_started" },
-    { "id": "s-am-write-gate", "milestoneId": "m5-accounts-membership", "title": "One membership write gate — legacy slug routes as locators, v2 rider writes", "status": "not_started" },
-    { "id": "s-am-public-reads", "milestoneId": "m5-accounts-membership", "title": "Public trips — v2 reads, public delay, 404-for-private, server-side EXIF strip", "status": "not_started" },
-    { "id": "s-am-trip-leadership", "milestoneId": "m5-accounts-membership", "title": "Trip creation and peer leadership", "status": "not_started" },
-    { "id": "s-am-join-requests", "milestoneId": "m5-accounts-membership", "title": "Join requests, decisions, members and revocation", "status": "not_started" },
-    { "id": "s-am-legacy-transition", "milestoneId": "m5-accounts-membership", "title": "Legacy transition — rider-slug claim, operator CLIs, runbook, legacy removal", "status": "not_started" },
-    { "id": "s-am-frontend-foundation", "milestoneId": "m5-accounts-membership", "title": "Frontend design system and styling foundation", "status": "not_started" },
-    { "id": "s-am-frontend-auth", "milestoneId": "m5-accounts-membership", "title": "Sign-in, sign-up and account screens", "status": "not_started" },
-    { "id": "s-am-frontend-public", "milestoneId": "m5-accounts-membership", "title": "Discover and public trip detail on v2", "status": "not_started" },
-    { "id": "s-am-frontend-membership", "milestoneId": "m5-accounts-membership", "title": "Create trip, join flow, leader review and members", "status": "not_started" },
-    { "id": "s-am-queue-accounts", "milestoneId": "m5-accounts-membership", "title": "Offline queue under accounts — 401 pause, 429 Retry-After, userId hold, save blob", "status": "not_started" },
-    { "id": "s-am-frontend-rider", "milestoneId": "m5-accounts-membership", "title": "Rider home and add-stop on v2, restyled", "status": "not_started" },
-    { "id": "s-am-user-docs", "milestoneId": "m5-accounts-membership", "title": "User guide rewrite for accounts and public trips", "status": "not_started" }
+    { "id": "s-am-contract", "milestoneId": "m5-accounts-membership", "title": "Accounts & membership contract, Entry 29 record, architecture diagram, contract models", "status": "done" },
+    { "id": "s-am-schema", "milestoneId": "m5-accounts-membership", "title": "Migration 0003 — users, sessions, memberships, join requests, trip visibility", "status": "done" },
+    { "id": "s-am-identity", "milestoneId": "m5-accounts-membership", "title": "Local accounts — argon2id passwords, cookie sessions, CSRF, auth endpoints, lockout", "status": "done" },
+    { "id": "s-am-abuse-controls", "milestoneId": "m5-accounts-membership", "title": "Abuse controls — in-process rate limits keyed on the right-most XFF hop", "status": "done" },
+    { "id": "s-am-write-gate", "milestoneId": "m5-accounts-membership", "title": "One membership write gate — legacy slug routes as locators, v2 rider writes", "status": "done" },
+    { "id": "s-am-public-reads", "milestoneId": "m5-accounts-membership", "title": "Public trips — v2 reads, public delay, 404-for-private, server-side EXIF strip", "status": "done" },
+    { "id": "s-am-trip-leadership", "milestoneId": "m5-accounts-membership", "title": "Trip creation and peer leadership", "status": "done" },
+    { "id": "s-am-join-requests", "milestoneId": "m5-accounts-membership", "title": "Join requests, decisions, members and revocation", "status": "done" },
+    { "id": "s-am-legacy-transition", "milestoneId": "m5-accounts-membership", "title": "Legacy transition — rider-slug claim, operator CLIs, runbook, legacy removal", "status": "done" },
+    { "id": "s-am-frontend-foundation", "milestoneId": "m5-accounts-membership", "title": "Frontend design system and styling foundation", "status": "done" },
+    { "id": "s-am-frontend-auth", "milestoneId": "m5-accounts-membership", "title": "Sign-in, sign-up and account screens", "status": "done" },
+    { "id": "s-am-frontend-public", "milestoneId": "m5-accounts-membership", "title": "Discover and public trip detail on v2", "status": "done" },
+    { "id": "s-am-frontend-membership", "milestoneId": "m5-accounts-membership", "title": "Create trip, join flow, leader review and members", "status": "done" },
+    { "id": "s-am-queue-accounts", "milestoneId": "m5-accounts-membership", "title": "Offline queue under accounts — 401 pause, 429 Retry-After, userId hold, save blob", "status": "done" },
+    { "id": "s-am-frontend-rider", "milestoneId": "m5-accounts-membership", "title": "Rider home and add-stop on v2, restyled", "status": "done" },
+    { "id": "s-am-user-docs", "milestoneId": "m5-accounts-membership", "title": "User guide rewrite for accounts and public trips", "status": "done" }
   ],
   "tasks": [
     { "id": "t-session0-scaffolding", "storyId": "s-session0-scaffolding", "title": "Session 0 output", "status": "done", "agent": "orchestrator", "blockers": [] },
@@ -301,5 +301,5 @@
     { "id": "t-am-fe-join-copy", "storyId": "s-am-frontend-public", "title": "Discover empty-state copy says \"tap Request to join\" but the trip button reads \"Ask to join this trip\" (routes/index.tsx) — ORDINARY DEBT", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-09-30T23:00:00Z"
+  "lastUpdated": "2026-10-06T14:00:00Z"
 }
