@@ -14,6 +14,11 @@ NULL, cancel by each identity) are the access matrix's section 16 in
 
 The cooldown clock is the route module's ``_utcnow``, monkeypatched; the rate
 limit clock is the registry's, frozen as in ``test_ratelimit.py``.
+
+Sections 9-14 are the leader's side (t-am-join-leader), written from the
+contract's leader-route rows and the "Trip join-requests (leader)", "Decision"
+and "Unblock" notes: Obligation 7's leader half, approve, decisions, races,
+the leader list and CSRF. Their gate cells are the access matrix's section 17.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from conftest import (
     SignedInAccount,
     create_signed_in_account,
     delete_accounts,
+    grant_membership,
     make_async_client,
 )
 from httpx import AsyncClient, Response
@@ -42,6 +48,7 @@ from app.api.routes.v2 import join_requests as join_routes
 from app.core import ratelimit
 from app.data import tables
 from app.data.db import get_session
+from app.data.repositories import memberships as memberships_repo
 
 MY_JOIN_REQUEST_KEYS = {"id", "tripId", "tripName", "state", "message", "createdAt"}
 CSRF_MESSAGE = "This request came from another site and was blocked."
@@ -180,14 +187,17 @@ class World:
         decided_at: datetime | None = None,
         created_at: datetime | None = None,
         message: str | None = None,
+        request_id: str | None = None,
+        via: str = "direct",
     ) -> str:
-        request_id = str(uuid4())
+        request_id = request_id or str(uuid4())
         values: dict[str, Any] = {
             "id": request_id,
             "trip_id": trip_id,
             "user_id": user_id,
             "state": state,
             "message": message,
+            "via": via,
             "decided_at": None if state == "pending" else (decided_at or T0),
         }
         if created_at is not None:
@@ -817,3 +827,621 @@ async def test_a_cross_site_create_or_cancel_is_403_and_writes_nothing(
     assert cancelled.status_code == 403, cancelled.text
     assert cancelled.json()["error"]["message"] == CSRF_MESSAGE
     assert await world.rows(trip_id=trip_id) == before
+
+
+# ==========================================================================
+# The leader's side (t-am-join-leader)
+# ==========================================================================
+
+TRIP_JOIN_REQUEST_KEYS = {"id", "requester", "state", "via", "message", "createdAt"}
+PERSON_KEYS = {"userId", "displayName"}
+ACTION_STATE = {"approve": "approved", "reject": "rejected", "reject_and_block": "blocked"}
+
+
+async def leader_of(world: World, trip_id: str, name: str = "Leader") -> SignedInAccount:
+    account = await world.account(name)
+    await grant_membership(world.engine, trip_id, account.user_id, role="leader")
+    return account
+
+
+async def slugged_trip(world: World) -> tuple[str, str]:
+    """A public trip that also has legacy slugs; returns ``(trip_id, rider_slug)``."""
+    trip_id = await world.trip()
+    rider_slug = f"r{secrets.token_hex(12)}"
+    async with world.engine.begin() as conn:
+        await conn.execute(
+            tables.trips.update()
+            .where(tables.trips.c.id == trip_id)
+            .values(rider_slug=rider_slug, viewer_slug=f"v{secrets.token_hex(12)}")
+        )
+    return trip_id, rider_slug
+
+
+def decision_path(trip_id: str, request_id: str) -> str:
+    return f"/api/v2/trips/{trip_id}/join-requests/{request_id}/decision"
+
+
+def unblock_path(trip_id: str, request_id: str) -> str:
+    return f"/api/v2/trips/{trip_id}/join-requests/{request_id}/unblock"
+
+
+async def decide(
+    client: AsyncClient,
+    trip_id: str,
+    request_id: str,
+    action: str,
+    who: SignedInAccount,
+    headers: dict[str, str] | None = None,
+) -> Response:
+    return await client.post(
+        decision_path(trip_id, request_id),
+        json={"action": action},
+        headers={**who.headers, **(headers or {})},
+    )
+
+
+async def unblock(
+    client: AsyncClient,
+    trip_id: str,
+    request_id: str,
+    who: SignedInAccount,
+    headers: dict[str, str] | None = None,
+) -> Response:
+    return await client.post(
+        unblock_path(trip_id, request_id), headers={**who.headers, **(headers or {})}
+    )
+
+
+async def leader_list(
+    client: AsyncClient, trip_id: str, who: SignedInAccount, state: str | None = None
+) -> Response:
+    params = {} if state is None else {"state": state}
+    return await client.get(create_path(trip_id), params=params, headers=who.headers)
+
+
+async def request_row(world: World, request_id: str) -> Any:
+    async with world.engine.connect() as conn:
+        return (
+            await conn.execute(
+                select(tables.join_requests).where(tables.join_requests.c.id == request_id)
+            )
+        ).one()
+
+
+async def memberships(world: World, trip_id: str, user_id: str) -> list[Any]:
+    """Every ``trip_members`` row (active or revoked) for this user on this trip."""
+    async with world.engine.connect() as conn:
+        return list(
+            (
+                await conn.execute(
+                    select(tables.trip_members)
+                    .where(tables.trip_members.c.trip_id == trip_id)
+                    .where(tables.trip_members.c.user_id == user_id)
+                    .order_by(tables.trip_members.c.id)
+                )
+            ).all()
+        )
+
+
+# --------------------------------------------------------------------------
+# 9. Obligation 7, leader half: block through the endpoint, then unblock
+# --------------------------------------------------------------------------
+
+
+async def test_a_block_refuses_every_create_until_unblock_then_the_original_cooldown_holds(
+    client: AsyncClient, world: World, now: Callable[[datetime], None]
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = (await ask(client, trip_id, me)).json()["id"]
+
+    blocked = await decide(client, trip_id, request_id, "reject_and_block", leader)
+    assert blocked.status_code == 200, blocked.text
+    assert blocked.json()["state"] == "blocked"
+    decided_at = (await request_row(world, request_id)).decided_at
+    assert decided_at is not None
+
+    # Blocked: refused at any age, and nothing is written.
+    for age in (timedelta(0), timedelta(days=1), timedelta(days=8), timedelta(days=365)):
+        now(decided_at + age)
+        assert_conflict(await ask(client, trip_id, me))
+    assert [r.id for r in await world.rows(trip_id=trip_id)] == [request_id]
+
+    now(decided_at + timedelta(days=3))
+    unblocked = await unblock(client, trip_id, request_id, leader)
+    assert unblocked.status_code == 200, unblocked.text
+    assert unblocked.json()["state"] == "rejected"
+    assert set(unblocked.json()) == TRIP_JOIN_REQUEST_KEYS
+    row = await request_row(world, request_id)
+    assert (row.state, row.decided_at) == ("rejected", decided_at)
+
+    # The 7-day cooldown runs from the original decision, not from the unblock.
+    assert_conflict(await ask(client, trip_id, me))
+    now(decided_at + COOLDOWN - timedelta(seconds=1))
+    assert_conflict(await ask(client, trip_id, me))
+    assert await world.pending_count(trip_id=trip_id) == 0
+
+    now(decided_at + COOLDOWN + timedelta(seconds=1))
+    again = await ask(client, trip_id, me)
+    assert again.status_code == 201, again.text
+    assert again.json()["id"] != request_id
+    assert await world.pending_count(trip_id=trip_id) == 1
+
+
+async def test_unblocking_twice_is_409_the_second_time_and_changes_nothing(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = await world.request(trip_id, me.user_id, "blocked")
+
+    assert (await unblock(client, trip_id, request_id, leader)).status_code == 200
+    before = await request_row(world, request_id)
+
+    second = await unblock(client, trip_id, request_id, leader)
+    assert_conflict(second)
+    assert await request_row(world, request_id) == before
+
+
+@pytest.mark.parametrize("state", ["pending", "approved", "rejected", "cancelled"])
+async def test_unblocking_a_request_that_is_not_blocked_is_409(
+    client: AsyncClient, world: World, state: str
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = await world.request(trip_id, me.user_id, state)
+    before = await request_row(world, request_id)
+
+    assert_conflict(await unblock(client, trip_id, request_id, leader))
+    assert await request_row(world, request_id) == before
+
+
+# --------------------------------------------------------------------------
+# 10. Approve: a rider membership, and the requester can write
+# --------------------------------------------------------------------------
+
+
+async def test_approve_makes_the_requester_a_rider_who_can_write(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id, rider_slug = await slugged_trip(world)
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = (await ask(client, trip_id, me)).json()["id"]
+
+    # Before: a pending requester's role is `pending`, and they cannot write.
+    trip = await client.get(f"/api/v2/trips/{trip_id}", headers=me.headers)
+    assert trip.json()["viewer"]["role"] == "pending"
+    bike = {"riderName": "Kim", "make": "BMW", "model": "R80", "year": 1985}
+    refused = await client.post(
+        f"/api/trips/{rider_slug}/bikes", json={"id": str(uuid4()), **bike}, headers=me.headers
+    )
+    assert refused.status_code == 403, refused.text
+
+    approved = await decide(client, trip_id, request_id, "approve", leader)
+
+    assert approved.status_code == 200, approved.text
+    body = approved.json()
+    assert set(body) == TRIP_JOIN_REQUEST_KEYS
+    assert body["id"] == request_id
+    assert body["state"] == "approved"
+    assert body["requester"] == {"userId": me.user_id, "displayName": me.display_name}
+
+    row = await request_row(world, request_id)
+    assert row.state == "approved"
+    assert row.decided_by == leader.user_id
+    assert row.decided_at is not None
+    members = await memberships(world, trip_id, me.user_id)
+    assert [(m.role, m.revoked_at) for m in members] == [("rider", None)]
+
+    legacy = await client.post(
+        f"/api/trips/{rider_slug}/bikes", json={"id": str(uuid4()), **bike}, headers=me.headers
+    )
+    assert legacy.status_code == 201, legacy.text
+    v2 = await client.post(
+        f"/api/v2/trips/{trip_id}/bikes", json={"id": str(uuid4()), **bike}, headers=me.headers
+    )
+    assert v2.status_code == 201, v2.text
+    trip = await client.get(f"/api/v2/trips/{trip_id}", headers=me.headers)
+    assert trip.json()["viewer"]["role"] == "rider"
+
+
+async def test_approving_a_requester_who_is_already_a_member_adds_no_second_membership(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = await world.request(trip_id, me.user_id, "pending")
+    await grant_membership(world.engine, trip_id, me.user_id)
+    before = await memberships(world, trip_id, me.user_id)
+
+    response = await decide(client, trip_id, request_id, "approve", leader)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["state"] == "approved"
+    assert await memberships(world, trip_id, me.user_id) == before
+
+
+# --------------------------------------------------------------------------
+# 11. Decisions: idempotent repeat, conflicts, cancelled, other trip's id
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("action", list(ACTION_STATE))
+async def test_a_decision_sets_state_decided_by_and_decided_at_and_a_repeat_changes_nothing(
+    client: AsyncClient, world: World, action: str
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = await world.request(trip_id, me.user_id, "pending")
+
+    first = await decide(client, trip_id, request_id, action, leader)
+    assert first.status_code == 200, first.text
+    assert first.json()["state"] == ACTION_STATE[action]
+    row = await request_row(world, request_id)
+    assert (row.state, row.decided_by) == (ACTION_STATE[action], leader.user_id)
+    assert row.decided_at is not None
+    members = await memberships(world, trip_id, me.user_id)
+    assert len(members) == (1 if action == "approve" else 0)
+
+    repeat = await decide(client, trip_id, request_id, action, leader)
+
+    assert repeat.status_code == 200, repeat.text
+    assert repeat.json() == first.json()
+    assert await request_row(world, request_id) == row
+    assert await memberships(world, trip_id, me.user_id) == members
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(a, b) for a in ACTION_STATE for b in ACTION_STATE if a != b],
+)
+async def test_a_different_decision_on_a_decided_request_is_409_and_changes_nothing(
+    client: AsyncClient, world: World, first: str, second: str
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = await world.request(trip_id, me.user_id, "pending")
+    assert (await decide(client, trip_id, request_id, first, leader)).status_code == 200
+    row = await request_row(world, request_id)
+    members = await memberships(world, trip_id, me.user_id)
+
+    assert_conflict(await decide(client, trip_id, request_id, second, leader))
+    assert await request_row(world, request_id) == row
+    assert await memberships(world, trip_id, me.user_id) == members
+
+
+@pytest.mark.parametrize("action", list(ACTION_STATE))
+async def test_deciding_a_cancelled_request_is_409_and_changes_nothing(
+    client: AsyncClient, world: World, action: str
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    request_id = (await ask(client, trip_id, me)).json()["id"]
+    assert (await cancel(client, request_id, me)).status_code == 200
+    row = await request_row(world, request_id)
+
+    assert_conflict(await decide(client, trip_id, request_id, action, leader))
+    assert await request_row(world, request_id) == row
+    assert await memberships(world, trip_id, me.user_id) == []
+
+
+async def test_another_trips_request_id_is_the_same_404_as_an_unknown_id(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id, other_trip = await world.trip(), await world.trip()
+    leader = await leader_of(world, trip_id)
+    me = await world.account()
+    pending_elsewhere = await world.request(other_trip, me.user_id, "pending")
+    blocked_elsewhere = await world.request(other_trip, (await world.account()).user_id, "blocked")
+    unknown = str(uuid4())
+
+    foreign = await decide(client, trip_id, pending_elsewhere, "approve", leader)
+    missing = await decide(client, trip_id, unknown, "approve", leader)
+    assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["error"]["code"] == "NOT_FOUND"
+    assert without_date(foreign) == without_date(missing)
+
+    foreign = await unblock(client, trip_id, blocked_elsewhere, leader)
+    missing = await unblock(client, trip_id, unknown, leader)
+    assert foreign.status_code == 404, foreign.text
+    assert without_date(foreign) == without_date(missing)
+
+    assert (await request_row(world, pending_elsewhere)).state == "pending"
+    assert (await request_row(world, blocked_elsewhere)).state == "blocked"
+    assert await memberships(world, trip_id, me.user_id) == []
+    assert await memberships(world, other_trip, me.user_id) == []
+
+
+# --------------------------------------------------------------------------
+# 12. Races
+# --------------------------------------------------------------------------
+
+
+async def test_two_leaders_deciding_differently_at_once_exactly_one_wins(
+    client: AsyncClient, world: World
+) -> None:
+    for _ in range(RACE_RUNS):
+        trip_id = await world.trip()
+        approver = await leader_of(world, trip_id, "Approver")
+        blocker = await leader_of(world, trip_id, "Blocker")
+        me = await world.account()
+        request_id = await world.request(trip_id, me.user_id, "pending")
+
+        approve, block = await asyncio.gather(
+            decide(client, trip_id, request_id, "approve", approver),
+            decide(client, trip_id, request_id, "reject_and_block", blocker),
+        )
+
+        assert sorted([approve.status_code, block.status_code]) == [200, 409], (
+            approve.text,
+            block.text,
+        )
+        row = await request_row(world, request_id)
+        members = await memberships(world, trip_id, me.user_id)
+        if approve.status_code == 200:
+            assert_conflict(block)
+            assert (row.state, row.decided_by) == ("approved", approver.user_id)
+            assert [(m.role, m.revoked_at) for m in members] == [("rider", None)]
+        else:
+            assert_conflict(approve)
+            assert (row.state, row.decided_by) == ("blocked", blocker.user_id)
+            assert members == []
+
+
+async def test_approve_racing_the_requesters_cancel_leaves_a_consistent_result(
+    client: AsyncClient, world: World
+) -> None:
+    for _ in range(RACE_RUNS):
+        trip_id = await world.trip()
+        leader = await leader_of(world, trip_id)
+        me = await world.account()
+        request_id = (await ask(client, trip_id, me)).json()["id"]
+
+        approve, cancelled = await asyncio.gather(
+            decide(client, trip_id, request_id, "approve", leader),
+            cancel(client, request_id, me),
+        )
+
+        row = await request_row(world, request_id)
+        members = await memberships(world, trip_id, me.user_id)
+        if row.state == "approved":
+            assert approve.status_code == 200, approve.text
+            assert_conflict(cancelled)
+            assert [(m.role, m.revoked_at) for m in members] == [("rider", None)]
+        else:
+            assert row.state == "cancelled", row.state
+            assert cancelled.status_code == 200, cancelled.text
+            assert_conflict(approve)
+            assert members == []
+
+
+# --------------------------------------------------------------------------
+# 13. The leader list
+# --------------------------------------------------------------------------
+
+
+async def test_the_leader_list_has_exactly_the_out_keys_and_never_a_username(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    direct, legacy = await world.account("Direct Asker"), await world.account("Link Asker")
+    await world.request(trip_id, direct.user_id, "pending", message="hello")
+    await world.request(trip_id, legacy.user_id, "pending", via="legacy_rider_link")
+    async with world.engine.connect() as conn:
+        usernames = list(
+            (
+                await conn.execute(
+                    select(tables.users.c.username).where(
+                        tables.users.c.id.in_([direct.user_id, legacy.user_id, leader.user_id])
+                    )
+                )
+            ).scalars()
+        )
+
+    response = await leader_list(client, trip_id, leader)
+
+    assert response.status_code == 200, response.text
+    items = response.json()
+    assert len(items) == 2
+    for item in items:
+        assert set(item) == TRIP_JOIN_REQUEST_KEYS
+        assert set(item["requester"]) == PERSON_KEYS
+        assert item["state"] == "pending"
+    by_user = {i["requester"]["userId"]: i for i in items}
+    assert by_user[direct.user_id]["requester"]["displayName"] == "Direct Asker"
+    assert (by_user[direct.user_id]["via"], by_user[direct.user_id]["message"]) == (
+        "direct",
+        "hello",
+    )
+    assert (by_user[legacy.user_id]["via"], by_user[legacy.user_id]["message"]) == (
+        "legacy_rider_link",
+        None,
+    )
+    assert "username" not in response.text.lower()
+    for username in usernames:
+        assert username not in response.text
+
+
+async def test_the_leader_list_is_oldest_first_then_by_id(
+    client: AsyncClient, world: World
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    users = await world.bare_users(3)
+    low, high = sorted([str(uuid4()), str(uuid4())])
+    oldest = await world.request(trip_id, users[0], "pending", created_at=T0 - timedelta(days=2))
+    # Two at the same instant, inserted high id first: id breaks the tie.
+    await world.request(
+        trip_id, users[1], "pending", created_at=T0 - timedelta(days=1), request_id=high
+    )
+    await world.request(
+        trip_id, users[2], "pending", created_at=T0 - timedelta(days=1), request_id=low
+    )
+
+    response = await leader_list(client, trip_id, leader)
+
+    assert response.status_code == 200, response.text
+    assert [i["id"] for i in response.json()] == [oldest, low, high]
+
+
+async def test_the_leader_list_filters_by_state_and_trip(client: AsyncClient, world: World) -> None:
+    trip_id, other_trip = await world.trip(), await world.trip()
+    leader = await leader_of(world, trip_id)
+    users = await world.bare_users(5)
+    pending = await world.request(trip_id, users[0], "pending")
+    blocked = await world.request(trip_id, users[1], "blocked")
+    await world.request(trip_id, users[2], "approved")
+    await world.request(trip_id, users[3], "rejected")
+    await world.request(trip_id, users[4], "cancelled")
+    await world.request(other_trip, users[1], "pending")
+    await world.request(other_trip, users[2], "blocked")
+
+    default = await leader_list(client, trip_id, leader)
+    explicit = await leader_list(client, trip_id, leader, "pending")
+    blocked_list = await leader_list(client, trip_id, leader, "blocked")
+
+    assert default.status_code == 200, default.text
+    assert [i["id"] for i in default.json()] == [pending]
+    assert explicit.json() == default.json()
+    assert blocked_list.status_code == 200, blocked_list.text
+    assert [(i["id"], i["state"]) for i in blocked_list.json()] == [(blocked, "blocked")]
+
+
+@pytest.mark.parametrize("state", ["approved", "rejected", "cancelled", "BLOCKED", "all", ""])
+async def test_the_leader_list_rejects_any_other_state_with_422(
+    client: AsyncClient, world: World, state: str
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+
+    response = await leader_list(client, trip_id, leader, state)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+# --------------------------------------------------------------------------
+# 14. CSRF: decision and unblock, nothing written
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}],
+    ids=["foreign-origin", "sec-fetch-cross-site"],
+)
+async def test_a_cross_site_decision_or_unblock_is_403_and_writes_nothing(
+    client: AsyncClient, world: World, headers: dict[str, str]
+) -> None:
+    trip_id = await world.trip()
+    leader = await leader_of(world, trip_id)
+    me, other = await world.account(), await world.account("Blocked One")
+    pending = await world.request(trip_id, me.user_id, "pending")
+    blocked = await world.request(trip_id, other.user_id, "blocked")
+    before = await world.rows(trip_id=trip_id)
+
+    decided = await decide(client, trip_id, pending, "approve", leader, headers=headers)
+    assert decided.status_code == 403, decided.text
+    assert decided.json() == {"error": {"code": "FORBIDDEN", "message": CSRF_MESSAGE}}
+
+    unblocked = await unblock(client, trip_id, blocked, leader, headers=headers)
+    assert unblocked.status_code == 403, unblocked.text
+    assert unblocked.json() == {"error": {"code": "FORBIDDEN", "message": CSRF_MESSAGE}}
+
+    assert await world.rows(trip_id=trip_id) == before
+    assert await memberships(world, trip_id, me.user_id) == []
+
+
+# --------------------------------------------------------------------------
+# 15. Leadership re-checked under the trip lock
+# --------------------------------------------------------------------------
+
+NO_LONGER_A_RIDER_MESSAGE = "You're no longer a rider on this trip."
+NOT_A_LEADER_MESSAGE = "You're not a leader on this trip."
+
+
+@pytest.fixture
+def before_lock(monkeypatch: pytest.MonkeyPatch) -> Callable[[Callable[[], Any]], None]:
+    """
+    Run a callback (committed on its own connection) just before the trip-row lock.
+
+    A deterministic stand-in for a revocation or demotion landing between the
+    leader gate's membership read and the repository's ``FOR UPDATE``.
+    """
+    original = memberships_repo._lock_trip
+
+    def install(callback: Callable[[], Any]) -> None:
+        async def patched(session: AsyncSession, trip_id: str) -> None:
+            await callback()
+            await original(session, trip_id)
+
+        monkeypatch.setattr(memberships_repo, "_lock_trip", patched)
+
+    return install
+
+
+async def change_leader(world: World, trip_id: str, user_id: str, change: str) -> None:
+    values: dict[str, Any] = (
+        {"revoked_at": datetime.now(UTC)} if change == "revoke" else {"role": "rider"}
+    )
+    async with world.engine.begin() as conn:
+        await conn.execute(
+            tables.trip_members.update()
+            .where(
+                tables.trip_members.c.trip_id == trip_id,
+                tables.trip_members.c.user_id == user_id,
+                tables.trip_members.c.revoked_at.is_(None),
+            )
+            .values(**values)
+        )
+
+
+@pytest.mark.parametrize("route", ["decide", "unblock"])
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [("revoke", NO_LONGER_A_RIDER_MESSAGE), ("demote", NOT_A_LEADER_MESSAGE)],
+)
+async def test_a_leader_changed_between_gate_and_lock_gets_the_gates_403(
+    client: AsyncClient,
+    world: World,
+    before_lock: Callable[[Callable[[], Any]], None],
+    route: str,
+    change: str,
+    message: str,
+) -> None:
+    trip_id = await world.trip()
+    caller = await leader_of(world, trip_id, "Changing Leader")
+    await leader_of(world, trip_id, "Other Leader")
+    me = await world.account()
+    request_id = await world.request(
+        trip_id, me.user_id, "pending" if route == "decide" else "blocked"
+    )
+    before = await request_row(world, request_id)
+
+    async def send() -> Response:
+        if route == "decide":
+            return await decide(client, trip_id, request_id, "approve", caller)
+        return await unblock(client, trip_id, request_id, caller)
+
+    before_lock(lambda: change_leader(world, trip_id, caller.user_id, change))
+    response = await send()
+
+    # What the gate itself says on the next request, with no race.
+    before_lock(lambda: asyncio.sleep(0))
+    gate = await send()
+
+    assert gate.status_code == 403, gate.text  # sanity: the gate refuses this caller now
+    assert response.status_code == 403, response.text
+    assert response.json() == {"error": {"code": "FORBIDDEN", "message": message}}
+    assert (response.status_code, response.content) == (gate.status_code, gate.content)
+    assert await request_row(world, request_id) == before
+    assert await memberships(world, trip_id, me.user_id) == []

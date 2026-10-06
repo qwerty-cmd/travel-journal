@@ -30,6 +30,8 @@ write columns' answers, except that an active rider is ``403`` "You're not a
 leader on this trip." and only a leader gets ``200``. ``t-am-trip-leadership``
 added section 15: the members GET (the write columns' answers, on a read),
 promote and step-down (the leader columns) and leave (the write columns).
+``t-am-join-leader`` added section 17: the trip's join-request list, the
+decision and unblock (the leader columns).
 ``t-am-write-gate-legacy`` owns the
 legacy rows below; ``t-am-v2-trip-reads`` added the v2 read columns (section
 12): public read ``200`` for everyone, delayed for non-members and full for
@@ -2427,3 +2429,142 @@ async def test_v2_join_request_cancel_row(
         other = await client.post(f"/api/v2/join-requests/{uuid4()}/cancel", headers=headers)
         assert_same_404(response, other)
     assert after == before
+
+
+# --------------------------------------------------------------------------
+# 17. The leader routes on join requests (t-am-join-leader)
+# --------------------------------------------------------------------------
+
+# The trip's join-request list, the decision and unblock are leader routes: the
+# leader columns, with the list's 200 the only success that writes nothing. The
+# decision approves the cast's pending request; unblock lifts a block a fresh
+# account holds on the trip. None = the route's success (200).
+JOIN_LEADER_ROUTES = ("list_join_requests", "decide", "unblock")
+
+
+async def send_join_leader(
+    client: AsyncClient, route: str, trip_id: str, request_id: str, headers: dict[str, str]
+) -> Response:
+    """One leader join-request request against ``trip_id``, about ``request_id``."""
+    base = f"/api/v2/trips/{trip_id}/join-requests"
+    if route == "list_join_requests":
+        return await client.get(base, headers=headers)
+    if route == "decide":
+        return await client.post(
+            f"{base}/{request_id}/decision", json={"action": "approve"}, headers=headers
+        )
+    if route == "unblock":
+        return await client.post(f"{base}/{request_id}/unblock", headers=headers)
+    raise AssertionError(route)
+
+
+async def request_id_of(engine: AsyncEngine, trip_id: str, user_id: str) -> str:
+    async with engine.connect() as conn:
+        return await conn.scalar(
+            select(tables.join_requests.c.id).where(
+                tables.join_requests.c.trip_id == trip_id,
+                tables.join_requests.c.user_id == user_id,
+            )
+        )
+
+
+@pytest.mark.parametrize("route", JOIN_LEADER_ROUTES)
+@pytest.mark.parametrize("identity", IDENTITIES)
+async def test_v2_join_leader_row(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    visibility: str,
+    identity: str,
+    route: str,
+) -> None:
+    """
+    The leader-column cell for the join-request list, decision and unblock, on both visibilities.
+
+    A private trip's 404 is compared byte for byte (headers too, all but
+    ``date``) with the same request to a random trip id, and a refusal must
+    leave ``join_requests`` and ``trip_members`` unchanged.
+    """
+    blocked = await create_signed_in_account(migrated_engine, display_name="Matrix blocked")
+    try:
+        await add_join_request(migrated_engine, cast.trip.id, blocked.user_id, "blocked")
+        pending_id = await pending_request_id(migrated_engine, cast)
+        blocked_id = await request_id_of(migrated_engine, cast.trip.id, blocked.user_id)
+        request_id = blocked_id if route == "unblock" else pending_id
+        before = (
+            await request_rows(migrated_engine, cast.trip.id),
+            await member_rows(migrated_engine, cast.trip.id),
+        )
+
+        headers = cast.headers(identity)
+        response = await send_join_leader(client, route, cast.trip.id, request_id, headers)
+
+        requests_after = await request_rows(migrated_engine, cast.trip.id)
+        members_after = await member_rows(migrated_engine, cast.trip.id)
+        expected = EXPECTED_V2_LEADER[(identity, visibility)]
+        if expected is None:
+            assert response.status_code == HTTPStatus.OK, response.text
+            assert "username" not in response.text
+            pending = cast.accounts["pending"].user_id
+            if route == "list_join_requests":
+                assert [(r["id"], r["requester"]) for r in response.json()] == [
+                    (pending_id, {"userId": pending, "displayName": "Matrix pending"})
+                ]
+                assert (requests_after, members_after) == before
+            elif route == "decide":
+                assert response.json()["state"] == "approved"
+                assert requests_after == (before[0] - {(pending_id, pending, "pending", None)}) | {
+                    (pending_id, pending, "approved", None)
+                }
+                assert members_after == before[1] | {(pending, "rider", False, None)}
+            else:
+                assert response.json()["state"] == "rejected"
+                assert requests_after == (
+                    before[0] - {(blocked_id, blocked.user_id, "blocked", None)}
+                ) | {(blocked_id, blocked.user_id, "rejected", None)}
+                assert members_after == before[1]
+            return
+
+        assert_refusal(response, expected, identity)
+        if expected[0] == HTTPStatus.NOT_FOUND:
+            other = await send_join_leader(client, route, str(uuid4()), request_id, headers)
+            assert_same_404(response, other)
+        assert (requests_after, members_after) == before
+    finally:
+        await delete_accounts(migrated_engine, [blocked.user_id])
+
+
+@pytest.mark.parametrize("visibility", ["private"])
+@pytest.mark.parametrize("route", JOIN_LEADER_ROUTES)
+@pytest.mark.parametrize("identity", ["non_member", "pending"])
+async def test_a_private_trip_join_leader_request_costs_the_same_statements_as_a_nonexistent_id(
+    client: AsyncClient,
+    migrated_engine: AsyncEngine,
+    cast: Cast,
+    identity: str,
+    route: str,
+) -> None:
+    """No timing oracle on the leader join-request routes: the private 404 runs as many statements."""
+    request_id = await pending_request_id(migrated_engine, cast)
+    statements: list[str] = []
+
+    def count(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    async def run(trip_id: str) -> tuple[int, Response]:
+        statements.clear()
+        response = await send_join_leader(
+            client, route, trip_id, request_id, cast.headers(identity)
+        )
+        return len(statements), response
+
+    event.listen(migrated_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        private_count, private = await run(cast.trip.id)
+        missing_count, missing = await run(str(uuid4()))
+    finally:
+        event.remove(migrated_engine.sync_engine, "before_cursor_execute", count)
+
+    assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
+    assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
+    assert private_count == missing_count

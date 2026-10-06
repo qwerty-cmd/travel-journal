@@ -1,10 +1,11 @@
 """
-The requester's side of per-person join requests (decision-log Entry 29 §5).
+Per-person join requests, both sides (decision-log Entry 29 §5).
 
 **Context.** A signed-in user asks to ride on a trip, can withdraw the request,
 and sees where their requests stand (``docs/api-contract.md``, "Join request
-create", "Cancel", "Me / join-requests"). A leader's decision is another task
-(``t-am-join-leader``). Task ``t-am-join-requester``.
+create", "Cancel", "Me / join-requests"; task ``t-am-join-requester``). The
+trip's leaders list the requests, decide them and lift blocks ("Trip
+join-requests (leader)", "Decision", "Unblock"; task ``t-am-join-leader``).
 
 **How it works.**
 
@@ -13,16 +14,22 @@ create", "Cancel", "Me / join-requests"). A leader's decision is another task
   so a private trip the caller isn't active on is the byte-identical ``404``
   and can't be joined by id. Cancel and the list are about the caller's own
   requests, so they declare ``require_session`` only; someone else's request
-  is the same ``404`` as an unknown id.
+  is the same ``404`` as an unknown id. The leader list, decision and unblock
+  declare ``require_trip_leader``; a request id on another trip is the same
+  ``404`` as an unknown one.
 - **Rate limits**, each declared first: ``join`` on the create, ``writes`` on
-  cancel, ``public-read`` on the list and its schema-excluded HEAD sibling.
+  cancel, decision and unblock, ``public-read`` on the two lists and their
+  schema-excluded HEAD siblings.
 - **Rules under lock.** ``app/data/repositories/join_requests.py`` decides
   duplicates, blocks, cooldowns and caps under a lock on the trip row and the
   caller's user row, and returns an outcome; this module maps it to a status
   and message. The 409 messages are written for the requester (the UI shows
   them verbatim, ``docs/design/screens/join-request.md``) and carry nothing
   from any other record. A block reads as a rejection, as ``/me/join-requests``
-  reports it.
+  reports it. The leader routes re-check the caller's leadership under the
+  trip lock and answer as the gate would now (``403``); their payload is
+  ``TripJoinRequestOut``, the requester's id and display name, never a
+  username.
 - **One clock.** ``_utcnow`` is the request's time for the 7-day cooldown and
   the timestamps written; a test replaces it to move time.
 
@@ -33,18 +40,23 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Response
+from fastapi import APIRouter, Depends, Path, Query, Response
 
 from app.api.responses import PATH_PARAMETERS_422, PUBLIC_READ_429, error_responses
-from app.api.routes.v2.rider_writes import V2_WRITE_401, V2_WRITES_429
+from app.api.routes.v2.members import LEADER_403
+from app.api.routes.v2.rider_writes import V2_TRIP_404, V2_WRITE_401, V2_WRITES_429
 from app.core.errors import ApiError
 from app.core.ratelimit import limit_join, limit_public_read, limit_writes
 from app.core.security import (
+    NO_LONGER_A_RIDER_MESSAGE,
+    NOT_A_LEADER_MESSAGE,
     TripJoinRequesterContext,
+    TripWriterContext,
     require_session,
     require_trip_join_requester,
+    require_trip_leader,
 )
 from app.core.sessions import SessionUser
 from app.data.db import SessionDep
@@ -53,8 +65,19 @@ from app.data.repositories.join_requests import (
     CancelOutcome,
     CreateOutcome,
     JoinRequestRecord,
+    LeaderOutcome,
+    LeaderResult,
+    TripJoinRequestRecord,
 )
-from app.models.join_request import JoinRequestCreate, JoinRequestState, MyJoinRequestOut
+from app.models.join_request import (
+    JoinDecisionCreate,
+    JoinRequestCreate,
+    JoinRequestState,
+    JoinRequestVia,
+    MyJoinRequestOut,
+    PersonOut,
+    TripJoinRequestOut,
+)
 
 router = APIRouter(tags=["join-requests"])
 
@@ -299,3 +322,218 @@ router.add_api_route(
     dependencies=[Depends(limit_public_read)],
     include_in_schema=False,
 )
+
+
+# --------------------------------------------------------------------------
+# The leader's side: list, decide, unblock (t-am-join-leader)
+# --------------------------------------------------------------------------
+
+# Decide on a request already decided another way, or withdrawn by its requester.
+DECIDED_OTHERWISE_MESSAGE = (
+    "This request has already been decided another way, or withdrawn by the person who sent it."
+)
+# Unblock on a request that isn't blocked.
+NOT_BLOCKED_MESSAGE = "This request isn't blocked, so there's nothing to unblock."
+
+LEADER_REQUEST_404 = (
+    "No trip has this id, or the trip is private and the caller has no membership row on it "
+    "(byte-identical to a trip id that doesn't exist); **or** the trip is visible but no join "
+    "request with this id is on it -- an unknown id and another trip's request are the same "
+    "404. Nothing was changed."
+)
+
+LeaderDep = Annotated[TripWriterContext, Depends(require_trip_leader)]
+RequestIdPath = Annotated[
+    str,
+    Path(
+        alias="requestId",
+        description="The join request's id, as `TripJoinRequestOut.id` gives it. Must be a "
+        "request on this trip.",
+    ),
+]
+
+
+def _trip_out(record: TripJoinRequestRecord) -> TripJoinRequestOut:
+    """A request as the trip's leaders see it: requester id and display name, never a username."""
+    return TripJoinRequestOut(
+        id=record.id,
+        requester=PersonOut(userId=record.user_id, displayName=record.display_name),
+        state=JoinRequestState(record.state),
+        via=JoinRequestVia(record.via),
+        message=record.message,
+        createdAt=record.created_at,
+    )
+
+
+def _leader_result(result: LeaderResult, conflict_message: str) -> TripJoinRequestOut:
+    """Map a decide/unblock outcome, re-decided under the trip lock, to a response or error."""
+    if result.outcome is LeaderOutcome.NOT_FOUND:
+        raise ApiError.not_found(JOIN_REQUEST_NOT_FOUND_MESSAGE)
+    if result.outcome is LeaderOutcome.CONFLICT:
+        raise ApiError.conflict(conflict_message)
+    if result.outcome is LeaderOutcome.NOT_A_LEADER:
+        raise ApiError.forbidden(NOT_A_LEADER_MESSAGE)
+    if result.outcome is LeaderOutcome.NOT_A_MEMBER:
+        raise ApiError.forbidden(NO_LONGER_A_RIDER_MESSAGE)
+    return _trip_out(result.request)
+
+
+async def list_trip_join_requests(
+    context: LeaderDep,
+    session: SessionDep,
+    state: Annotated[
+        Literal["pending", "blocked"],
+        Query(
+            description="Which requests to list: 'pending' (the default) awaiting a decision, "
+            "or 'blocked' so a leader can unblock them. Any other value is a 422."
+        ),
+    ] = "pending",
+) -> list[TripJoinRequestOut]:
+    """The trip's join requests in ``state``, oldest first."""
+    records = await join_repo.list_for_trip(session, context.trip.id, state)
+    return [_trip_out(record) for record in records]
+
+
+router.add_api_route(
+    "/trips/{tripId}/join-requests",
+    list_trip_join_requests,
+    methods=["GET"],
+    dependencies=[Depends(limit_public_read)],
+    summary="List a trip's join requests",
+    response_description="The trip's requests in the asked-for state, oldest `createdAt` first.",
+    responses=error_responses(
+        {
+            HTTPStatus.UNAUTHORIZED: SESSION_401 + " Checked **before** the trip is looked up, "
+            "so the answer is the same for a public trip, a private trip and a trip id that "
+            "doesn't exist.",
+            HTTPStatus.FORBIDDEN: LEADER_403.removesuffix(" Nothing was changed."),
+            HTTPStatus.NOT_FOUND: V2_TRIP_404,
+            HTTPStatus.UNPROCESSABLE_ENTITY: "`state` is neither `pending` nor `blocked`.",
+            HTTPStatus.TOO_MANY_REQUESTS: PUBLIC_READ_429,
+        }
+    ),
+    description="""
+**Context.** Where a trip's leaders review who is asking to ride, and find the
+people they blocked (decision-log Entry 29).
+
+**How it works.** `limit_public_read` runs first, then `require_trip_leader`: a
+valid session (401, for every trip id alike), then the trip (404 if it doesn't
+exist, or if it is private and the caller has no membership row on it), then an
+active **leader** membership (403). Lists the trip's requests in `state`
+(`pending` by default, or `blocked`), oldest `createdAt` first. Each shows the
+requester's user id and display name, never a username, plus `message` and
+`via`. No matching requests is `200` with `[]`.
+
+**Related APIs.** `POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision`
+decides one; `POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock`
+lifts a block.
+""",
+)
+# HEAD sibling: the same handler, schema-excluded (decision-log Entry 11).
+router.add_api_route(
+    "/trips/{tripId}/join-requests",
+    list_trip_join_requests,
+    methods=["HEAD"],
+    dependencies=[Depends(limit_public_read)],
+    include_in_schema=False,
+)
+
+
+@router.post(
+    "/trips/{tripId}/join-requests/{requestId}/decision",
+    dependencies=[Depends(limit_writes)],
+    summary="Decide a join request",
+    response_description="The request after the decision.",
+    responses=error_responses(
+        {
+            HTTPStatus.UNAUTHORIZED: V2_WRITE_401,
+            HTTPStatus.FORBIDDEN: LEADER_403,
+            HTTPStatus.NOT_FOUND: LEADER_REQUEST_404,
+            HTTPStatus.CONFLICT: "The request was already decided another way, or withdrawn "
+            "by its requester. Nothing was changed; it fails the same way on retry.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: "The body failed validation: `action` is not "
+            "one of `approve`, `reject`, `reject_and_block`.",
+            HTTPStatus.TOO_MANY_REQUESTS: V2_WRITES_429,
+        }
+    ),
+    description="""
+**Context.** How a trip's leaders let someone ride, or refuse them
+(decision-log Entry 29). Bulk approve and reject is the UI looping over this.
+
+**How it works.** `limit_writes` runs first, then `require_trip_leader`: a
+valid session (401, for every trip id alike), then the trip (404 if it doesn't
+exist, or if it is private and the caller has no membership row on it), then an
+active **leader** membership (403). Then, under a lock on the trip row and then
+the request: a request not on this trip is 404. A pending request moves to
+`approved`, `rejected` or `blocked`, recording when and by whom; `approve` adds
+the requester as an active rider in the same transaction (nothing more if they
+already are one). Repeating the decision that produced the current state is a
+`200` with nothing changed; any other decision on a decided or withdrawn
+request is `409`. A rejection keeps the requester out for 7 days; a block,
+until a leader unblocks.
+
+**Related APIs.** `GET /api/v2/trips/{tripId}/join-requests` lists the requests;
+`POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock` lifts a block.
+""",
+)
+async def decide_join_request(
+    context: LeaderDep,
+    session: SessionDep,
+    request_id: RequestIdPath,
+    body: JoinDecisionCreate,
+) -> TripJoinRequestOut:
+    """Approve, reject or block a request on the trip; idempotent for the same decision."""
+    result = await join_repo.decide(
+        session,
+        trip_id=context.trip.id,
+        request_id=request_id,
+        caller_id=context.user.user_id,
+        action=body.action.value,
+        now=_utcnow(),
+    )
+    return _leader_result(result, DECIDED_OTHERWISE_MESSAGE)
+
+
+@router.post(
+    "/trips/{tripId}/join-requests/{requestId}/unblock",
+    dependencies=[Depends(limit_writes)],
+    summary="Unblock a join request",
+    response_description="The request after the change, now `rejected`.",
+    responses=error_responses(
+        {
+            HTTPStatus.UNAUTHORIZED: V2_WRITE_401,
+            HTTPStatus.FORBIDDEN: LEADER_403,
+            HTTPStatus.NOT_FOUND: LEADER_REQUEST_404,
+            HTTPStatus.CONFLICT: "The request isn't blocked. Nothing was changed; it fails "
+            "the same way on retry.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: V2_WRITES_429,
+        }
+    ),
+    description="""
+**Context.** How a trip's leaders lift a block, so the person may ask to join
+again (decision-log Entry 29).
+
+**How it works.** `limit_writes` runs first, then `require_trip_leader` (401,
+then 404, then 403, as on the decision). Then, under a lock on the trip row and
+then the request: a request not on this trip is 404; one that isn't `blocked`
+is 409. A blocked request becomes `rejected`, keeping the original decision
+time, so the 7-day wait from that decision still applies before the person may
+ask again.
+
+**Related APIs.** `GET /api/v2/trips/{tripId}/join-requests?state=blocked`
+lists the blocked requests;
+`POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision` blocks one.
+""",
+)
+async def unblock_join_request(
+    context: LeaderDep, session: SessionDep, request_id: RequestIdPath
+) -> TripJoinRequestOut:
+    """Turn a blocked request on the trip into a rejected one."""
+    result = await join_repo.unblock(
+        session,
+        trip_id=context.trip.id,
+        request_id=request_id,
+        caller_id=context.user.user_id,
+    )
+    return _leader_result(result, NOT_BLOCKED_MESSAGE)

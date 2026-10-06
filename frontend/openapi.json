@@ -3025,6 +3025,118 @@
             }
           }
         }
+      },
+      "get": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "List a trip's join requests",
+        "description": "**Context.** Where a trip's leaders review who is asking to ride, and find the\npeople they blocked (decision-log Entry 29).\n\n**How it works.** `limit_public_read` runs first, then `require_trip_leader`: a\nvalid session (401, for every trip id alike), then the trip (404 if it doesn't\nexist, or if it is private and the caller has no membership row on it), then an\nactive **leader** membership (403). Lists the trip's requests in `state`\n(`pending` by default, or `blocked`), oldest `createdAt` first. Each shows the\nrequester's user id and display name, never a username, plus `message` and\n`via`. No matching requests is `200` with `[]`.\n\n**Related APIs.** `POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision`\ndecides one; `POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock`\nlifts a block.",
+        "operationId": "list_trip_join_requests_api_v2_trips__tripId__join_requests_get",
+        "parameters": [
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "pending",
+                "blocked"
+              ],
+              "type": "string",
+              "description": "Which requests to list: 'pending' (the default) awaiting a decision, or 'blocked' so a leader can unblock them. Any other value is a 422.",
+              "default": "pending",
+              "title": "State"
+            },
+            "description": "Which requests to list: 'pending' (the default) awaiting a decision, or 'blocked' so a leader can unblock them. Any other value is a 422."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The trip's requests in the asked-for state, oldest `createdAt` first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TripJoinRequestOut"
+                  },
+                  "title": "Response List Trip Join Requests Api V2 Trips  Tripid  Join Requests Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, **or** the trip is private and the caller has no membership row on it. The two are byte-identical, as on the v2 reads, so a trip id can't be used to learn whether a private trip exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`state` is neither `pending` nor `blocked`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `public-read` limit: 120 requests a minute per client address. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v2/join-requests/{requestId}/cancel": {
@@ -3162,6 +3274,246 @@
                 "schema": {
                   "type": "integer",
                   "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/join-requests/{requestId}/decision": {
+      "post": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "Decide a join request",
+        "description": "**Context.** How a trip's leaders let someone ride, or refuse them\n(decision-log Entry 29). Bulk approve and reject is the UI looping over this.\n\n**How it works.** `limit_writes` runs first, then `require_trip_leader`: a\nvalid session (401, for every trip id alike), then the trip (404 if it doesn't\nexist, or if it is private and the caller has no membership row on it), then an\nactive **leader** membership (403). Then, under a lock on the trip row and then\nthe request: a request not on this trip is 404. A pending request moves to\n`approved`, `rejected` or `blocked`, recording when and by whom; `approve` adds\nthe requester as an active rider in the same transaction (nothing more if they\nalready are one). Repeating the decision that produced the current state is a\n`200` with nothing changed; any other decision on a decided or withdrawn\nrequest is `409`. A rejection keeps the requester out for 7 days; a block,\nuntil a leader unblocks.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/join-requests` lists the requests;\n`POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock` lifts a block.",
+        "operationId": "decide_join_request_api_v2_trips__tripId__join_requests__requestId__decision_post",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The join request's id, as `TripJoinRequestOut.id` gives it. Must be a request on this trip.",
+              "title": "Requestid"
+            },
+            "description": "The join request's id, as `TripJoinRequestOut.id` gives it. Must be a request on this trip."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JoinDecisionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The request after the decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripJoinRequestOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, or the trip is private and the caller has no membership row on it (byte-identical to a trip id that doesn't exist); **or** the trip is visible but no join request with this id is on it -- an unknown id and another trip's request are the same 404. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request was already decided another way, or withdrawn by its requester. Nothing was changed; it fails the same way on retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The body failed validation: `action` is not one of `approve`, `reject`, `reject_and_block`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/trips/{tripId}/join-requests/{requestId}/unblock": {
+      "post": {
+        "tags": [
+          "join-requests"
+        ],
+        "summary": "Unblock a join request",
+        "description": "**Context.** How a trip's leaders lift a block, so the person may ask to join\nagain (decision-log Entry 29).\n\n**How it works.** `limit_writes` runs first, then `require_trip_leader` (401,\nthen 404, then 403, as on the decision). Then, under a lock on the trip row and\nthen the request: a request not on this trip is 404; one that isn't `blocked`\nis 409. A blocked request becomes `rejected`, keeping the original decision\ntime, so the 7-day wait from that decision still applies before the person may\nask again.\n\n**Related APIs.** `GET /api/v2/trips/{tripId}/join-requests?state=blocked`\nlists the blocked requests;\n`POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision` blocks one.",
+        "operationId": "unblock_join_request_api_v2_trips__tripId__join_requests__requestId__unblock_post",
+        "parameters": [
+          {
+            "name": "requestId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The join request's id, as `TripJoinRequestOut.id` gives it. Must be a request on this trip.",
+              "title": "Requestid"
+            },
+            "description": "The join request's id, as `TripJoinRequestOut.id` gives it. Must be a request on this trip."
+          },
+          {
+            "name": "tripId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403.",
+              "title": "Tripid"
+            },
+            "description": "The trip's id. Not a secret: it only names the trip. Leader actions need a signed-in account with an active leader membership on it. No session is a 401 for every trip id, existing or not; a private trip the caller has no membership row on is a 404 identical to a trip id that doesn't exist; anyone else who is not an active leader -- a non-member of a public trip, a revoked member, an active rider -- is a 403."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request after the change, now `rejected`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripJoinRequestOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. Checked **before** the trip is looked up, so the answer is the same for a public trip, a private trip and a trip id that doesn't exist. If a session cookie was sent it is cleared (`Max-Age=0`). The offline queue pauses on this and resumes after sign-in. Nothing was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Signed in, and the trip is visible to the caller (public, or they have a membership row on it), but they are not an active leader: \"You're not a rider on this trip.\" for a non-member of a public trip, \"You're no longer a rider on this trip.\" for a revoked member, \"You're not a leader on this trip.\" for an active rider. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No trip has this id, or the trip is private and the caller has no membership row on it (byte-identical to a trip id that doesn't exist); **or** the trip is visible but no join request with this id is on it -- an unknown id and another trip's request are the same 404. Nothing was changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request isn't blocked. Nothing was changed; it fails the same way on retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A path parameter failed validation. This operation takes no request body, so the path is the only thing that can fail; its path parameters are plain strings, so in practice it does not return this today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The `writes` limit: 600 requests an hour per account, or per client address for a request with no session. Checked before the session, the trip and the membership, so nothing was written. Retry after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds to wait before retrying; always at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
                 }
               }
             },
@@ -3502,6 +3854,30 @@
         ],
         "title": "ErrorEnvelope"
       },
+      "JoinDecisionAction": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "reject",
+          "reject_and_block"
+        ],
+        "title": "JoinDecisionAction",
+        "description": "What a leader does with a pending request."
+      },
+      "JoinDecisionCreate": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/JoinDecisionAction",
+            "description": "'approve' adds the requester as a rider; 'reject' refuses them, with a 7-day cooldown before they may ask again; 'reject_and_block' refuses them until a leader unblocks. Repeating the decision that produced the current state is a 200; any other decision on an already-decided request is a 409."
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "JoinDecisionCreate",
+        "description": "POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision body."
+      },
       "JoinRequestCreate": {
         "properties": {
           "message": {
@@ -3533,6 +3909,15 @@
         ],
         "title": "JoinRequestState",
         "description": "Mirrors `join_requests_state_check`. Leaves `pending` exactly once."
+      },
+      "JoinRequestVia": {
+        "type": "string",
+        "enum": [
+          "direct",
+          "legacy_rider_link"
+        ],
+        "title": "JoinRequestVia",
+        "description": "How the request was made. Mirrors `join_requests_via_check`."
       },
       "LineStringGeometry": {
         "properties": {
@@ -3785,6 +4170,27 @@
         ],
         "title": "PasswordChange",
         "description": "POST /api/v2/auth/password body."
+      },
+      "PersonOut": {
+        "properties": {
+          "userId": {
+            "type": "string",
+            "title": "Userid",
+            "description": "The person's account id. Only ever returned to the trip's leaders and members, never to a non-member."
+          },
+          "displayName": {
+            "type": "string",
+            "title": "Displayname",
+            "description": "The person's public name. Never their username."
+          }
+        },
+        "type": "object",
+        "required": [
+          "userId",
+          "displayName"
+        ],
+        "title": "PersonOut",
+        "description": "Someone as a trip's leaders see them: an id to act on and a public name. No username."
       },
       "PhotoOut": {
         "properties": {
@@ -4155,6 +4561,56 @@
         ],
         "title": "TripCreate",
         "description": "POST /api/v2/trips body. Needs a session; the caller becomes the trip's first leader."
+      },
+      "TripJoinRequestOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The join request's id, server-generated. Used to decide or unblock it."
+          },
+          "requester": {
+            "$ref": "#/components/schemas/PersonOut",
+            "description": "Who is asking to join: an id and a public name, never a username."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JoinRequestState",
+            "description": "Where the request stands: 'pending' awaiting a decision, or the outcome."
+          },
+          "via": {
+            "$ref": "#/components/schemas/JoinRequestVia",
+            "description": "'direct' for a request made on the trip, 'legacy_rider_link' for one made by redeeming a pre-accounts rider link."
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "The note the requester sent, or null if none was sent."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Createdat",
+            "description": "When the request was made, as a timezone-aware ISO 8601 instant."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "requester",
+          "state",
+          "via",
+          "message",
+          "createdAt"
+        ],
+        "title": "TripJoinRequestOut",
+        "description": "One join request on a trip, as that trip's leaders see it."
       },
       "TripOut": {
         "properties": {

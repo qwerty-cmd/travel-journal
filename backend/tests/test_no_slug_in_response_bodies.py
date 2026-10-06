@@ -590,6 +590,20 @@ V2_MEMBER_READ_STATUS = {
     ("non_member", "private"): HTTPStatus.NOT_FOUND,
 }
 
+# The trip's join-request list (t-am-join-leader) is a leader read: everyone
+# here, the rider included, gets its gate's refusal, which must carry no
+# identity or slug either. A leader's 200 (user ids by design, never a
+# username) is covered by the access matrix and the join-request tests.
+V2_LEADER_READS = {
+    ("GET", "/api/v2/trips/{tripId}/join-requests"),
+    ("HEAD", "/api/v2/trips/{tripId}/join-requests"),
+}
+V2_LEADER_READ_STATUS = {
+    **V2_MEMBER_READ_STATUS,
+    ("rider", "public"): HTTPStatus.FORBIDDEN,
+    ("rider", "private"): HTTPStatus.FORBIDDEN,
+}
+
 V2_ROUTES = sorted(
     {
         (method, route.path)
@@ -693,7 +707,7 @@ def test_the_v2_leak_check_catches_each_kind_of_leak() -> None:
 def test_every_v2_read_has_a_plan() -> None:
     """``V2_EXPECTED_STATUS`` and the live v2 GET/HEAD routes are the same set."""
     assert V2_ROUTES, "route enumeration found no /api/v2/trips reads — the walk is broken"
-    planned = set(V2_EXPECTED_STATUS) | V2_MEMBER_READS
+    planned = set(V2_EXPECTED_STATUS) | V2_MEMBER_READS | V2_LEADER_READS
     assert set(V2_ROUTES) == planned, (
         f"registered but unplanned: {sorted(set(V2_ROUTES) - planned)}; "
         f"planned but not registered: {sorted(planned - set(V2_ROUTES))}"
@@ -732,8 +746,11 @@ async def test_no_identity_or_slug_comes_back_from_a_v2_read(
     response = await client.request(method, url, headers=headers)
 
     member_read = (method, path) in V2_MEMBER_READS
-    plan = None if member_read else V2_EXPECTED_STATUS[method, path]
-    if identity == "rider" or (plan is None and not member_read):
+    leader_read = (method, path) in V2_LEADER_READS
+    plan = None if member_read or leader_read else V2_EXPECTED_STATUS[method, path]
+    if leader_read:
+        expected = V2_LEADER_READ_STATUS[identity, visibility]
+    elif identity == "rider" or (plan is None and not member_read):
         expected = HTTPStatus.OK
     elif member_read:
         expected = V2_MEMBER_READ_STATUS[identity, visibility]
