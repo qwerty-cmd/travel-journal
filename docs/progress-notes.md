@@ -2790,6 +2790,8 @@ DONE 2026-10-06. `frontend/src/icons/`: shared `Icon.tsx` (size md/sm → `--siz
 
 **Added AC (from t-am-auth-account QA, triggered debt promoted here).** Concurrent password changes from one session all return 200 but only the last takes effect; the others get an already-dead cookie. The /account change-password form must block double-submit (disable while pending) — or, if dev prefers, the server re-checks the current password under the row lock; test that a double-tap sends one request.
 
+DONE 2026-10-06. `/signup`, `/signin`, `/account` routes; `auth.ts` (useMe + `btj.me` {id, displayName} cache, BroadcastChannel `auth`, `safeNext`, field rules, Retry-After countdown, single-flight submit); `ApiError.retryAfter` in `api/client.ts` (queue-classification should consume it); 8 components with their own CSS. Recovery code only in component state (`gcTime: 0`, reset after copy), never in storage. Tests: auth.test.tsx 39; frontend 469 + build. QA PASS (SW never caches /api, generated hooks only). Promoted finding → new task t-am-fe-recover (no task built /recover). Debt: t-am-fe-auth-gaps, t-am-fe-lint-config.
+
 ## t-am-verify-ios-cookie
 **Owner step on a real iPhone, against the deployed HTTPS host.** `__Host-`/`Secure` cookies over `http://localhost` don't work on Safari (contract default 28), so this can't run against local dev.
 **Blockers (scrum change 16).**
@@ -3113,3 +3115,15 @@ TRIGGERED DEBT (docs on t-am-runbook-accounts). `reset_account --disable` is one
 ## t-am-icon-count-doc
 
 ORDINARY DEBT (dev + QA on t-am-fe-icons). DESIGN.md §4.5, Entry 30 D4 and this tracker say 16 icons but §4.5 lists 22; all 22 were built. Correct the count. Also the icons LICENSE drops upstream's "(for the icons listed above)" from the MIT heading — cosmetic.
+
+## t-am-fe-recover
+
+CURRENTLY BROKEN gap (dev on t-am-fe-auth-screens): `screens/signin.md` specifies `/recover` and a "Forgot your password?" link, but no task built them, so a rider who forgets their password can't use their recovery code — the code's only purpose. Scope: `/recover` route using the generated recover hook (username + recovery code + new password; typed-code normalisation is server-side), then the new recovery code shown once with the same RecoveryCodeStep and the same never-stored guarantee; the link on `/signin`. Handle 401 (wrong/used code, generic), 422, 429 with Retry-After. Tests: storage scan for both codes, single-flight submit. Validation: `cd frontend && npm test && npm run build`.
+
+## t-am-fe-auth-gaps
+
+ORDINARY DEBT (QA on t-am-fe-auth-screens). (1) No test asserts the recovery code is absent from the TanStack query/mutation cache — removing `gcTime: 0` and `rotate.reset()` on /account passes all tests. (2) /account errors use role=alert but don't move focus (spec silent). (3) Deferred account extras: Your trips, My requests, This phone queue section, Signed-out toast, iOS standalone line.
+
+## t-am-fe-lint-config
+
+ORDINARY DEBT (dev on t-am-fe-auth-screens). `npm run lint` fails because the frontend has no `eslint.config.*`, so no frontend lint gate runs.
