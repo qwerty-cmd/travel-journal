@@ -29,7 +29,10 @@ nonexistent trip id gets; revoked ``403``; rider and leader ``2xx``.
 write columns' answers, except that an active rider is ``403`` "You're not a
 leader on this trip." and only a leader gets ``200``. ``t-am-trip-leadership``
 added section 15: the members GET (the write columns' answers, on a read),
-promote and step-down (the leader columns) and leave (the write columns).
+promote and step-down (the leader columns) and leave (the write columns);
+``t-am-member-revoke`` added revoke to it (the leader columns), and section 18,
+the completeness guard: every trip-scoped route in ``app.routes`` must name the
+matrix test that holds its row.
 ``t-am-join-leader`` added section 17: the trip's join-request list, the
 decision and unblock (the leader columns).
 ``t-am-write-gate-legacy`` owns the
@@ -50,7 +53,7 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 import pytest
@@ -62,10 +65,12 @@ from conftest import (
     grant_membership,
     make_async_client,
 )
+from fastapi import APIRouter, Depends, FastAPI
 from httpx import AsyncClient, Response
 from jpeg_fixtures import minimal_jpeg
 from sqlalchemy import event, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from test_route_dependency_audit import _route_class, _walk
 
 from app.api.routes.v2.join_requests import (
     ALREADY_A_MEMBER_MESSAGE,
@@ -76,10 +81,12 @@ from app.core.security import (
     NO_LONGER_A_RIDER_MESSAGE,
     NOT_A_RIDER_MESSAGE,
     SIGN_IN_REQUIRED_MESSAGE,
+    require_trip_writer_by_id,
 )
 from app.core.sessions import SESSION_COOKIE_NAME, hash_token
 from app.data import tables
 from app.data.db import get_session
+from app.main import app
 from app.models.common import ErrorCode, ErrorEnvelope
 from app.storage.s3_client import BUCKET_NAME, get_s3_client
 
@@ -2064,19 +2071,22 @@ async def test_a_leader_of_one_trip_cannot_patch_another(
 # --------------------------------------------------------------------------
 
 # GET .../members is member-read: the writer's answers on a read, so an active
-# rider or leader gets 200 and nobody else sees the list. Promote and step-down
-# are leader routes (the leader columns); leave is a writer route (the write
-# columns), so a rider can leave too. None = the route's success status.
-LEADERSHIP_ROUTES = ("list_members", "promote", "step_down", "leave")
+# rider or leader gets 200 and nobody else sees the list. Promote, revoke and
+# step-down are leader routes (the leader columns); leave is a writer route (the
+# write columns), so a rider can leave too. None = the route's success status.
+# Revoke (t-am-member-revoke) targets the cast's rider, like promote.
+LEADERSHIP_ROUTES = ("list_members", "promote", "revoke", "step_down", "leave")
 LEADERSHIP_SUCCESS = {
     "list_members": HTTPStatus.OK,
     "promote": HTTPStatus.OK,
+    "revoke": HTTPStatus.NO_CONTENT,
     "step_down": HTTPStatus.OK,
     "leave": HTTPStatus.NO_CONTENT,
 }
 EXPECTED_LEADERSHIP = {
     "list_members": EXPECTED_V2_WRITE,
     "promote": EXPECTED_V2_LEADER,
+    "revoke": EXPECTED_V2_LEADER,
     "step_down": EXPECTED_V2_LEADER,
     "leave": EXPECTED_V2_WRITE,
 }
@@ -2085,13 +2095,16 @@ EXPECTED_LEADERSHIP = {
 async def send_leadership(
     client: AsyncClient, route: str, trip_id: str, cast: Cast, headers: dict[str, str]
 ) -> Response:
-    """One members/leadership request against ``trip_id``. Promote targets the cast's rider."""
+    """One members/leadership request against ``trip_id``. Promote and revoke target the rider."""
     base = f"/api/v2/trips/{trip_id}"
     if route == "list_members":
         return await client.get(f"{base}/members", headers=headers)
     if route == "promote":
         rider_id = cast.accounts["rider"].user_id
         return await client.post(f"{base}/members/{rider_id}/promote", headers=headers)
+    if route == "revoke":
+        rider_id = cast.accounts["rider"].user_id
+        return await client.delete(f"{base}/members/{rider_id}", headers=headers)
     if route == "step_down":
         return await client.post(f"{base}/step-down", headers=headers)
     if route == "leave":
@@ -2124,7 +2137,7 @@ async def test_v2_leadership_row(
     route: str,
 ) -> None:
     """
-    The matrix cell for the members GET, promote, step-down and leave, on both visibilities.
+    The matrix cell for the members GET, promote, revoke, step-down and leave, on both visibilities.
 
     A second leader is added first, so the cast's leader stepping down or
     leaving is not the last-leader ``409`` (that rule has its own tests) and the
@@ -2156,6 +2169,11 @@ async def test_v2_leadership_row(
                 assert response.json()["role"] == "leader"
                 assert after == (before - {(rider, "rider", False, None)}) | {
                     (rider, "leader", False, None)
+                }
+            elif route == "revoke":
+                assert response.content == b""
+                assert after == (before - {(rider, "rider", False, None)}) | {
+                    (rider, "rider", True, caller)
                 }
             elif route == "step_down":
                 assert response.json()["role"] == "rider"
@@ -2568,3 +2586,168 @@ async def test_a_private_trip_join_leader_request_costs_the_same_statements_as_a
     assert private.status_code == missing.status_code == HTTPStatus.NOT_FOUND, private.text
     assert private_count > 0, "the listener saw nothing -- this check would be vacuous"
     assert private_count == missing_count
+
+
+# --------------------------------------------------------------------------
+# 18. Completeness guard: every trip-scoped route has a matrix row (t-am-member-revoke)
+# --------------------------------------------------------------------------
+
+# Where each trip-scoped (method, path) has its row: the matrix test that holds
+# it and, for a test parametrised over several routes, the parameter value that
+# selects this one (None when the test covers only this route). The guard below
+# derives the routes from the production app, so a trip-scoped route added
+# without a row here fails, and a row naming a test or parameter that doesn't
+# exist fails too. HEAD is folded into GET: every HEAD sibling shares its GET's
+# handler, and ``test_route_dependency_audit`` proves the pair resolves the same
+# dependencies.
+MATRIX_ROWS: dict[tuple[str, str], tuple[str, str | None]] = {
+    ("GET", "/api/trips/{slug}"): ("test_legacy_trip_read_access_follows_membership", None),
+    ("GET", "/api/trips/{slug}/stops"): (
+        "test_legacy_reads_stay_open_to_non_members",
+        "/api/trips/{slug}/stops",
+    ),
+    ("GET", "/api/trips/{slug}/stops/{stop_id}/photos"): (
+        "test_legacy_reads_stay_open_to_non_members",
+        "/api/trips/{slug}/stops/{stop}/photos",
+    ),
+    ("GET", "/api/trips/{slug}/map"): (
+        "test_legacy_reads_stay_open_to_non_members",
+        "/api/trips/{slug}/map",
+    ),
+    ("POST", "/api/trips/{slug}/stops"): ("test_legacy_write_row", "create_stop"),
+    ("POST", "/api/trips/{slug}/stops/{stop_id}/photos"): ("test_legacy_write_row", "upload_photo"),
+    ("POST", "/api/trips/{slug}/bikes"): ("test_legacy_write_row", "create_bike"),
+    ("PATCH", "/api/trips/{slug}/bikes/{id}"): ("test_legacy_write_row", "patch_bike"),
+    ("GET", "/api/v2/trips/{tripId}"): ("test_v2_read_row", ""),
+    ("GET", "/api/v2/trips/{tripId}/bikes"): ("test_v2_read_row", "/bikes"),
+    ("GET", "/api/v2/trips/{tripId}/stops"): ("test_v2_read_row", "/stops"),
+    ("GET", "/api/v2/trips/{tripId}/stops/{stopId}/photos"): (
+        "test_v2_read_row",
+        "/stops/{stop}/photos",
+    ),
+    ("GET", "/api/v2/trips/{tripId}/map"): ("test_v2_read_row", "/map"),
+    ("POST", "/api/v2/trips/{tripId}/stops"): ("test_v2_write_row", "create_stop"),
+    ("POST", "/api/v2/trips/{tripId}/stops/{stopId}/photos"): ("test_v2_write_row", "upload_photo"),
+    ("POST", "/api/v2/trips/{tripId}/bikes"): ("test_v2_write_row", "create_bike"),
+    ("PATCH", "/api/v2/trips/{tripId}/bikes/{bikeId}"): ("test_v2_write_row", "patch_bike"),
+    ("PATCH", "/api/v2/trips/{tripId}"): ("test_v2_leader_row", None),
+    ("GET", "/api/v2/trips/{tripId}/members"): ("test_v2_leadership_row", "list_members"),
+    ("POST", "/api/v2/trips/{tripId}/members/{userId}/promote"): (
+        "test_v2_leadership_row",
+        "promote",
+    ),
+    ("DELETE", "/api/v2/trips/{tripId}/members/{userId}"): ("test_v2_leadership_row", "revoke"),
+    ("POST", "/api/v2/trips/{tripId}/step-down"): ("test_v2_leadership_row", "step_down"),
+    ("POST", "/api/v2/trips/{tripId}/leave"): ("test_v2_leadership_row", "leave"),
+    ("POST", "/api/v2/trips/{tripId}/join-requests"): ("test_v2_join_request_create_row", None),
+    ("GET", "/api/v2/trips/{tripId}/join-requests"): (
+        "test_v2_join_leader_row",
+        "list_join_requests",
+    ),
+    ("POST", "/api/v2/trips/{tripId}/join-requests/{requestId}/decision"): (
+        "test_v2_join_leader_row",
+        "decide",
+    ),
+    ("POST", "/api/v2/trips/{tripId}/join-requests/{requestId}/unblock"): (
+        "test_v2_join_leader_row",
+        "unblock",
+    ),
+}
+
+
+def trip_scoped_routes(routes: Any) -> list[tuple[str, str]]:
+    """
+    Every trip-scoped (method, path) in ``routes``, HEAD folded into GET.
+
+    "Trip-scoped" is the route audit's own class (``_route_class == "trip"``),
+    walked with its own traversal, so the two guards can't disagree about which
+    routes exist or which of them act on a trip.
+    """
+    return sorted(
+        {
+            ("GET" if method == "HEAD" else method, route.path)
+            for route in _walk(routes)
+            if route.path.startswith("/api") and _route_class(route) == "trip"
+            for method in route.methods or ()
+        }
+    )
+
+
+def matrix_row_problem(key: tuple[str, str]) -> str | None:
+    """Why ``key`` has no usable matrix row, or None if it has one."""
+    label = f"{key[0]} {key[1]}"
+    if key not in MATRIX_ROWS:
+        return (
+            f"{label} is trip-scoped but has no access-matrix row -- add its cells to a "
+            "matrix test and name that test in MATRIX_ROWS"
+        )
+    test_name, param = MATRIX_ROWS[key]
+    test = globals().get(test_name)
+    if not callable(test) or not test_name.startswith("test_"):
+        return f"{label}'s matrix row names {test_name!r}, which is not a test in this module"
+    if param is None:
+        return None
+    values = [
+        value
+        for mark in getattr(test, "pytestmark", [])
+        if mark.name == "parametrize"
+        for value in mark.args[1]
+    ]
+    if param not in values:
+        return f"{label}'s matrix row names {test_name}[{param!r}], which that test never runs"
+    return None
+
+
+TRIP_SCOPED = trip_scoped_routes(app.routes)
+
+
+def test_the_completeness_guard_is_not_vacuous() -> None:
+    """The walk found trip-scoped routes on both surfaces, DELETE included."""
+    paths = {path for _, path in TRIP_SCOPED}
+    assert any(path.startswith("/api/trips/") for path in paths), TRIP_SCOPED
+    assert any(path.startswith("/api/v2/trips/") for path in paths), TRIP_SCOPED
+    assert {method for method, _ in TRIP_SCOPED} == {"GET", "POST", "PATCH", "DELETE"}
+
+
+@pytest.mark.parametrize("key", TRIP_SCOPED, ids=[f"{m} {p}" for m, p in TRIP_SCOPED])
+def test_every_trip_scoped_route_has_a_matrix_row(key: tuple[str, str]) -> None:
+    """Obligation 1: no trip-scoped route ships without its identity x trip cells."""
+    problem = matrix_row_problem(key)
+    assert problem is None, problem
+
+
+def test_every_matrix_row_is_a_live_route() -> None:
+    """A row for a route that is gone would hide the route that next takes its path."""
+    stale = sorted(set(MATRIX_ROWS) - set(TRIP_SCOPED))
+    assert not stale, f"MATRIX_ROWS entries with no live trip-scoped route: {stale}"
+
+
+def test_the_guard_catches_an_unrowed_trip_scoped_route() -> None:
+    """
+    A synthetic app with one trip-scoped route and no row fails the guard.
+
+    The route is mounted the way production routers are (``include_router``
+    on a ``FastAPI`` app), so the guard's own walk has to find it.
+    """
+
+    async def unrowed(guard: Annotated[Any, Depends(require_trip_writer_by_id)]) -> None:
+        return None
+
+    router = APIRouter(prefix="/api/v2/trips/{tripId}")
+    router.add_api_route("/unrowed", unrowed, methods=["DELETE"])
+    synthetic = FastAPI()
+    synthetic.include_router(router)
+
+    found = trip_scoped_routes(synthetic.routes)
+    key = ("DELETE", "/api/v2/trips/{tripId}/unrowed")
+    assert found == [key]
+    problem = matrix_row_problem(key)
+    assert problem is not None and "no access-matrix row" in problem
+
+    # And a row naming a parameter its test never runs is no row at all.
+    MATRIX_ROWS[key] = ("test_v2_leadership_row", "unrowed")
+    try:
+        problem = matrix_row_problem(key)
+        assert problem is not None and "never runs" in problem
+    finally:
+        del MATRIX_ROWS[key]

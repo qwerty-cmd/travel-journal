@@ -11,10 +11,11 @@ endpoint (v2)" → Members). Task ``t-am-trip-leadership``.
 - **Gates.** ``GET .../members`` declares ``require_trip_member_read`` (the
   writer gate's order, on a read: ``401`` → ``404`` → ``403``), because a member
   list must never reach a non-member. Promote and step-down declare
-  ``require_trip_leader``; leave declares ``require_trip_writer_by_id``, so a
+  ``require_trip_leader``, as does revoke (``DELETE .../members/{userId}``,
+  ``t-am-member-revoke``); leave declares ``require_trip_writer_by_id``, so a
   rider can leave too.
 - **Rate limits.** ``public-read`` on the GET and its schema-excluded HEAD
-  sibling, ``writes`` on the three POSTs, each declared first.
+  sibling, ``writes`` on the three POSTs and the DELETE, each declared first.
 - **The lock.** Every change runs in ``app/data/repositories/memberships.py``,
   which locks the trip row (``SELECT … FOR UPDATE``) before re-reading and
   counting the rows it decides on, so concurrent step-downs can't leave a trip
@@ -25,8 +26,7 @@ endpoint (v2)" → Members). Task ``t-am-trip-leadership``.
   Never a username, a revoked row, or anything about sessions.
 
 **Related.** ``app/core/security.py`` (the gates), ``app/models/member.py``,
-``DELETE .../members/{userId}`` (revoke) and the join-request routes, which are
-other tasks.
+and the join-request routes, which are another task.
 """
 
 from __future__ import annotations
@@ -57,7 +57,9 @@ router = APIRouter(prefix="/trips/{tripId}", tags=["trips"])
 
 # The contract's 409 for the last leader stepping down or leaving, verbatim.
 LAST_LEADER_MESSAGE = "Promote another rider to leader first"
-# Promote on a target with no active membership on this trip.
+# Revoke on a leader, the caller included (peer leaders), verbatim from the contract.
+LEADER_TARGET_MESSAGE = "Leaders can't remove another leader"
+# Promote on a target with no active membership, or revoke on one with no row at all.
 MEMBER_NOT_FOUND_MESSAGE = "We couldn't find this member on this trip."
 
 MEMBER_403 = (
@@ -88,9 +90,13 @@ WriterDep = Annotated[TripWriterContext, Depends(require_trip_writer_by_id)]
 
 
 def _refused(result: ChangeResult) -> ApiError:
-    """The error for a refused promote, step-down or leave, re-decided under the trip lock."""
+    """The error for a refused promote, step-down, leave or revoke, re-decided under the lock."""
+    if result.outcome is ChangeOutcome.NOT_FOUND:
+        return ApiError.not_found(MEMBER_NOT_FOUND_MESSAGE)
     if result.outcome is ChangeOutcome.LAST_LEADER:
         return ApiError.conflict(LAST_LEADER_MESSAGE)
+    if result.outcome is ChangeOutcome.LEADER_TARGET:
+        return ApiError.forbidden(LEADER_TARGET_MESSAGE)
     if result.outcome is ChangeOutcome.NOT_A_LEADER:
         return ApiError.forbidden(NOT_A_LEADER_MESSAGE)
     return ApiError.forbidden(NO_LONGER_A_RIDER_MESSAGE)
@@ -200,11 +206,74 @@ async def promote_member(
 ) -> MemberOut:
     """Promote ``userId`` to leader; idempotent for an existing leader."""
     result = await memberships.promote(session, context.trip.id, context.user.user_id, user_id)
-    if result.outcome is ChangeOutcome.NOT_FOUND:
-        raise ApiError.not_found(MEMBER_NOT_FOUND_MESSAGE)
     if result.outcome is not ChangeOutcome.DONE:
         raise _refused(result)
     return result.member
+
+
+# No grace period (decision-log Entry 29): revocation binds the rider's very
+# next request. Items they queued offline before it -- replays of ids already
+# stored included -- get 403 "You're no longer a rider on this trip" like any
+# other write, and the client keeps them as failed for the rider to see. A
+# window for items captured before the revocation was rejected because
+# `arrivedAt` and `takenAt` are asserted by the client and could be backdated.
+# A write already past the gate when the revoke commits may still land; only
+# the next request is promised, not in-flight cancellation.
+@router.delete(
+    "/members/{userId}",
+    dependencies=[Depends(limit_writes)],
+    status_code=HTTPStatus.NO_CONTENT,
+    response_class=Response,
+    summary="Remove a rider from a trip",
+    response_description="The rider is no longer a member of the trip (or already wasn't).",
+    responses=error_responses(
+        {
+            HTTPStatus.UNAUTHORIZED: V2_WRITE_401,
+            HTTPStatus.FORBIDDEN: LEADER_403
+            + " Also: `userId` is an active leader, the caller included: \"Leaders can't "
+            'remove another leader".',
+            HTTPStatus.NOT_FOUND: "No trip has this id, or the trip is private and the caller "
+            "has no membership row on it (byte-identical to a trip id that doesn't exist); "
+            "**or** the trip is visible but `userId` has never been a member of it. Nothing "
+            "was changed.",
+            HTTPStatus.UNPROCESSABLE_ENTITY: PATH_PARAMETERS_422,
+            HTTPStatus.TOO_MANY_REQUESTS: V2_WRITES_429,
+        }
+    ),
+    description=f"""
+**Context.** A leader can remove a rider from the trip, effective on the
+rider's next request, with no grace period for items they queued offline
+(decision-log Entry 29). Peer leaders can't remove each other.
+
+**How it works.** {LEADER_GATE} Then, under a lock on the trip row, the
+caller's own row is re-checked, and the target's membership is read: never a
+member → 404; an active leader, including the caller → 403 "Leaders can't
+remove another leader"; already revoked or departed → 204 with nothing changed,
+so a retry is safe; an active rider → its `revoked_at` and `revoked_by` are
+set and the row is kept, then 204. Membership is read on every request, so the
+rider's next write, a replay of an id already stored included, is 403
+"You're no longer a rider on this trip."
+
+**Related APIs.** `GET /api/v2/trips/{{tripId}}/members` lists the user ids;
+`POST /api/v2/trips/{{tripId}}/join-requests` is how a removed rider asks again.
+""",
+)
+async def revoke_member(
+    context: LeaderDep,
+    session: SessionDep,
+    user_id: Annotated[
+        str,
+        Path(
+            alias="userId",
+            description="The account id of the rider to remove, as `MemberOut.userId` "
+            "gives it. Must not be a leader.",
+        ),
+    ],
+) -> None:
+    """Revoke ``userId``'s rider membership; idempotent for an already-revoked one."""
+    result = await memberships.revoke(session, context.trip.id, context.user.user_id, user_id)
+    if result.outcome is not ChangeOutcome.DONE:
+        raise _refused(result)
 
 
 @router.post(

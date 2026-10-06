@@ -22,7 +22,7 @@ endpoints.
 - **It never raises ``ApiError``.** No row is ``None``; what that means for the
   request is ``app/core/security.py``'s decision. The writes return an
   outcome, and the route maps it to a status.
-- **Every role change and self-leave locks the trip row first**
+- **Every role change, self-leave and revoke locks the trip row first**
   (``SELECT … FOR UPDATE``, contract default 26), then re-reads the rows it
   decides on. Two step-downs racing on a two-leader trip are serialised: the
   second counts the first's committed change and gets ``LAST_LEADER``, so a
@@ -181,13 +181,14 @@ async def _other_active_leaders(session: AsyncSession, trip_id: str, user_id: st
 
 
 class ChangeOutcome(StrEnum):
-    """Why a role change or leave did, or did not, happen."""
+    """Why a role change, leave or revoke did, or did not, happen."""
 
     DONE = "done"  # committed (or, for promote, the target was already a leader)
-    NOT_FOUND = "not_found"  # promote: the target has no active membership
+    NOT_FOUND = "not_found"  # promote: no active target row; revoke: no row at all
     NOT_A_MEMBER = "not_a_member"  # the caller's own active row went before the lock
     NOT_A_LEADER = "not_a_leader"  # promote/step-down: the caller is no longer a leader
     LAST_LEADER = "last_leader"  # step-down/leave: no other active leader would remain
+    LEADER_TARGET = "leader_target"  # revoke: the target is a leader (the caller included)
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +311,58 @@ async def leave(session: AsyncSession, trip_id: str, user_id: str) -> ChangeResu
             trip_members.c.revoked_at.is_(None),
         )
         .values(revoked_at=func.now(), revoked_by=user_id)
+    )
+    await session.commit()
+    return ChangeResult(ChangeOutcome.DONE)
+
+
+async def revoke(session: AsyncSession, trip_id: str, caller_id: str, user_id: str) -> ChangeResult:
+    """
+    End ``user_id``'s active rider membership on ``trip_id``, under the trip lock.
+
+    The caller's own row is re-read under the lock first, as in ``promote``:
+    ``NOT_A_MEMBER`` or ``NOT_A_LEADER`` with nothing written. Then the target,
+    read the way the gate reads a caller (``get_for_user``: the active row, else
+    the latest revoked one):
+
+    - no row at all, or a NUL byte no user id contains → ``NOT_FOUND``;
+    - an active leader, the caller included → ``LEADER_TARGET``: peer leaders
+      can't remove each other (decision-log Entry 29);
+    - only revoked rows (revoked earlier, or departed) → ``DONE`` with nothing
+      written, so a retry is safe;
+    - an active rider → ``revoked_at`` and ``revoked_by`` = the caller are set,
+      and the row is kept as history.
+
+    The gate reads this row on every request with no cache, so the rider's very
+    next write is refused.
+    """
+    await _lock_trip(session, trip_id)
+    caller = (await session.execute(_active_member(trip_id, caller_id))).first()
+    if caller is None or caller.role != MemberRole.LEADER.value:
+        await session.commit()
+        return ChangeResult(
+            ChangeOutcome.NOT_A_MEMBER if caller is None else ChangeOutcome.NOT_A_LEADER
+        )
+    target = None if "\x00" in user_id else await get_for_user(session, trip_id, user_id)
+    outcome = None
+    if target is None:
+        outcome = ChangeOutcome.NOT_FOUND
+    elif not target.active:
+        outcome = ChangeOutcome.DONE
+    elif target.role is MemberRole.LEADER:
+        outcome = ChangeOutcome.LEADER_TARGET
+    if outcome is not None:
+        await session.commit()
+        return ChangeResult(outcome)
+
+    await session.execute(
+        update(trip_members)
+        .where(
+            trip_members.c.trip_id == trip_id,
+            trip_members.c.user_id == user_id,
+            trip_members.c.revoked_at.is_(None),
+        )
+        .values(revoked_at=func.now(), revoked_by=caller_id)
     )
     await session.commit()
     return ChangeResult(ChangeOutcome.DONE)

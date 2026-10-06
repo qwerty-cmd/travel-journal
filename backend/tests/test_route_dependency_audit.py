@@ -125,11 +125,12 @@ GUARDS = (
 )
 
 # Methods that only read, and methods that change something. A method in
-# neither set — a DELETE endpoint, say — is a hard failure rather than a skip:
+# neither set — a PUT endpoint, say — is a hard failure rather than a skip:
 # a new verb is a new access-control decision, and it should be made here
-# deliberately, not inherited by omission.
+# deliberately, not inherited by omission. DELETE was agreed with its first
+# route, the member revoke (t-am-member-revoke): it is held to the unsafe rule.
 READ_METHODS = frozenset({"GET", "HEAD"})
-UNSAFE_METHODS = frozenset({"POST", "PATCH"})
+UNSAFE_METHODS = frozenset({"POST", "PATCH", "DELETE"})
 
 # The trip guard a trip-scoped read must declare, by surface: the legacy slug
 # gate under /api/trips, the trip-id reader gate under /api/v2/trips.
@@ -148,12 +149,14 @@ V2_TRIP_UNSAFE_GUARDS = frozenset({require_trip_writer_by_id, require_trip_leade
 #   patch_trip     — PATCH /api/v2/trips/{tripId}, the trip's settings.
 #   promote_member — POST /api/v2/trips/{tripId}/members/{userId}/promote.
 #   step_down      — POST /api/v2/trips/{tripId}/step-down.
+#   revoke_member  — DELETE /api/v2/trips/{tripId}/members/{userId}.
 #   decide_join_request  — POST /api/v2/trips/{tripId}/join-requests/{requestId}/decision.
 #   unblock_join_request — POST /api/v2/trips/{tripId}/join-requests/{requestId}/unblock.
 LEADER_ONLY = {
     "patch_trip",
     "promote_member",
     "step_down",
+    "revoke_member",
     "decide_join_request",
     "unblock_join_request",
 }
@@ -583,7 +586,7 @@ def test_the_rules_reject_miswired_routes() -> None:
     scratch.add_api_route("/api/trips/{slug}/things", write, methods=["POST"])
     scratch.add_api_route("/api/v2/auth/signin", signin, methods=["POST"])
     scratch.add_api_route("/api/elsewhere/{slug}", stray, methods=["POST"])
-    scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["DELETE"])
+    scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["PUT"])
     scratch.add_api_route("/api/trips/{slug}/things", read, methods=["GET"])
     scratch.add_api_route("/api/trips/{slug}/things/{id}", stray, methods=["PATCH"])
 
@@ -659,6 +662,19 @@ def test_the_rules_reject_miswired_routes() -> None:
     )
     scratch.add_api_route("/api/v2/trips/{tripId}/leader-read", leader, methods=["GET"])
 
+    # The revoke behind the rider gate, and an unguarded DELETE (t-am-member-revoke):
+    # DELETE is an agreed verb now, so it must fail on its guard, not its verb.
+    async def unguarded() -> None:
+        return None
+
+    scratch.add_api_route(
+        "/api/v2/trips/{tripId}/revoke-rider-gated",
+        v2_write,
+        methods=["DELETE"],
+        name="revoke_member",
+    )
+    scratch.add_api_route("/api/v2/trips/{tripId}/delete-unguarded", unguarded, methods=["DELETE"])
+
     # The join-request create behind the writer gate, behind its own gate, and
     # its own gate on an ordinary write (t-am-join-requester).
     async def join(guard: Annotated[Any, Depends(require_trip_join_requester)]) -> None:
@@ -678,7 +694,7 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("POST", "/api/trips/{slug}/things"),
         ("POST", "/api/v2/auth/signin"),
         ("POST", "/api/elsewhere/{slug}"),
-        ("DELETE", "/api/trips/{slug}/things/{id}"),
+        ("PUT", "/api/trips/{slug}/things/{id}"),
         ("POST", "/api/trips/{slug}/session-only"),
         ("POST", "/api/trips/{slug}/doubled"),
         ("GET", "/api/v2/trips/{tripId}/things"),
@@ -694,6 +710,8 @@ def test_the_rules_reject_miswired_routes() -> None:
         ("GET", "/api/v2/trips/{tripId}/requests-members"),
         ("POST", "/api/v2/trips/{tripId}/decide-rider-gated"),
         ("GET", "/api/v2/trips/{tripId}/leader-read"),
+        ("DELETE", "/api/v2/trips/{tripId}/revoke-rider-gated"),
+        ("DELETE", "/api/v2/trips/{tripId}/delete-unguarded"),
     ]
     for key in must_fail:
         assert _violation(key[0], routes[key]) is not None, f"{key} was not rejected"
