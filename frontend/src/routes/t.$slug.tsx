@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { LegacyJoinPanel } from "../components/JoinRequest";
 import { DisplayNamePrompt } from "../components/DisplayNamePrompt";
 import { getDisplayName } from "../localStore";
 import { isTripNotFound, useTrip } from "../trip";
+import { viewerRole } from "../tripV2";
 
 // Design feature: trip shell for every /t/$slug screen (decision-log Entry 18).
 // Loads the trip once for all child routes, and asks a rider for a display
@@ -18,8 +20,10 @@ import { isTripNotFound, useTrip } from "../trip";
 //     never asked for a name.
 //   - any other error with no cached trip → "Can't reach the server" + Retry.
 //   - otherwise → "Waking up the server…" (free-tier cold start).
+//     Signed in with viewer.role none/pending: LegacyJoinPanel (join-flow task;
+//     legacy-link.md). Signed out and member variants are not built here.
 // APIs called: GET /api/trips/{slug} via useTrip (src/trip.ts), seeded from the
-// persisted TripOut. Child routes read this same cache entry with
+// persisted TripOut; POST /api/v2/trips/claim from LegacyJoinPanel. Child routes read this same cache entry with
 // refetchOnMount: false rather than fetching again.
 export const Route = createFileRoute("/t/$slug")({
   component: TripShell,
@@ -39,6 +43,8 @@ function TripShell() {
           <h1 style={{ margin: 0 }}>{trip.data.name}</h1>
           <p style={{ margin: 0 }}>Starts {trip.data.startDate}</p>
         </header>
+        {/* Signed-in non-member: one-tap claim of this rider link (a join request, never access). */}
+        <LegacyJoinPanel slug={slug} tripId={trip.data.id} role={viewerRole(trip.data)} onChanged={() => void trip.refetch()} />
         {/* Rider-only (Entry 18): decided by the server's access, never device storage. */}
         {trip.data.access === "rider" && !hasName ? (
           <DisplayNamePrompt onSaved={() => setHasName(true)} />

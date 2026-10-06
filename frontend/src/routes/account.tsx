@@ -7,6 +7,8 @@ import { useRotateRecoveryCodeApiV2AuthRecoveryCodePost } from "../api/gen/hooks
 import { useSignoutAllApiV2AuthSignoutAllPost } from "../api/gen/hooks/useSignoutAllApiV2AuthSignoutAllPost";
 import { useSignoutApiV2AuthSignoutPost } from "../api/gen/hooks/useSignoutApiV2AuthSignoutPost";
 import { errorText, formatRetry, isOffline, isRateLimited, markSignedIn, markSignedOut, newPasswordError, useMe, useRetryCountdown, useSingleFlight } from "../auth";
+import { useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "../api/gen/hooks/useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
+import { listMyJoinRequestsApiV2MeJoinRequestsGetQueryKey, useListMyJoinRequestsApiV2MeJoinRequestsGet } from "../api/gen/hooks/useListMyJoinRequestsApiV2MeJoinRequestsGet";
 import { getCachedMe } from "../localStore";
 import { AuthPage } from "../components/AuthPage";
 import { Button } from "../components/Button";
@@ -26,9 +28,10 @@ import { StatusNotice } from "../components/StatusNotice";
 // connection", actions answer "You need a connection to manage your account.".
 // Every form drops a second submit while one is in flight (useSingleFlight) and disables
 // its button while pending, so a double tap sends one request.
-// Not here yet: "Your trips" and "My requests" (t-am-fe-discover-trip-detail,
-// t-am-fe-join-flow) and the "This phone" queue section.
-// APIs called: GET /api/v2/auth/me, POST /api/v2/auth/password, POST
+// "My requests" (after the identity card): rows from /me/join-requests, trip name + state
+// label (rejected reads "Not approved"), pending rows get "Cancel request".
+// Not here yet: "Your trips" (t-am-fe-discover-trip-detail) and the "This phone" queue section.
+// APIs called: GET /api/v2/auth/me, GET /api/v2/me/join-requests, POST /api/v2/join-requests/{id}/cancel, POST /api/v2/auth/password, POST
 // /api/v2/auth/recovery-code, POST /api/v2/auth/signout, POST /api/v2/auth/signout-all.
 // Signing out clears `btj.me` and posts `{type:"signout"}` on `auth`; the offline queue
 // is left alone.
@@ -72,6 +75,7 @@ function Account() {
       ) : me.error && !offline ? (
         <StatusNotice tone="danger" title={errorText(me.error, OFFLINE)} />
       ) : null}
+      <MyRequests />
       <ChangePassword />
       <NewRecoveryCode displayName={cached?.displayName ?? ""} />
       <SignOut />
@@ -326,6 +330,61 @@ function SignOut() {
           </Button>
         </DialogActions>
       </Dialog>
+    </section>
+  );
+}
+
+const REQUEST_STATE = { pending: "Pending", approved: "Approved", rejected: "Not approved", blocked: "Not approved", cancelled: "Cancelled" } as const;
+
+function MyRequests() {
+  const queryClient = useQueryClient();
+  const list = useListMyJoinRequestsApiV2MeJoinRequestsGet();
+  const cancel = useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost();
+  const flight = useSingleFlight();
+  const [notes, setNotes] = useState<Record<string, string>>({});
+
+  function onCancel(requestId: string) {
+    flight.run((settle) => {
+      setNotes((n) => ({ ...n, [requestId]: "" }));
+      cancel.mutate(
+        { requestId },
+        {
+          onError: (err) => {
+            if (err.status === 409) setNotes((n) => ({ ...n, [requestId]: errorText(err, OFFLINE) }));
+          },
+          onSettled: () => {
+            queryClient.invalidateQueries({ queryKey: listMyJoinRequestsApiV2MeJoinRequestsGetQueryKey() });
+            settle();
+          },
+        },
+      );
+    });
+  }
+
+  return (
+    <section className="auth-section" aria-labelledby="requests-heading">
+      <h2 id="requests-heading">My requests</h2>
+      {list.isPending ? (
+        <p className="auth-muted">Loading…</p>
+      ) : list.isError ? (
+        <StatusNotice tone="danger" title={errorText(list.error, OFFLINE)} />
+      ) : list.data.length === 0 ? (
+        <p className="auth-muted">No requests yet.</p>
+      ) : (
+        <ul className="auth-card">
+          {list.data.map((r) => (
+            <li key={r.id}>
+              <strong>{r.tripName}</strong> <span className="auth-muted">{REQUEST_STATE[r.state]}</span>
+              {r.state === "pending" ? (
+                <Button variant="tertiary" loading={cancel.isPending && cancel.variables?.requestId === r.id} loadingLabel="Cancelling…" onClick={() => onCancel(r.id)}>
+                  Cancel request
+                </Button>
+              ) : null}
+              {notes[r.id] ? <p className="auth-muted">{notes[r.id]}</p> : null}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

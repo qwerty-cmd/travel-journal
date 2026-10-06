@@ -1,0 +1,41 @@
+.join {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.join__h2 {
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-bold);
+}
+
+.join__muted {
+  font-size: var(--font-size-small);
+  color: var(--color-text-muted);
+}
+
+.join__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-self: stretch;
+}
+
+.join__textarea {
+  height: auto;
+  resize: vertical;
+  font: inherit;
+}
+
+.join__quote {
+  margin: 0;
+  padding-left: var(--space-3);
+  border-left: 3px solid var(--color-border-subtle);
+}
+
+.join a.btn {
+  text-decoration: none;
+}

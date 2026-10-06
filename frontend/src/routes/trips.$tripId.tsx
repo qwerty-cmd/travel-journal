@@ -2,6 +2,7 @@ import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
 import { useMe, useSlow } from "../auth";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { JoinRequestPanel } from "../components/JoinRequest";
 import { StatusNotice } from "../components/StatusNotice";
 import { formatDate } from "../format";
 import { ArrowLeftIcon, MapPinIcon } from "../icons";
@@ -23,6 +24,7 @@ import "./trips.$tripId.css";
 //     TripOut extension (no `viewer` / `visibility`) just omits those badges.
 //   - any other error with nothing persisted: "Can't reach the server…" + Try again.
 //   - otherwise: header skeleton (+ "Waking up the server…" after 3 s).
+//     Under the header, JoinRequestPanel (join flow, gated on viewerRole() alone).
 // APIs called: GET /api/v2/trips/{tripId} via useTripV2 (src/tripV2.ts), seeded
 // from the per-trip-id persisted TripOut; GET /api/v2/auth/me (useMe) for the
 // 404 copy only. Child routes read the same cache entry with refetchOnMount: false.
@@ -59,6 +61,7 @@ function TripShell() {
             {roleBadge && <Badge variant={roleBadge} />}
           </div>
         </header>
+        <JoinRequestPanel tripId={tripId} role={role} />
         <Outlet />
       </div>
     );
