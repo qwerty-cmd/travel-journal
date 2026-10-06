@@ -2826,6 +2826,8 @@ DONE 2026-10-06. `/` = Discover (public trips with Load more, My trips when sign
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+DONE 2026-10-06. `/trips/new` (signed-in only; UUID minted at submit, reused on retry, dropped on 201/200/409; public shows the inline Publish warning, no dialog per spec; online-only, not queued; 409/429 show the message, 429 countdown) and a "Create a trip" link on Discover for signed-in users. Tests: createTrip 11; frontend 503 + build. QA PASS. Not built (spec): disabling Create for the visit after the lifetime-cap 409 — the contract can't distinguish it from other 409s (see t-am-trip-create-gaps); the leader's first-visit card and Copy trip link belong to the trip page.
+
 ## t-am-fe-join-flow
 **AC.**
 - The Request button shows for `viewer.role` none or anonymous; anonymous goes to `/signin` and back.
