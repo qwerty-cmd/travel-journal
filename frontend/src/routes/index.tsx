@@ -64,6 +64,11 @@ function Discover() {
       </header>
       <main className="discover__main">
         <h1 className="visually-hidden">Discover bike trips</h1>
+        {signedIn && (
+          <Link to="/trips/new" className="btn btn--primary btn--md">
+            Create a trip
+          </Link>
+        )}
         {(signedIn || lastSlug) && <YourTrips signedIn={signedIn} lastSlug={lastSlug} />}
         <PublicTrips />
         <OldLink />
