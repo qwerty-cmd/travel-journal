@@ -73,7 +73,7 @@ Tokens are a shared, limited budget; spending them must buy correctness. These r
 - **Reports are short:** results, decisions, findings in gate format. No restated brief, no `git status` dumps, no re-listing already-filed debt. Aim for ≤ 40 lines.
 - **Right-size the pipeline:** `test-writer` is mandatory for access control, data integrity and the offline queue; for other tasks `dev` writes the tests and `qa` verifies. One-line or single-command work isn't worth an agent.
 - `token-auditor` audits a finished pipeline when a task looked expensive, and the agent definitions whenever they grow.
-- **Checkpoint in-progress work** so a usage limit or container restart loses nothing: `.claude/scripts/checkpoint.sh "<task id>: <step>"` snapshots the uncommitted tree (untracked files included) to `origin/wip/<branch>` without touching HEAD, the index or the branch. Run it after each meaningful step (implementation passing, tests written, fix applied). Restore with `git checkout origin/wip/<branch> -- .` and review before committing.
+- **Checkpoint in-progress work** so a usage limit or container restart loses nothing: the **orchestrator** runs `.claude/scripts/checkpoint.sh "<task id>: <step>"` after every agent report (owner-authorised; subagents don't push). It snapshots the uncommitted tree, untracked files included, to `origin/wip/<branch>` without touching HEAD, the index or the branch. Restore with `git checkout origin/wip/<branch> -- .` and review before committing.
 
 ## Commands
 ```
