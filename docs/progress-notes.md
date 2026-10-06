@@ -2620,6 +2620,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Note (from t-am-write-gate-legacy tests).** A write already past the gate when a revoke commits can still land just after it (observed even with the revoke locking the trip row first, default 26): the contract binds only the next request, which is 403. Keep that the tested guarantee; don't promise in-flight cancellation.
 
+DONE 2026-10-06. `DELETE /api/v2/trips/{tripId}/members/{userId}` (`revoke_member`, leader gate, `writes` limiter; lock trip → re-check caller → target: leader/self 403, active rider → revoked_at/revoked_by and 204, inactive row 204 no write, never-member 404). No-grace rationale comment beside the route. DELETE audited; matrix §18 completeness guard built from `app.routes`. Tests: test_member_revoke 29 + matrix §15/§18; suite 3146; frontend 385 + build. QA PASS; revoked rider's next private reads are the byte-identical 404. Debt: t-am-matrix-guard-gaps (triggered), t-am-revoke-prior-rows-test.
+
 ## t-am-legacy-claim
 **Goal.** Someone holding an old rider link can ask to join the trip it points at. The link turns into a pending join request, never into access.
 **Blocker.** Only `t-am-join-requester` (scrum change 13). The claim reuses the requester-side create rules; nothing here needs the leader endpoints.
@@ -3079,3 +3081,11 @@ ORDINARY DEBT (dev on t-am-join-requester). (1) The join 409 messages were writt
 ## t-am-join-leader-gaps
 
 ORDINARY DEBT (dev + QA on t-am-join-leader). (1) A pending request whose requester has since become an active member (e.g. via claim once it lands) can still be rejected/blocked: 200 "blocked" with the membership untouched — an active member marked blocked. Contract is silent; consider 409 or auto-cancel. (2) The `state=blocked` list is unbounded (pending is capped at 100). (3) Unblock declares a 422 for its path parameter not in the contract row.
+
+## t-am-matrix-guard-gaps
+
+TRIGGERED DEBT (QA on t-am-member-revoke). (1) `matrix_row_problem` checks only that a named test exists with that parameter, not skip/xfail marks, so skipping a matrix test leaves the guard green. Trigger: the first skip/xfail on a test named in `MATRIX_ROWS`. (2) Websocket routes are invisible to the guard and the route audit (`_walk_tree` drops them; `methods=None` skipped). Trigger: the first websocket route under `/api`.
+
+## t-am-revoke-prior-rows-test
+
+ORDINARY DEBT (QA on t-am-member-revoke). Dropping the `revoked_at IS NULL` filter in `memberships.revoke` would rewrite an earlier self-leave row of a re-joined rider; no shipped test catches it (QA's probe did). The code is correct; add a left → rejoined → revoked test.
