@@ -2814,6 +2814,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 
 **Added AC (from t-am-v2-trip-reads, triggered debt).** `frontend/src/localStore.ts` may hold a `TripOut` cached before the extension, with no `viewer`/`visibility`. The first screen that reads `trip.viewer` must treat it as absent (fall back to `access`, or refetch) rather than crash; test with a pre-extension cached trip.
 
+DONE 2026-10-06. `/` = Discover (public trips with Load more, My trips when signed in, Continue card for `lastSlug`; Entry 18 auto-redirect removed per Entry 29/D7, routing test updated). `/trips/$tripId` (+ index, + stops/$stopId) on v2 hooks; `tripV2.ts` uses the per-id cached TripOut (`btj.tripById.<id>`) as initialData and clears it on 404; identical "Trip not found" for missing/private/malformed; pre-extension cache → no role, no write rights. Components Badge, TripCard, PhotoGallery. No write UI yet on v2 pages. Tests: discoverTripDetail 16; frontend 492 + build. QA PASS. Debt: t-am-fe-discover-gaps.
+
 ## t-am-fe-create-trip
 **AC.**
 - `/trips/new` is signed-in only and generates a UUID at submit time.
@@ -2821,6 +2823,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - 201 or 200 navigates to `/trips/$tripId`. 409 and 429 show `message`.
 - It is online-only and not queued.
 **Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
 ## t-am-fe-join-flow
 **AC.**
@@ -2831,6 +2835,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - `/t/$slug`, when signed in and not a member, offers "Ask to join as a rider" (claim). 404 shows "This link can't be used to join".
 - Every 409 message is shown verbatim.
 **Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
 ## t-am-fe-leader-review
 **Goal.** The leader's join-request review screen. Split along the existing design specs (scrum change 20); this task is `docs/design/screens/leader-review.md`.
@@ -2843,6 +2849,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - The blocked tab offers Unblock.
 **Validation.** `cd frontend && npm test && npm run build`
 
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
 ## t-am-fe-members
 **Goal.** Members management, per `docs/design/screens/members.md` (scrum change 20).
 **Blockers.** `t-am-fe-leader-review` (it creates the shared route), `t-am-trip-leadership` and `t-am-member-revoke`.
@@ -2852,6 +2860,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - A 409 last-leader message is shown.
 **Validation.** `cd frontend && npm test && npm run build`
 
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
 ## t-am-fe-trip-settings
 **Goal.** Trip settings, per `docs/design/screens/trip-settings.md` (scrum change 20).
 **Blockers.** `t-am-fe-leader-review` (shared route) and `t-am-trip-create` (PATCH).
@@ -2860,6 +2870,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - Settings PATCH covers name, visibility and delay.
 - Switching private → public shows the Publish warning.
 **Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
 ## t-am-queue-classification
 **Goal.** The offline queue classifies the new 401 and 429 correctly and lets a rider rescue a failed photo (obligation 14, classification half; scrum change 19).
@@ -2898,6 +2910,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - Add stop has a keyboard-operable "Use map centre" control (DESIGN.md C15).
 **Validation.** `cd frontend && npm test && npm run build`
 
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
+
 ## t-am-fe-bikes-v2
 **Goal.** Part (b) of scrum change 21: bikes on v2.
 **Blockers.** `t-am-fe-discover-trip-detail` and `t-am-v2-rider-writes`.
@@ -2906,6 +2920,8 @@ Record the outcome in `docs/real-device-test-plan.md`.
 - `/trips/$tripId/bikes` add and edit go through v2, online-only.
 - The bikes screen uses DESIGN.md tokens.
 **Validation.** `cd frontend && npm test && npm run build`
+
+**Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
 ## t-am-fe-legacy-readonly
 **Goal.** Part (c) of scrum change 21: the legacy link becomes read-only, and the account supplies the rider's name.
@@ -3131,3 +3147,7 @@ ORDINARY DEBT (QA on t-am-fe-auth-screens). (1) No test asserts the recovery cod
 ## t-am-fe-lint-config
 
 ORDINARY DEBT (dev on t-am-fe-auth-screens). `npm run lint` fails because the frontend has no `eslint.config.*`, so no frontend lint gate runs.
+
+## t-am-fe-discover-gaps
+
+ORDINARY DEBT (dev + QA on t-am-fe-discover-trip-detail). Deferred spec extras: onboarding card, Create-a-trip entry on Discover, pending-requests and member continue cards, tabs, "You see stops live" notice, "Public from" chips, "Who can see this trip?" dialog, 429 countdown on Try again. `components/README.md` is stale. `/t/$slug/stops/$stopId` still has an inline gallery (use PhotoGallery). Timeline rows are `div role=link` (design wants `<a>`).
