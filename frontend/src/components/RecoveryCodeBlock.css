@@ -1,0 +1,40 @@
+/* RecoveryCodeBlock (DESIGN.md §5.13). Tokens only. */
+.recovery-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+}
+
+.recovery-code__code {
+  display: flex;
+  flex-wrap: wrap;
+  /* Visual group separation only: no space characters, so a copy is the exact code. */
+  column-gap: var(--space-3);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-code);
+  line-height: var(--font-line-height-code);
+  letter-spacing: var(--font-letter-spacing-code);
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.recovery-code__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.recovery-code__feedback {
+  font-size: var(--font-size-small);
+  color: var(--color-status-success);
+}
+
+.recovery-code__failed {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-status-danger);
+}

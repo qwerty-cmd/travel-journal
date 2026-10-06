@@ -1,0 +1,48 @@
+/* StatusNotice (DESIGN.md §5.6), inline variant. Tokens only. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+}
+
+.notice__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.notice__title {
+  font-weight: var(--font-weight-semibold);
+}
+
+.notice__detail {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+}
+
+.notice--info,
+.notice--success {
+  background: var(--color-brand-primary-subtle);
+}
+
+.notice--warning {
+  background: var(--color-status-warning-subtle);
+}
+.notice--warning .notice__title {
+  color: var(--color-status-warning-text);
+}
+
+.notice--danger {
+  background: var(--color-status-danger-subtle);
+}
+.notice--danger .notice__title {
+  color: var(--color-status-danger);
+}
+
+.notice--offline {
+  background: var(--color-surface-inverse);
+  color: var(--color-text-on-inverse);
+}
