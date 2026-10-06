@@ -3044,6 +3044,8 @@ Decision-log Entry 33; contract text already written (`api-contract.md` "Rate li
 
 **Rollback.** Additive column with default; redeploy the old image, the column can stay.
 
+
+**DONE.** Migration 0004 adds `sessions.failed_confirmations`; `reserve_confirmation` claims before argon2 and commits; the 10th wrong password deletes the session and returns 401 with the cookie cleared; a correct password resets the count (401 if the row vanished). Password change and recovery-code rotation no longer read or write the account lockout; signin and recover are unchanged. Tests: `test_auth_session_confirm.py` (19), `test_migration_0004.py` (3); 0003 migration tests now migrate up to 0003 only; the shared-counter test now covers signin and recover only. Full suite 3516; frontend 621. QA: 4 mutants killed. Debt: `t-am-session-confirm-limit-gaps`.
 ## t-am-auth-account-gaps
 
 ORDINARY DEBT (QA on t-am-auth-account). (1) **Architect question:** with a stolen session and no password, 10 wrong password-change/rotation attempts lock the owner out of signin and recover for 15 min, repeatable; contract-conformant (the contract counts these failures). Should session-authenticated failures count toward the signin/recover lock? (2) The contract's per-account lockout text names only signin/recover for the 429 and the reset; record that password change and rotation also 429 while locked and reset on success. (3) Recover/signin timing: unknown/disabled ~35 ms vs wrong code ~40 ms (extra lockout round-trips); bodies/headers identical, and the lockout already reveals existence. Fix both together if enumeration resistance is tightened. Also: `AccountRecover.username` has no `max_length` (see t-am-auth-sessions-gaps 3).
