@@ -1,5 +1,6 @@
 export type { CancelJoinRequestApiV2JoinRequestsRequestIdCancelPostMutationKey } from "./hooks/useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export type { ChangePasswordApiV2AuthPasswordPostMutationKey } from "./hooks/useChangePasswordApiV2AuthPasswordPost";
+export type { ClaimTripApiV2TripsClaimPostMutationKey } from "./hooks/useClaimTripApiV2TripsClaimPost";
 export type { CreateBikeApiTripsSlugBikesPostMutationKey } from "./hooks/useCreateBikeApiTripsSlugBikesPost";
 export type { CreateBikeApiV2TripsTripIdBikesPostMutationKey } from "./hooks/useCreateBikeApiV2TripsTripIdBikesPost";
 export type { CreateJoinRequestApiV2TripsTripIdJoinRequestsPostMutationKey } from "./hooks/useCreateJoinRequestApiV2TripsTripIdJoinRequestsPost";
@@ -48,6 +49,7 @@ export type { BodyUploadPhotoApiTripsSlugStopsStopIdPhotosPost } from "./types/B
 export type { BodyUploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost } from "./types/BodyUploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost";
 export type { CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost200, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost401, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost404, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost409, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost422, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost429, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPostMutation, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPostMutationResponse, CancelJoinRequestApiV2JoinRequestsRequestIdCancelPostPathParams } from "./types/CancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export type { ChangePasswordApiV2AuthPasswordPost200, ChangePasswordApiV2AuthPasswordPost401, ChangePasswordApiV2AuthPasswordPost403, ChangePasswordApiV2AuthPasswordPost422, ChangePasswordApiV2AuthPasswordPost429, ChangePasswordApiV2AuthPasswordPostMutation, ChangePasswordApiV2AuthPasswordPostMutationRequest, ChangePasswordApiV2AuthPasswordPostMutationResponse } from "./types/ChangePasswordApiV2AuthPasswordPost";
+export type { ClaimTripApiV2TripsClaimPost200, ClaimTripApiV2TripsClaimPost201, ClaimTripApiV2TripsClaimPost401, ClaimTripApiV2TripsClaimPost404, ClaimTripApiV2TripsClaimPost409, ClaimTripApiV2TripsClaimPost422, ClaimTripApiV2TripsClaimPost429, ClaimTripApiV2TripsClaimPostMutation, ClaimTripApiV2TripsClaimPostMutationRequest, ClaimTripApiV2TripsClaimPostMutationResponse } from "./types/ClaimTripApiV2TripsClaimPost";
 export type { CreateBikeApiTripsSlugBikesPost200, CreateBikeApiTripsSlugBikesPost201, CreateBikeApiTripsSlugBikesPost401, CreateBikeApiTripsSlugBikesPost403, CreateBikeApiTripsSlugBikesPost404, CreateBikeApiTripsSlugBikesPost409, CreateBikeApiTripsSlugBikesPost422, CreateBikeApiTripsSlugBikesPost429, CreateBikeApiTripsSlugBikesPostMutation, CreateBikeApiTripsSlugBikesPostMutationRequest, CreateBikeApiTripsSlugBikesPostMutationResponse, CreateBikeApiTripsSlugBikesPostPathParams } from "./types/CreateBikeApiTripsSlugBikesPost";
 export type { CreateBikeApiV2TripsTripIdBikesPost200, CreateBikeApiV2TripsTripIdBikesPost201, CreateBikeApiV2TripsTripIdBikesPost401, CreateBikeApiV2TripsTripIdBikesPost403, CreateBikeApiV2TripsTripIdBikesPost404, CreateBikeApiV2TripsTripIdBikesPost409, CreateBikeApiV2TripsTripIdBikesPost422, CreateBikeApiV2TripsTripIdBikesPost429, CreateBikeApiV2TripsTripIdBikesPostMutation, CreateBikeApiV2TripsTripIdBikesPostMutationRequest, CreateBikeApiV2TripsTripIdBikesPostMutationResponse, CreateBikeApiV2TripsTripIdBikesPostPathParams } from "./types/CreateBikeApiV2TripsTripIdBikesPost";
 export type { CreateJoinRequestApiV2TripsTripIdJoinRequestsPost200, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost201, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost401, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost404, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost409, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost422, CreateJoinRequestApiV2TripsTripIdJoinRequestsPost429, CreateJoinRequestApiV2TripsTripIdJoinRequestsPostMutation, CreateJoinRequestApiV2TripsTripIdJoinRequestsPostMutationRequest, CreateJoinRequestApiV2TripsTripIdJoinRequestsPostMutationResponse, CreateJoinRequestApiV2TripsTripIdJoinRequestsPostPathParams } from "./types/CreateJoinRequestApiV2TripsTripIdJoinRequestsPost";
@@ -63,6 +65,7 @@ export type { GetMapApiV2TripsTripIdMapGet200, GetMapApiV2TripsTripIdMapGet404, 
 export type { GetMeApiV2AuthMeGet200, GetMeApiV2AuthMeGet401, GetMeApiV2AuthMeGet429, GetMeApiV2AuthMeGetQuery, GetMeApiV2AuthMeGetQueryResponse } from "./types/GetMeApiV2AuthMeGet";
 export type { GetTripApiTripsSlugGet200, GetTripApiTripsSlugGet404, GetTripApiTripsSlugGet422, GetTripApiTripsSlugGet429, GetTripApiTripsSlugGetPathParams, GetTripApiTripsSlugGetQuery, GetTripApiTripsSlugGetQueryResponse } from "./types/GetTripApiTripsSlugGet";
 export type { GetTripApiV2TripsTripIdGet200, GetTripApiV2TripsTripIdGet404, GetTripApiV2TripsTripIdGet422, GetTripApiV2TripsTripIdGet429, GetTripApiV2TripsTripIdGetPathParams, GetTripApiV2TripsTripIdGetQuery, GetTripApiV2TripsTripIdGetQueryResponse } from "./types/GetTripApiV2TripsTripIdGet";
+export type { JoinClaimCreate } from "./types/JoinClaimCreate";
 export type { JoinDecisionAction, JoinDecisionActionEnumKey } from "./types/JoinDecisionAction";
 export type { JoinDecisionCreate } from "./types/JoinDecisionCreate";
 export type { JoinRequestCreate } from "./types/JoinRequestCreate";
@@ -126,6 +129,7 @@ export type { ViewerRole, ViewerRoleEnumKey } from "./types/ViewerRole";
 export type { Visibility, VisibilityEnumKey } from "./types/Visibility";
 export { cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "./clients/cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export { changePasswordApiV2AuthPasswordPost } from "./clients/changePasswordApiV2AuthPasswordPost";
+export { claimTripApiV2TripsClaimPost } from "./clients/claimTripApiV2TripsClaimPost";
 export { createBikeApiTripsSlugBikesPost } from "./clients/createBikeApiTripsSlugBikesPost";
 export { createBikeApiV2TripsTripIdBikesPost } from "./clients/createBikeApiV2TripsTripIdBikesPost";
 export { createJoinRequestApiV2TripsTripIdJoinRequestsPost } from "./clients/createJoinRequestApiV2TripsTripIdJoinRequestsPost";
@@ -170,6 +174,9 @@ export { useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "./hook
 export { changePasswordApiV2AuthPasswordPostMutationKey } from "./hooks/useChangePasswordApiV2AuthPasswordPost";
 export { changePasswordApiV2AuthPasswordPostMutationOptions } from "./hooks/useChangePasswordApiV2AuthPasswordPost";
 export { useChangePasswordApiV2AuthPasswordPost } from "./hooks/useChangePasswordApiV2AuthPasswordPost";
+export { claimTripApiV2TripsClaimPostMutationKey } from "./hooks/useClaimTripApiV2TripsClaimPost";
+export { claimTripApiV2TripsClaimPostMutationOptions } from "./hooks/useClaimTripApiV2TripsClaimPost";
+export { useClaimTripApiV2TripsClaimPost } from "./hooks/useClaimTripApiV2TripsClaimPost";
 export { createBikeApiTripsSlugBikesPostMutationKey } from "./hooks/useCreateBikeApiTripsSlugBikesPost";
 export { createBikeApiTripsSlugBikesPostMutationOptions } from "./hooks/useCreateBikeApiTripsSlugBikesPost";
 export { useCreateBikeApiTripsSlugBikesPost } from "./hooks/useCreateBikeApiTripsSlugBikesPost";

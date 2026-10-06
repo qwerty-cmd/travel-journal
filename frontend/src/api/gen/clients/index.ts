@@ -1,5 +1,6 @@
 export { cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "./cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export { changePasswordApiV2AuthPasswordPost } from "./changePasswordApiV2AuthPasswordPost";
+export { claimTripApiV2TripsClaimPost } from "./claimTripApiV2TripsClaimPost";
 export { createBikeApiTripsSlugBikesPost } from "./createBikeApiTripsSlugBikesPost";
 export { createBikeApiV2TripsTripIdBikesPost } from "./createBikeApiV2TripsTripIdBikesPost";
 export { createJoinRequestApiV2TripsTripIdJoinRequestsPost } from "./createJoinRequestApiV2TripsTripIdJoinRequestsPost";

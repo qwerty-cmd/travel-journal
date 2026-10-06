@@ -1,5 +1,6 @@
 export type { CancelJoinRequestApiV2JoinRequestsRequestIdCancelPostMutationKey } from "./useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export type { ChangePasswordApiV2AuthPasswordPostMutationKey } from "./useChangePasswordApiV2AuthPasswordPost";
+export type { ClaimTripApiV2TripsClaimPostMutationKey } from "./useClaimTripApiV2TripsClaimPost";
 export type { CreateBikeApiTripsSlugBikesPostMutationKey } from "./useCreateBikeApiTripsSlugBikesPost";
 export type { CreateBikeApiV2TripsTripIdBikesPostMutationKey } from "./useCreateBikeApiV2TripsTripIdBikesPost";
 export type { CreateJoinRequestApiV2TripsTripIdJoinRequestsPostMutationKey } from "./useCreateJoinRequestApiV2TripsTripIdJoinRequestsPost";
@@ -44,6 +45,9 @@ export { useCancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "./useC
 export { changePasswordApiV2AuthPasswordPostMutationKey } from "./useChangePasswordApiV2AuthPasswordPost";
 export { changePasswordApiV2AuthPasswordPostMutationOptions } from "./useChangePasswordApiV2AuthPasswordPost";
 export { useChangePasswordApiV2AuthPasswordPost } from "./useChangePasswordApiV2AuthPasswordPost";
+export { claimTripApiV2TripsClaimPostMutationKey } from "./useClaimTripApiV2TripsClaimPost";
+export { claimTripApiV2TripsClaimPostMutationOptions } from "./useClaimTripApiV2TripsClaimPost";
+export { useClaimTripApiV2TripsClaimPost } from "./useClaimTripApiV2TripsClaimPost";
 export { createBikeApiTripsSlugBikesPostMutationKey } from "./useCreateBikeApiTripsSlugBikesPost";
 export { createBikeApiTripsSlugBikesPostMutationOptions } from "./useCreateBikeApiTripsSlugBikesPost";
 export { useCreateBikeApiTripsSlugBikesPost } from "./useCreateBikeApiTripsSlugBikesPost";
