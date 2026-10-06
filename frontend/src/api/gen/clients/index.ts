@@ -1,6 +1,8 @@
+export { cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost } from "./cancelJoinRequestApiV2JoinRequestsRequestIdCancelPost";
 export { changePasswordApiV2AuthPasswordPost } from "./changePasswordApiV2AuthPasswordPost";
 export { createBikeApiTripsSlugBikesPost } from "./createBikeApiTripsSlugBikesPost";
 export { createBikeApiV2TripsTripIdBikesPost } from "./createBikeApiV2TripsTripIdBikesPost";
+export { createJoinRequestApiV2TripsTripIdJoinRequestsPost } from "./createJoinRequestApiV2TripsTripIdJoinRequestsPost";
 export { createStopApiTripsSlugStopsPost } from "./createStopApiTripsSlugStopsPost";
 export { createStopApiV2TripsTripIdStopsPost } from "./createStopApiV2TripsTripIdStopsPost";
 export { createTripApiV2TripsPost } from "./createTripApiV2TripsPost";
@@ -12,6 +14,7 @@ export { getTripApiV2TripsTripIdGet } from "./getTripApiV2TripsTripIdGet";
 export { leaveTripApiV2TripsTripIdLeavePost } from "./leaveTripApiV2TripsTripIdLeavePost";
 export { listBikesApiV2TripsTripIdBikesGet } from "./listBikesApiV2TripsTripIdBikesGet";
 export { listMembersApiV2TripsTripIdMembersGet } from "./listMembersApiV2TripsTripIdMembersGet";
+export { listMyJoinRequestsApiV2MeJoinRequestsGet } from "./listMyJoinRequestsApiV2MeJoinRequestsGet";
 export { listMyTripsApiV2MeTripsGet } from "./listMyTripsApiV2MeTripsGet";
 export { listPhotosApiTripsSlugStopsStopIdPhotosGet } from "./listPhotosApiTripsSlugStopsStopIdPhotosGet";
 export { listPhotosApiV2TripsTripIdStopsStopIdPhotosGet } from "./listPhotosApiV2TripsTripIdStopsStopIdPhotosGet";
