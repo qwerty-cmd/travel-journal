@@ -3120,7 +3120,11 @@ ORDINARY DEBT (dev + QA on t-am-fe-icons). DESIGN.md §4.5, Entry 30 D4 and this
 
 CURRENTLY BROKEN gap (dev on t-am-fe-auth-screens): `screens/signin.md` specifies `/recover` and a "Forgot your password?" link, but no task built them, so a rider who forgets their password can't use their recovery code — the code's only purpose. Scope: `/recover` route using the generated recover hook (username + recovery code + new password; typed-code normalisation is server-side), then the new recovery code shown once with the same RecoveryCodeStep and the same never-stored guarantee; the link on `/signin`. Handle 401 (wrong/used code, generic), 422, 429 with Retry-After. Tests: storage scan for both codes, single-flight submit. Validation: `cd frontend && npm test && npm run build`.
 
+DONE 2026-10-06. `/recover` (username, recovery code sent as typed, new password → signed in; replacement code via RecoveryCodeStep, only in component state, `gcTime: 0`, reset after copy) and the "Forgot your password?" link on /signin carrying the username. Tests: recover.test.tsx 7 (storage + mutation-cache scan for both codes, double tap, 401/422/429); frontend 476 + build. QA PASS.
+
 ## t-am-fe-auth-gaps
+
+Also (QA on t-am-fe-recover): no test passes a hostile `next` to /recover (code uses `safeNext`); `recover.tsx` sets the mono font with an inline style rather than a CSS class.
 
 ORDINARY DEBT (QA on t-am-fe-auth-screens). (1) No test asserts the recovery code is absent from the TanStack query/mutation cache — removing `gcTime: 0` and `rotate.reset()` on /account passes all tests. (2) /account errors use role=alert but don't move focus (spec silent). (3) Deferred account extras: Your trips, My requests, This phone queue section, Signed-out toast, iOS standalone line.
 
