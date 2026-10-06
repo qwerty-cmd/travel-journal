@@ -2941,6 +2941,8 @@ DONE 2026-10-06. `offline/queue.ts`: optional `userId` on entries (stored beside
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+**DONE.** `/trips/$tripId/bikes` lists bikes by rider name for every reader (v2 list, falling back to the persisted trip's bikes offline); Add bike / Edit only for `viewerRole()` rider or leader. Writes use the generated v2 hooks, online-only (offline shows a message and nothing is queued); create keeps one client id per form so a retry replays; PATCH sends only changed fields. 401/403/422/429 per trip-detail.md. Bikes is a link in the trip shell. Tests: `bikesV2.test.tsx` (20); frontend 662. QA passed, 3 mutants killed. Debt: `t-am-fe-bikes-v2-gaps`.
+
 ## t-am-fe-legacy-readonly
 **Goal.** Part (c) of scrum change 21: the legacy link becomes read-only, and the account supplies the rider's name.
 **Blockers.** `t-am-fe-rider-add-stop` (v2 add stop must exist before legacy writes go away) and `t-am-fe-join-flow` (it adds the claim CTA to `/t/$slug`, so the two are serialised).
