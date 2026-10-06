@@ -3261,6 +3261,8 @@ Scope: infra/azure/migrate-job.yaml only.
 AC: triggerType Manual; command `python -m app.data.migrate` baked into the container; same secretRefs and registry reference as app.yaml; no `secrets:`; image placeholder.
 Validation: [V-common]; grep -n "app.data.migrate" infra/azure/migrate-job.yaml.
 
+
+**DONE.** `infra/azure/migrate-job.yaml`: Manual trigger, parallelism 1, 600 s timeout, `replicaRetryLimit: 0` (each migration file is its own transaction; a blind retry would hide the failure the deploy must stop on), 0.25 CPU / 0.5Gi, `python -m app.data.migrate` with `PYTHONPATH=/app/backend`, env `DATABASE_URL` + the four `S3_*` secretRefs (Settings requires them at import). Container name `migrate`. Placeholders `${IMAGE}`, `${GHCR_USERNAME}`. **Owner:** set the same five secrets on the Job (it has its own store) and check the registry secret name.
 ## t-iac-sync-job-yaml
 
 Goal: create-time-only spec for the OneDrive sync Job.
@@ -3269,6 +3271,8 @@ Scope: infra/azure/sync-job.yaml only; header comment says "create-only: later u
 AC: GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_REFRESH_TOKEN appear as secretRef names only; plain GRAPH_ONEDRIVE_FOLDER placeholder; no `secrets:`; schedule matches the README's existing Job.
 Validation: [V-common]; `git diff --stat` shows no change to backend/app/storage/onedrive_sync.py.
 
+
+**DONE.** `infra/azure/sync-job.yaml` (create-only): Schedule `*/30 * * * *`, timeout 900 s, no retry, 0.25 CPU / 0.5Gi, `python /app/backend/app/storage/onedrive_sync.py` with no dash-leading args, DB + S3 secretRefs as the app, `GRAPH_CLIENT_ID/SECRET/REFRESH_TOKEN` as secretRefs only, `GRAPH_ONEDRIVE_FOLDER` as a placeholder value. Placeholders `${IMAGE}`, `${JOB_CONTAINER_NAME}`, `${GHCR_USERNAME}`, `${GRAPH_ONEDRIVE_FOLDER}`. `onedrive_sync.py` untouched. **Owner to confirm:** `ENVIRONMENT` value, registry secret name, container name (CLI default = Job name), and whether `job create --yaml` needs `properties.environmentId`; secret values set with `job secret set`.
 ## t-iac-owner-identity
 
 Goal: Azure identity the workflow signs in as, with minimum scope.
