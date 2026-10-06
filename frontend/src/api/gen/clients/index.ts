@@ -6,6 +6,7 @@ export { createJoinRequestApiV2TripsTripIdJoinRequestsPost } from "./createJoinR
 export { createStopApiTripsSlugStopsPost } from "./createStopApiTripsSlugStopsPost";
 export { createStopApiV2TripsTripIdStopsPost } from "./createStopApiV2TripsTripIdStopsPost";
 export { createTripApiV2TripsPost } from "./createTripApiV2TripsPost";
+export { decideJoinRequestApiV2TripsTripIdJoinRequestsRequestIdDecisionPost } from "./decideJoinRequestApiV2TripsTripIdJoinRequestsRequestIdDecisionPost";
 export { getMapApiTripsSlugMapGet } from "./getMapApiTripsSlugMapGet";
 export { getMapApiV2TripsTripIdMapGet } from "./getMapApiV2TripsTripIdMapGet";
 export { getMeApiV2AuthMeGet } from "./getMeApiV2AuthMeGet";
@@ -21,6 +22,7 @@ export { listPhotosApiV2TripsTripIdStopsStopIdPhotosGet } from "./listPhotosApiV
 export { listPublicTripsApiV2TripsGet } from "./listPublicTripsApiV2TripsGet";
 export { listStopsApiTripsSlugStopsGet } from "./listStopsApiTripsSlugStopsGet";
 export { listStopsApiV2TripsTripIdStopsGet } from "./listStopsApiV2TripsTripIdStopsGet";
+export { listTripJoinRequestsApiV2TripsTripIdJoinRequestsGet } from "./listTripJoinRequestsApiV2TripsTripIdJoinRequestsGet";
 export { patchBikeApiTripsSlugBikesIdPatch } from "./patchBikeApiTripsSlugBikesIdPatch";
 export { patchBikeApiV2TripsTripIdBikesBikeIdPatch } from "./patchBikeApiV2TripsTripIdBikesBikeIdPatch";
 export { patchTripApiV2TripsTripIdPatch } from "./patchTripApiV2TripsTripIdPatch";
@@ -32,5 +34,6 @@ export { signoutAllApiV2AuthSignoutAllPost } from "./signoutAllApiV2AuthSignoutA
 export { signoutApiV2AuthSignoutPost } from "./signoutApiV2AuthSignoutPost";
 export { signupApiV2AuthSignupPost } from "./signupApiV2AuthSignupPost";
 export { stepDownApiV2TripsTripIdStepDownPost } from "./stepDownApiV2TripsTripIdStepDownPost";
+export { unblockJoinRequestApiV2TripsTripIdJoinRequestsRequestIdUnblockPost } from "./unblockJoinRequestApiV2TripsTripIdJoinRequestsRequestIdUnblockPost";
 export { uploadPhotoApiTripsSlugStopsStopIdPhotosPost } from "./uploadPhotoApiTripsSlugStopsStopIdPhotosPost";
 export { uploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost } from "./uploadPhotoApiV2TripsTripIdStopsStopIdPhotosPost";
