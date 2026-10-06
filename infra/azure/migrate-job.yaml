@@ -1,0 +1,86 @@
+# Azure Container Apps Job spec for the database migrator. CREATE-TIME ONLY:
+#   az containerapp job create -g <rg> -n <migrate-job-name> \
+#     --environment <containerapps-environment> --yaml <rendered file>
+# Decision: docs/decision-log.md Entry 32. The Job reuses the app's image (one
+# deployable artifact); it only runs a different command in it.
+#
+# Later runs (the deploy workflow, before the app update):
+#   az containerapp job start -g <rg> -n <migrate-job-name> --image <same image as the app>
+# NEVER pass --command/--args (or any other template override) to `job start`: an
+# override replaces the whole template, env and secretRefs included, so the
+# migrator would start without DATABASE_URL. The command is baked in below.
+# Never re-apply this file with `job update --yaml`: whether that keeps the Job's
+# secrets is unverified (Entry 32). Image changes go through `--image` only.
+#
+# Placeholders, substituted with an explicit variable list
+# (envsubst '${IMAGE} ${GHCR_USERNAME}'), never a bare envsubst:
+#   ${IMAGE}          ghcr.io/<owner>/<repo>:<sha>, lower case; the app's image
+#   ${GHCR_USERNAME}  GitHub user owning the read:packages PAT; passed from a GitHub
+#                     environment variable (not a secret)
+#
+# NEVER add a `secrets:` key. A partial list deletes every omitted secret; omitting
+# the key keeps the secrets the owner set in ACA. Secret values live only in ACA.
+# The Job has its own secret store (README "OneDrive sync job"): the owner sets
+# database-url and the four s3-* secrets on it with the same names and values as
+# the app, and rotates them in every store together.
+#
+# Registry credential: as app.yaml. The ACA secret holding the GHCR PAT must be
+# called `ghcr-read-packages`, or this reference must be edited to the name ACA
+# generated (check: az containerapp job show -g <rg> -n <migrate-job-name>
+#   --query properties.configuration.registries).
+#
+# No OneDrive/Microsoft Graph variables (decision-log Entry 27): only the sync Job
+# reads them.
+properties:
+  configuration:
+    triggerType: Manual
+    manualTriggerConfig:
+      parallelism: 1
+      replicaCompletionCount: 1
+    # Generous for a handful of SQL files against Neon (incl. a cold-start wake);
+    # a run that exceeds it is killed and the execution reports Failed.
+    replicaTimeout: 600
+    # 0 = a failed run is NOT retried. Each migration file is its own transaction,
+    # so a failure leaves earlier files applied and the failing one rolled back.
+    # An automatic retry would re-run against an unexamined, partially migrated
+    # database and could mask the error the deploy workflow must stop on. A human
+    # reads the execution log, fixes the cause, then starts the Job again (the
+    # runner skips versions already in schema_migrations).
+    replicaRetryLimit: 0
+    registries:
+      - server: ghcr.io
+        username: ${GHCR_USERNAME}
+        passwordSecretRef: ghcr-read-packages
+  template:
+    containers:
+      - name: migrate
+        image: ${IMAGE}
+        # The image's WORKDIR is /app and its venv is /app/backend/.venv (repo-root
+        # Dockerfile). `-m app.data.migrate` needs backend/ on sys.path, hence
+        # PYTHONPATH below (same convention as the sync Job in the README).
+        # Exits non-zero on any failure, so the execution reports Failed.
+        command:
+          - /app/backend/.venv/bin/python
+        args:
+          - -m
+          - app.data.migrate
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: PYTHONPATH
+            value: /app/backend
+          - name: DATABASE_URL
+            secretRef: database-url
+          # The migrator uses only DATABASE_URL, but it reads it through
+          # app.core.config.get_settings(), and Settings declares the four S3_*
+          # fields below as required (no defaults): without them Settings() fails
+          # validation before any SQL runs. Same secretRefs as app.yaml.
+          - name: S3_ENDPOINT_URL
+            secretRef: s3-endpoint-url
+          - name: S3_ACCESS_KEY_ID
+            secretRef: s3-access-key-id
+          - name: S3_SECRET_ACCESS_KEY
+            secretRef: s3-secret-access-key
+          - name: S3_BUCKET_NAME
+            secretRef: s3-bucket-name
