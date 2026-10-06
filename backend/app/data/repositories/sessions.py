@@ -16,9 +16,10 @@ It never sees a token, only its hash.
 - **One query per request.** ``get_with_user`` joins ``users`` so the session
   gate learns, in the same round trip, who the session belongs to and whether
   that account is disabled.
-- **Who commits.** ``insert`` and the deletes do not commit: signup, signin,
-  signout, recovery and password change change sessions inside a larger
-  transaction. ``touch`` commits, because
+- **Who commits.** ``insert``, the deletes and the confirmation counter
+  (``reserve_confirmation``, ``reset_confirmations``) do not commit: signup,
+  signin, signout, recovery, password change and rotation change sessions
+  inside a larger transaction. ``touch`` commits, because
   it is the only write in the session gate and nothing else in the request
   should be held open behind it.
 - **It never raises ``ApiError``.** A missing row is ``None``.
@@ -119,6 +120,49 @@ async def touch(session: AsyncSession, token_hash: bytes, now: datetime) -> None
         update(sessions).where(sessions.c.token_hash == token_hash).values(last_used_at=now)
     )
     await session.commit()
+
+
+async def reserve_confirmation(
+    session: AsyncSession, token_hash: bytes, *, threshold: int
+) -> int | None:
+    """
+    Claim one password confirmation on this session, before it is checked. Does not commit.
+
+    One conditional ``UPDATE``: the counter goes up by one only while it is
+    under ``threshold``, so racing requests can claim at most ``threshold``
+    checks between them. Returns the new count, or ``None`` when the session is
+    already at ``threshold`` or its row is gone (decision-log Entry 33).
+    """
+    claimed = (
+        await session.execute(
+            update(sessions)
+            .where(
+                sessions.c.token_hash == token_hash,
+                sessions.c.failed_confirmations < threshold,
+            )
+            .values(failed_confirmations=sessions.c.failed_confirmations + 1)
+            .returning(sessions.c.failed_confirmations)
+        )
+    ).scalar_one_or_none()
+    return claimed
+
+
+async def reset_confirmations(session: AsyncSession, token_hash: bytes) -> bool:
+    """
+    Set this session's confirmation counter back to 0. Does not commit.
+
+    ``False`` when the row is gone, for example deleted by a concurrent 10th
+    wrong confirmation.
+    """
+    reset = (
+        await session.execute(
+            update(sessions)
+            .where(sessions.c.token_hash == token_hash)
+            .values(failed_confirmations=0)
+            .returning(sessions.c.token_hash)
+        )
+    ).first()
+    return reset is not None
 
 
 async def delete(session: AsyncSession, token_hash: bytes) -> None:

@@ -16,9 +16,11 @@ function getRotateRecoveryCodeApiV2AuthRecoveryCodePostUrl() {
  * @description **Context.** The recovery code is shown only once. A rider who lost it, or whose
  * signup response never arrived, gets a new one here from the Account screen
  * (decision-log Entry 29).
- * **How it works.** Gated by `require_session`, and the password is re-confirmed:
- * a wrong one is `403`, counted toward the same lockout as signin, and a locked
- * account is `429` with `Retry-After`. On success a new random code (26 Crockford
+ * **How it works.** Gated by `require_session`, and the password is re-confirmed.
+ * A wrong one is counted against this session only (decision-log Entry 33), never
+ * toward the account lockout, which never refuses this route: wrong attempts 1-9
+ * are `403`, and the 10th deletes the session and is `401` with the cookie
+ * cleared. A right one resets the session's count. On success a new random code (26 Crockford
  * base32 characters) replaces the old one, which stops working at once; only its
  * SHA-256 is stored, and this response is the only time it is shown. Sessions
  * are not touched.

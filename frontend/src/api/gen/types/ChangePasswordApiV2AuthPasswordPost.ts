@@ -15,13 +15,13 @@ export type ChangePasswordApiV2AuthPasswordPost200 = MeOut;
 
 /**
  * ErrorEnvelope
- * @description No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.
+ * @description No valid session: none sent, expired, signed out or revoked, or the account is disabled; or this was the 10th wrong `currentPassword` on this session, which deletes the session. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.
 */
 export type ChangePasswordApiV2AuthPasswordPost401 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description `currentPassword` is wrong. Counts toward the account lockout.
+ * @description `currentPassword` is wrong (attempts 1-9 on this session). Counted per session, never toward the account lockout.
 */
 export type ChangePasswordApiV2AuthPasswordPost403 = ErrorEnvelope;
 
@@ -33,7 +33,7 @@ export type ChangePasswordApiV2AuthPasswordPost422 = ErrorEnvelope;
 
 /**
  * ErrorEnvelope
- * @description The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.
+ * @description The `signin` per-address limit. The account lockout never refuses this route. Retry after `Retry-After` seconds.
 */
 export type ChangePasswordApiV2AuthPasswordPost429 = ErrorEnvelope;
 

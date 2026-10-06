@@ -162,7 +162,8 @@ class PasswordChange(BaseModel):
     currentPassword: str = Field(
         max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
         description="The account's current password. Not format-checked: a wrong one is a "
-        "403 and counts against the account lockout." + _PRESENTED_PASSWORD_RULE,
+        "403, counted against this session (the 10th wrong one on a session is a 401 and "
+        "deletes the session), never against the account lockout." + _PRESENTED_PASSWORD_RULE,
     )
     newPassword: NewPassword = Field(
         description="The password to set. Equal to the current one is a 422. " + _NEW_PASSWORD_RULE
@@ -174,8 +175,9 @@ class RecoveryCodeCreate(BaseModel):
 
     password: str = Field(
         description="The account's current password, re-confirmed before a new recovery code "
-        "is issued. Not format-checked: a wrong one is a 403 and counts against the account "
-        "lockout." + _PRESENTED_PASSWORD_RULE,
+        "is issued. Not format-checked: a wrong one is a 403, counted against this session "
+        "(the 10th wrong one on a session is a 401 and deletes the session), never against "
+        "the account lockout." + _PRESENTED_PASSWORD_RULE,
         max_length=PRESENTED_CREDENTIAL_MAX_LENGTH,
     )
 

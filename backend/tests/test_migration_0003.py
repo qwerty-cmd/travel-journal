@@ -40,6 +40,22 @@ from app.data.migrate import MIGRATIONS_DIR, run_migrations
 MIGRATION_0003 = "0003_accounts_membership"
 PRE_0003_FILES = ("0001_initial_schema.sql", "0002_trips_slugs_differ_check.sql")
 
+
+def migrations_through(directory: Path, last: str) -> Path:
+    """
+    ``directory`` holding copies of every real migration up to and including ``last``.
+
+    Running the real runner on it stops at ``last``, so a test about one
+    migration keeps passing as later migrations are added.
+    """
+    directory.mkdir(exist_ok=True)
+    stems = [path.stem for path in sorted(MIGRATIONS_DIR.glob("*.sql"))]
+    assert last in stems, f"no migration {last}"
+    for stem in stems[: stems.index(last) + 1]:
+        shutil.copy(MIGRATIONS_DIR / f"{stem}.sql", directory / f"{stem}.sql")
+    return directory
+
+
 # Tables that exist before 0003, and the columns they had then. The snapshot
 # compares exactly these, so a migration that rewrote an existing value (not
 # just added a column) fails.
@@ -77,10 +93,7 @@ async def pre_0003_database(database_url: str, tmp_path: Path) -> AsyncIterator[
         async with admin.connect() as conn:
             await conn.execute(text(f'CREATE DATABASE "{name}"'))
 
-        pre_dir = tmp_path / "migrations"
-        pre_dir.mkdir()
-        for filename in PRE_0003_FILES:
-            shutil.copy(MIGRATIONS_DIR / filename, pre_dir / filename)
+        pre_dir = migrations_through(tmp_path / "migrations", Path(PRE_0003_FILES[-1]).stem)
         assert await run_migrations(url, pre_dir) == [Path(f).stem for f in PRE_0003_FILES]
 
         engine = create_async_engine(url)
@@ -203,7 +216,10 @@ async def _slug_bytes(conn: AsyncConnection) -> dict[str, tuple[bytes, bytes]]:
     return {row[0]: (bytes(row[1]), bytes(row[2])) for row in rows}
 
 
-async def test_obligation_13_existing_data_survives_0003(pre_0003_database: str) -> None:
+async def test_obligation_13_existing_data_survives_0003(
+    pre_0003_database: str, tmp_path: Path
+) -> None:
+    through_0003 = migrations_through(tmp_path / "through_0003", MIGRATION_0003)
     engine = create_async_engine(pre_0003_database)
     try:
         async with engine.connect() as conn:
@@ -218,7 +234,7 @@ async def test_obligation_13_existing_data_survives_0003(pre_0003_database: str)
         assert counts_before["bikes"] == 2
         assert not tables_before & set(NEW_TABLES)
 
-        assert await run_migrations(pre_0003_database) == [MIGRATION_0003]
+        assert await run_migrations(pre_0003_database, through_0003) == [MIGRATION_0003]
 
         async with engine.connect() as conn:
             trips = (
@@ -252,8 +268,14 @@ async def test_obligation_13_existing_data_survives_0003(pre_0003_database: str)
         await engine.dispose()
 
 
-async def test_second_migrate_applies_nothing(pre_0003_database: str) -> None:
-    assert await run_migrations(pre_0003_database) == [MIGRATION_0003]
+async def test_second_migrate_applies_nothing(pre_0003_database: str, tmp_path: Path) -> None:
+    through_0003 = migrations_through(tmp_path / "through_0003", MIGRATION_0003)
+    assert await run_migrations(pre_0003_database, through_0003) == [MIGRATION_0003]
+    assert await run_migrations(pre_0003_database, through_0003) == []
+    # The full directory applies only what comes after 0003, never 0003 again,
+    # and then nothing.
+    later = [p.stem for p in sorted(MIGRATIONS_DIR.glob("*.sql")) if p.stem > MIGRATION_0003]
+    assert await run_migrations(pre_0003_database) == later
     assert await run_migrations(pre_0003_database) == []
 
 

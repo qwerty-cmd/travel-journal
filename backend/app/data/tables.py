@@ -1,7 +1,7 @@
 """
 SQLAlchemy Core table metadata for the Postgres schema.
 
-This is the Python-side mirror of ``migrations/*.sql`` (0001 through 0003) — the
+This is the Python-side mirror of ``migrations/*.sql`` (0001 through 0004) — the
 SQL files are what actually create the schema, this module is what the
 repositories in ``data/repositories/`` build queries against. The two must
 agree; ``tests/test_schema.py`` reflects the live database and asserts that
@@ -82,7 +82,8 @@ users = Table(
 )
 
 # Session — only the SHA-256 of the cookie token is stored, never the token.
-# Rows cascade with their user.
+# Rows cascade with their user. failed_confirmations (0004, Entry 33) counts
+# wrong password confirmations on this session; the threshold lives in code.
 sessions = Table(
     "sessions",
     metadata,
@@ -91,8 +92,10 @@ sessions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("last_used_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
     Column("absolute_expires_at", DateTime(timezone=True), nullable=False),
+    Column("failed_confirmations", Integer, nullable=False, server_default=text("0")),
     CheckConstraint("octet_length(token_hash) = 32", name="sessions_token_hash_length_check"),
     CheckConstraint("absolute_expires_at > created_at", name="sessions_expiry_check"),
+    CheckConstraint("failed_confirmations >= 0", name="sessions_failed_confirmations_check"),
     Index("ix_sessions_user_id", "user_id"),
 )
 

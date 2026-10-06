@@ -1137,7 +1137,7 @@
           "auth"
         ],
         "summary": "Change the password, signing every other device out",
-        "description": "**Context.** Lets a signed-in rider change their password, and cuts off anyone\nelse who was signed in to the account (decision-log Entry 29; contract,\n\"Sessions\" \u2192 Revocation).\n\n**How it works.** Gated by `require_session`. `currentPassword` is\nNFKC-normalised and verified; a wrong one is `403`, counted toward the same\nlockout as signin, and a locked account is `429` with `Retry-After`. A\n`newPassword` equal to the current one is `422`. On success, in one\ntransaction: the new password is stored as an argon2id hash, every session of\nthe account is deleted (this one included), and exactly one new session is\nissued to this device with a `Set-Cookie`. The recovery code is unchanged.\n\n**Related APIs.** `POST /api/v2/auth/recover` (without the current password),\n`POST /api/v2/auth/signout-all`, `GET /api/v2/auth/me`.",
+        "description": "**Context.** Lets a signed-in rider change their password, and cuts off anyone\nelse who was signed in to the account (decision-log Entry 29; contract,\n\"Sessions\" \u2192 Revocation).\n\n**How it works.** Gated by `require_session`. `currentPassword` is\nNFKC-normalised and verified. A wrong one is counted against this session only\n(decision-log Entry 33), never toward the account lockout, which never refuses\nthis route: wrong attempts 1-9 are `403`, and the 10th deletes the session and\nis `401` with the cookie cleared. A right one resets the session's count. A\n`newPassword` equal to the current one is `422`. On success, in one\ntransaction: the new password is stored as an argon2id hash, every session of\nthe account is deleted (this one included), and exactly one new session is\nissued to this device with a `Set-Cookie`. The recovery code is unchanged.\n\n**Related APIs.** `POST /api/v2/auth/recover` (without the current password),\n`POST /api/v2/auth/signout-all`, `GET /api/v2/auth/me`.",
         "operationId": "change_password_api_v2_auth_password_post",
         "requestBody": {
           "content": {
@@ -1161,7 +1161,7 @@
             }
           },
           "401": {
-            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled; or this was the 10th wrong `currentPassword` on this session, which deletes the session. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1171,7 +1171,7 @@
             }
           },
           "403": {
-            "description": "`currentPassword` is wrong. Counts toward the account lockout.",
+            "description": "`currentPassword` is wrong (attempts 1-9 on this session). Counted per session, never toward the account lockout.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1191,7 +1191,7 @@
             }
           },
           "429": {
-            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "description": "The `signin` per-address limit. The account lockout never refuses this route. Retry after `Retry-After` seconds.",
             "headers": {
               "Retry-After": {
                 "description": "Whole seconds to wait before retrying; always at least 1.",
@@ -1218,7 +1218,7 @@
           "auth"
         ],
         "summary": "Replace the recovery code with a new one",
-        "description": "**Context.** The recovery code is shown only once. A rider who lost it, or whose\nsignup response never arrived, gets a new one here from the Account screen\n(decision-log Entry 29).\n\n**How it works.** Gated by `require_session`, and the password is re-confirmed:\na wrong one is `403`, counted toward the same lockout as signin, and a locked\naccount is `429` with `Retry-After`. On success a new random code (26 Crockford\nbase32 characters) replaces the old one, which stops working at once; only its\nSHA-256 is stored, and this response is the only time it is shown. Sessions\nare not touched.\n\n**Related APIs.** `POST /api/v2/auth/recover` (where the code is used),\n`POST /api/v2/auth/signup` (the first code), `POST /api/v2/auth/password`.",
+        "description": "**Context.** The recovery code is shown only once. A rider who lost it, or whose\nsignup response never arrived, gets a new one here from the Account screen\n(decision-log Entry 29).\n\n**How it works.** Gated by `require_session`, and the password is re-confirmed.\nA wrong one is counted against this session only (decision-log Entry 33), never\ntoward the account lockout, which never refuses this route: wrong attempts 1-9\nare `403`, and the 10th deletes the session and is `401` with the cookie\ncleared. A right one resets the session's count. On success a new random code (26 Crockford\nbase32 characters) replaces the old one, which stops working at once; only its\nSHA-256 is stored, and this response is the only time it is shown. Sessions\nare not touched.\n\n**Related APIs.** `POST /api/v2/auth/recover` (where the code is used),\n`POST /api/v2/auth/signup` (the first code), `POST /api/v2/auth/password`.",
         "operationId": "rotate_recovery_code_api_v2_auth_recovery_code_post",
         "requestBody": {
           "content": {
@@ -1242,7 +1242,7 @@
             }
           },
           "401": {
-            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
+            "description": "No valid session: none sent, expired, signed out or revoked, or the account is disabled; or this was the 10th wrong `password` on this session, which deletes the session. If a session cookie was sent it is cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm=\"bike-trip-journal\"`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1252,7 +1252,7 @@
             }
           },
           "403": {
-            "description": "`password` is wrong. Counts toward the account lockout.",
+            "description": "`password` is wrong (attempts 1-9 on this session). Counted per session, never toward the account lockout.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1272,7 +1272,7 @@
             }
           },
           "429": {
-            "description": "The account is locked after 10 failed attempts, for 15 minutes, even for the correct password. Also the `signin` per-address limit. Retry after `Retry-After` seconds.",
+            "description": "The `signin` per-address limit. The account lockout never refuses this route. Retry after `Retry-After` seconds.",
             "headers": {
               "Retry-After": {
                 "description": "Whole seconds to wait before retrying; always at least 1.",
@@ -4369,7 +4369,7 @@
             "type": "string",
             "maxLength": 1024,
             "title": "Currentpassword",
-            "description": "The account's current password. Not format-checked: a wrong one is a 403 and counts against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+            "description": "The account's current password. Not format-checked: a wrong one is a 403, counted against this session (the 10th wrong one on a session is a 401 and deletes the session), never against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
           },
           "newPassword": {
             "type": "string",
@@ -4484,7 +4484,7 @@
             "type": "string",
             "maxLength": 1024,
             "title": "Password",
-            "description": "The account's current password, re-confirmed before a new recovery code is issued. Not format-checked: a wrong one is a 403 and counts against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
+            "description": "The account's current password, re-confirmed before a new recovery code is issued. Not format-checked: a wrong one is a 403, counted against this session (the 10th wrong one on a session is a 401 and deletes the session), never against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR."
           }
         },
         "type": "object",

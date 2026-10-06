@@ -37,10 +37,18 @@ recover a forgotten one with the recovery code, and rotate that code.
   by resetting the counter, but only if no lock is in force: if a concurrent
   failure locked the account meanwhile, the answer is ``429`` and no session
   is issued. A disabled account claims nothing and is never counted.
-  Recover, password change and recovery-code rotation go through the same
-  claim: a wrong recovery code (``401``) or a wrong current password (``403``)
-  keeps its claim, and a locked account is ``429`` on all three, even for the
-  right credential.
+  Recover goes through the same claim: a wrong recovery code (``401``) keeps
+  its claim, and a locked account is ``429`` even for the right code.
+- **Per-session confirmation limit** (contract, "Rate limits and lockout";
+  decision-log Entry 33). Password change and recovery-code rotation never
+  read or write the account lockout. A wrong password there is counted in
+  ``sessions.failed_confirmations`` of the session that sent it, claimed by one
+  conditional ``UPDATE`` and committed before argon2, so racing requests get at
+  most 10 checks per session. Wrong attempts 1-9 are ``403``; the 10th, or a
+  request that finds the session already at 10, deletes the session and is
+  ``401`` with the cookie cleared. A right password resets the counter in the
+  transaction that does the work; if the row is gone by then (a concurrent 10th
+  failure), the work rolls back and the answer is ``401``.
 - **Recovery codes are compared as SHA-256, and used once.** What the user
   typed is mapped to the canonical form first (uppercase, hyphens and spaces
   dropped, ``O``/``I``/``L`` read as ``0``/``1``/``1``), then hashed. The code
@@ -130,6 +138,10 @@ BAD_RECOVERY_MESSAGE = "Username or recovery code is incorrect."
 # A signed-in caller re-confirming their password (password change, rotation).
 WRONG_PASSWORD_MESSAGE = "That password is incorrect."
 
+# Per-session confirmation limit (contract, "Rate limits and lockout"; Entry 33).
+CONFIRMATION_THRESHOLD = 10
+TOO_MANY_CONFIRMATIONS_MESSAGE = "Signed out after too many wrong passwords. Sign in again."
+
 SAME_PASSWORD_MESSAGE = "The new password must be different from the current one."
 
 # What a user may type for a recovery code, mapped onto the canonical form the
@@ -207,41 +219,56 @@ async def _count_failure(db: SessionDep, user_id: str, now: datetime) -> None:
     await db.commit()
 
 
-async def _hand_back_claim(db: SessionDep, user_id: str, now: datetime) -> None:
-    """
-    A successful check resets the counter, in the caller's transaction, or raises ``429``.
-
-    Refused (and committed) when a concurrent failure locked the account while
-    this check ran: the lock stands even for the right credential. The
-    ``UPDATE`` also takes the account's row lock, so two concurrent password
-    changes or rotations run their writes one after the other.
-    """
-    if not await users_repo.reset_lockout(db, user_id, now=now):
-        await db.commit()
-        raise await _locked_error(db, user_id, now)
+async def _revoke_for_confirmations(db: SessionDep, token_hash: bytes) -> ApiError:
+    """Delete this session, commit, and return the ``401`` that clears its cookie."""
+    await sessions_repo.delete(db, token_hash)
+    await db.commit()
+    return ApiError.unauthenticated(
+        TOO_MANY_CONFIRMATIONS_MESSAGE, set_cookie=cleared_session_cookie_header()
+    )
 
 
-async def _confirm_own_password(db: SessionDep, user_id: str, presented: str) -> datetime:
+async def _hand_back_claim(db: SessionDep, token_hash: bytes) -> None:
     """
-    Check a signed-in caller's password against the lockout. Returns the time it was checked.
+    A right password resets this session's counter, in the caller's transaction, or raises ``401``.
 
-    ``429`` if locked, ``403`` if wrong (counted). On success the claim is still
-    held: the caller hands it back with ``_hand_back_claim`` in the transaction
-    that does its work.
+    The row is gone when a concurrent 10th wrong confirmation (or a signout)
+    deleted it while this check ran: the caller's work is rolled back and the
+    session is treated as signed out.
     """
-    now = _utcnow()
-    user = await users_repo.get_credentials_by_id(db, user_id)
-    if user is None:
+    if not await sessions_repo.reset_confirmations(db, token_hash):
+        await db.rollback()
+        raise ApiError.unauthenticated(
+            SIGN_IN_REQUIRED_MESSAGE, set_cookie=cleared_session_cookie_header()
+        )
+
+
+async def _confirm_own_password(db: SessionDep, user: SessionUser, presented: str) -> None:
+    """
+    Check a signed-in caller's password against the per-session limit (Entry 33).
+
+    The attempt is claimed on the caller's session and committed before argon2.
+    ``403`` if wrong (the claim is kept); ``401`` with the session deleted when
+    the claim is refused or this was the 10th wrong one. On success the claim is
+    still held: the caller hands it back with ``_hand_back_claim`` in the
+    transaction that does its work. The account lockout is never read or written.
+    """
+    credentials = await users_repo.get_credentials_by_id(db, user.user_id)
+    if credentials is None:
         await db.commit()
         raise ApiError.unauthenticated(SIGN_IN_REQUIRED_MESSAGE)
 
-    await _claim_or_refuse(db, user_id, now)
-    password_ok = await verify_password(user.password_hash, presented)
-    now = _utcnow()  # after argon2: a lock runs from the failure that set it
-    if not password_ok:
-        await _count_failure(db, user_id, now)
+    claimed = await sessions_repo.reserve_confirmation(
+        db, user.token_hash, threshold=CONFIRMATION_THRESHOLD
+    )
+    if claimed is None:
+        raise await _revoke_for_confirmations(db, user.token_hash)
+    await db.commit()
+
+    if not await verify_password(credentials.password_hash, presented):
+        if claimed >= CONFIRMATION_THRESHOLD:
+            raise await _revoke_for_confirmations(db, user.token_hash)
         raise ApiError.forbidden(WRONG_PASSWORD_MESSAGE)
-    return now
 
 
 @router.post(
@@ -638,15 +665,16 @@ async def recover(
     responses=error_responses(
         {
             HTTPStatus.UNAUTHORIZED: "No valid session: none sent, expired, signed out or "
-            "revoked, or the account is disabled. If a session cookie was sent it is cleared "
-            '(`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`.',
-            HTTPStatus.FORBIDDEN: "`currentPassword` is wrong. Counts toward the account lockout.",
+            "revoked, or the account is disabled; or this was the 10th wrong `currentPassword` "
+            "on this session, which deletes the session. If a session cookie was sent it is "
+            'cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`.',
+            HTTPStatus.FORBIDDEN: "`currentPassword` is wrong (attempts 1-9 on this session). "
+            "Counted per session, never toward the account lockout.",
             HTTPStatus.UNPROCESSABLE_ENTITY: "The body is missing a field, `currentPassword` is "
             "over 1024 characters, the new password breaks its rule, or it equals the current "
             "one.",
-            HTTPStatus.TOO_MANY_REQUESTS: "The account is locked after 10 failed attempts, "
-            "for 15 minutes, even for the correct password. Also the `signin` per-address "
-            "limit. Retry after `Retry-After` seconds.",
+            HTTPStatus.TOO_MANY_REQUESTS: "The `signin` per-address limit. The account lockout "
+            "never refuses this route. Retry after `Retry-After` seconds.",
         }
     ),
     description="""
@@ -655,8 +683,10 @@ else who was signed in to the account (decision-log Entry 29; contract,
 "Sessions" → Revocation).
 
 **How it works.** Gated by `require_session`. `currentPassword` is
-NFKC-normalised and verified; a wrong one is `403`, counted toward the same
-lockout as signin, and a locked account is `429` with `Retry-After`. A
+NFKC-normalised and verified. A wrong one is counted against this session only
+(decision-log Entry 33), never toward the account lockout, which never refuses
+this route: wrong attempts 1-9 are `403`, and the 10th deletes the session and
+is `401` with the cookie cleared. A right one resets the session's count. A
 `newPassword` equal to the current one is `422`. On success, in one
 transaction: the new password is stored as an argon2id hash, every session of
 the account is deleted (this one included), and exactly one new session is
@@ -673,17 +703,17 @@ async def change_password(
     db: SessionDep,
 ) -> MeOut:
     """Verify the current password, set the new one, and re-issue this device's session only."""
-    now = await _confirm_own_password(db, user.user_id, body.currentPassword)
+    await _confirm_own_password(db, user, body.currentPassword)
 
     # `newPassword` is already NFKC-normalised by the model; compare like with like.
     if normalise(body.currentPassword) == body.newPassword:
-        await _hand_back_claim(db, user.user_id, now)
+        await _hand_back_claim(db, user.token_hash)
         await db.commit()
         raise ApiError.validation(SAME_PASSWORD_MESSAGE)
 
     new_password_hash = await hash_password(body.newPassword)
     now = _utcnow()
-    await _hand_back_claim(db, user.user_id, now)
+    await _hand_back_claim(db, user.token_hash)
     await users_repo.set_password(db, user.user_id, password_hash=new_password_hash, now=now)
     await sessions_repo.delete_all_for_user(db, user.user_id)
     token = await create_session(db, user.user_id, now=now)
@@ -702,14 +732,15 @@ async def change_password(
     responses=error_responses(
         {
             HTTPStatus.UNAUTHORIZED: "No valid session: none sent, expired, signed out or "
-            "revoked, or the account is disabled. If a session cookie was sent it is cleared "
-            '(`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`.',
-            HTTPStatus.FORBIDDEN: "`password` is wrong. Counts toward the account lockout.",
+            "revoked, or the account is disabled; or this was the 10th wrong `password` on "
+            "this session, which deletes the session. If a session cookie was sent it is "
+            'cleared (`Max-Age=0`). Carries `WWW-Authenticate: Cookie realm="bike-trip-journal"`.',
+            HTTPStatus.FORBIDDEN: "`password` is wrong (attempts 1-9 on this session). Counted "
+            "per session, never toward the account lockout.",
             HTTPStatus.UNPROCESSABLE_ENTITY: "The body is missing `password`, or it is over "
             "1024 characters.",
-            HTTPStatus.TOO_MANY_REQUESTS: "The account is locked after 10 failed attempts, "
-            "for 15 minutes, even for the correct password. Also the `signin` per-address "
-            "limit. Retry after `Retry-After` seconds.",
+            HTTPStatus.TOO_MANY_REQUESTS: "The `signin` per-address limit. The account lockout "
+            "never refuses this route. Retry after `Retry-After` seconds.",
         }
     ),
     description="""
@@ -717,9 +748,11 @@ async def change_password(
 signup response never arrived, gets a new one here from the Account screen
 (decision-log Entry 29).
 
-**How it works.** Gated by `require_session`, and the password is re-confirmed:
-a wrong one is `403`, counted toward the same lockout as signin, and a locked
-account is `429` with `Retry-After`. On success a new random code (26 Crockford
+**How it works.** Gated by `require_session`, and the password is re-confirmed.
+A wrong one is counted against this session only (decision-log Entry 33), never
+toward the account lockout, which never refuses this route: wrong attempts 1-9
+are `403`, and the 10th deletes the session and is `401` with the cookie
+cleared. A right one resets the session's count. On success a new random code (26 Crockford
 base32 characters) replaces the old one, which stops working at once; only its
 SHA-256 is stored, and this response is the only time it is shown. Sessions
 are not touched.
@@ -734,9 +767,9 @@ async def rotate_recovery_code(
     db: SessionDep,
 ) -> RecoveryCodeIssuedOut:
     """Verify the password, then replace the recovery code and show the new one once."""
-    now = await _confirm_own_password(db, user.user_id, body.password)
+    await _confirm_own_password(db, user, body.password)
     new_code = new_recovery_code()
-    await _hand_back_claim(db, user.user_id, now)
+    await _hand_back_claim(db, user.token_hash)
     await users_repo.set_recovery_code(db, user.user_id, code_hash=hash_recovery_code(new_code))
     await db.commit()
 

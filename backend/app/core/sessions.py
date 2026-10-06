@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,13 +83,16 @@ class SessionUser:
     The account a valid session belongs to. What ``require_session`` returns.
 
     ``username`` is private: it goes only to its owner (``MeOut``).
-    ``display_name`` is the public name.
+    ``display_name`` is the public name. ``token_hash`` names the session the
+    request came with, for the per-session confirmation limit (Entry 33). It is
+    internal: never put it in a response.
     """
 
     user_id: str
     username: str
     display_name: str
     created_at: datetime
+    token_hash: bytes = field(repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +173,7 @@ async def resolve_session(
             username=row.username,
             display_name=row.display_name,
             created_at=row.user_created_at,
+            token_hash=token_hash,
         ),
         refreshed=refreshed,
     )

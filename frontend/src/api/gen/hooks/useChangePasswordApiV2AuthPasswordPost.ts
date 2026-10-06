@@ -30,8 +30,10 @@ export function changePasswordApiV2AuthPasswordPostMutationOptions<TContext = un
  * else who was signed in to the account (decision-log Entry 29; contract,
  * "Sessions" → Revocation).
  * **How it works.** Gated by `require_session`. `currentPassword` is
- * NFKC-normalised and verified; a wrong one is `403`, counted toward the same
- * lockout as signin, and a locked account is `429` with `Retry-After`. A
+ * NFKC-normalised and verified. A wrong one is counted against this session only
+ * (decision-log Entry 33), never toward the account lockout, which never refuses
+ * this route: wrong attempts 1-9 are `403`, and the 10th deletes the session and
+ * is `401` with the cookie cleared. A right one resets the session's count. A
  * `newPassword` equal to the current one is `422`. On success, in one
  * transaction: the new password is stored as an argon2id hash, every session of
  * the account is deleted (this one included), and exactly one new session is

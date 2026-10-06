@@ -10,7 +10,7 @@
 */
 export type PasswordChange = {
     /**
-     * @description The account\'s current password. Not format-checked: a wrong one is a 403 and counts against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR.
+     * @description The account\'s current password. Not format-checked: a wrong one is a 403, counted against this session (the 10th wrong one on a session is a 401 and deletes the session), never against the account lockout. NFKC-normalised before it is checked, the same as a new password. At most 1024 characters, or the request is rejected with 422 / VALIDATION_ERROR.
      * @maxLength 1024
      * @type string
     */

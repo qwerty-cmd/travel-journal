@@ -21,11 +21,13 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.data.repositories import sessions as sessions_repo
 from app.data.repositories import users as users_repo
 from tests.test_auth_endpoints import (
     PASSWORD,
     Accounts,
     accounts,  # noqa: F401  (fixture)
+    assert_cleared,
     client,  # noqa: F401  (fixture)
     cookie_header,
     issued_token,
@@ -114,7 +116,7 @@ async def test_parallel_recoveries_with_one_code_succeed_exactly_once(
     assert (await signin(client, username, new_password(loser))).status_code == 401
 
 
-async def test_parallel_password_changes_leave_exactly_one_session(
+async def test_parallel_password_changes_from_one_session_leave_exactly_one_session(
     client: AsyncClient,  # noqa: F811
     accounts: Accounts,  # noqa: F811
     migrated_engine: AsyncEngine,
@@ -127,8 +129,8 @@ async def test_parallel_password_changes_leave_exactly_one_session(
     token = issued_token(created)
 
     # Every racer has verified the current password before any of them writes.
-    barrier = Barrier(users_repo.reset_lockout, 2)
-    monkeypatch.setattr(users_repo, "reset_lockout", barrier)
+    barrier = Barrier(sessions_repo.reset_confirmations, 2)
+    monkeypatch.setattr(sessions_repo, "reset_confirmations", barrier)
 
     async def change(i: int) -> httpx.Response:
         return await send(
@@ -141,9 +143,16 @@ async def test_parallel_password_changes_leave_exactly_one_session(
 
     responses = await asyncio.gather(change(0), change(1))
 
-    assert [r.status_code for r in responses] == [200, 200]
+    # Both racers hand their claim back on the one session row, so they run one
+    # after the other: the first revokes every session, the second finds its
+    # row gone and is 401 with nothing written (Entry 33).
+    assert sorted(r.status_code for r in responses) == [200, 401]
+    won = next(r for r in responses if r.status_code == 200)
+    lost = next(r for r in responses if r.status_code == 401)
+    assert_cleared(lost)
     row = await user_row(migrated_engine, username)
     sessions = await session_rows(migrated_engine, row.id)
-    assert len(sessions) == 1, f"{len(sessions)} sessions after two racing password changes"
-    issued = {sha256_bytes(issued_token(r)) for r in responses}
-    assert sessions[0].token_hash in issued
+    assert [s.token_hash for s in sessions] == [sha256_bytes(issued_token(won))]
+    winner = responses.index(won)
+    assert (await signin(client, username, new_password(winner))).status_code == 200
+    assert (await signin(client, username, new_password(1 - winner))).status_code == 401

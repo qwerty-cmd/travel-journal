@@ -222,6 +222,8 @@ async def test_create_session_stores_only_sha256_of_token(
     assert row["created_at"] == T0
     assert row["last_used_at"] == T0
     assert row["absolute_expires_at"] == T0 + timedelta(days=365)
+    # Migration 0004 (Entry 33): a new session starts with no failed confirmations.
+    assert row["failed_confirmations"] == 0
 
     # Nothing in the row is, contains, or decodes to the token.
     token_raw = base64.urlsafe_b64decode(token + "=")
@@ -229,13 +231,15 @@ async def test_create_session_stores_only_sha256_of_token(
         rendered = value if isinstance(value, bytes) else str(value).encode()
         assert token.encode() not in rendered
         assert token_raw not in rendered
-    # The table has no other column a token could hide in.
+    # The table has no other column a token could hide in (``failed_confirmations``
+    # is an integer counter, migration 0004).
     assert set(row) == {
         "token_hash",
         "user_id",
         "created_at",
         "last_used_at",
         "absolute_expires_at",
+        "failed_confirmations",
     }
 
 

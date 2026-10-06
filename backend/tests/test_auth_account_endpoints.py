@@ -16,8 +16,9 @@ and the task AC, before the handlers were read:
 - recovery: single-use, rotation, the typed form (case, hyphens and spaces,
   O/I/L), no non-ASCII look-alikes, and one identical 401 for unknown user, wrong
   code, used code and disabled account;
-- the shared ``failed_logins`` counter and the lock across all four credential
-  checks;
+- the shared ``failed_logins`` counter and the lock across signin and recover;
+  wrong current/rotation passwords never touch it (Entry 33, per-session limit
+  in ``test_auth_session_confirm.py``);
 - only recover and recovery-code return ``recoveryCode``; nothing sensitive in
   bodies, logs or captured output;
 - a session older than 24 h on signout-all and password change: the refresh
@@ -359,7 +360,7 @@ async def test_password_change_without_a_valid_session_is_401(
     assert after.password_hash == before.password_hash
 
 
-async def test_password_change_wrong_current_is_403_counted_and_changes_nothing(
+async def test_password_change_wrong_current_is_403_and_changes_nothing(
     client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
 ) -> None:
     alice = await new_account(client, accounts)
@@ -371,7 +372,7 @@ async def test_password_change_wrong_current_is_403_counted_and_changes_nothing(
     assert "set-cookie" not in response.headers
     after = await user_row(migrated_engine, alice.username)
     assert after.password_hash == before.password_hash
-    assert after.failed_logins == 1
+    assert after.failed_logins == 0, "counted per session, not against the account (Entry 33)"
     assert await token_hashes(migrated_engine, alice.id) == {sha256_bytes(alice.token)}
     assert await me_status(client, alice.token) == 200
     assert (await signin(client, alice.username, PASSWORD)).status_code == 200
@@ -677,7 +678,7 @@ async def test_rotation_without_a_valid_session_is_401(
     assert "recoveryCode" not in response.text
 
 
-async def test_rotation_wrong_password_is_403_counted_and_keeps_the_code(
+async def test_rotation_wrong_password_is_403_and_keeps_the_code(
     client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
 ) -> None:
     alice = await new_account(client, accounts)
@@ -689,7 +690,7 @@ async def test_rotation_wrong_password_is_403_counted_and_keeps_the_code(
     assert "recoveryCode" not in response.text
     after = await user_row(migrated_engine, alice.username)
     assert after.recovery_code_hash == before.recovery_code_hash
-    assert after.failed_logins == 1
+    assert after.failed_logins == 0, "counted per session, not against the account (Entry 33)"
     assert (await recover(client, alice.username, alice.code)).status_code == 200
 
 
@@ -715,13 +716,14 @@ async def test_rotation_invalid_body_is_422(
 # --------------------------------------------------------------------------
 
 
-async def test_failures_on_all_four_checks_share_one_counter_and_lock(
+async def test_signin_and_recover_share_one_counter_and_lock(
     client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine, clock: Clock
 ) -> None:
     """
-    Contract: failed signin, recovery, current password and rotation password each
-    increment ``users.failed_logins``; at 10 the account locks for 15 minutes, and
-    signin and recover then answer 429 even for correct credentials.
+    Contract: failed signin and failed recovery each increment ``users.failed_logins``;
+    at 10 the account locks for 15 minutes, and signin and recover then answer 429
+    even for correct credentials. Wrong current/rotation passwords in the same flow
+    are counted per session instead and leave ``failed_logins`` alone (Entry 33).
     """
     alice = await new_account(client, accounts)
     t0 = clock.now
@@ -735,14 +737,20 @@ async def test_failures_on_all_four_checks_share_one_counter_and_lock(
         if expected < 10:
             assert (row.failed_logins, row.locked_until) == (expected, None)
 
-    for _ in range(3):
+    async def not_counted(response: httpx.Response) -> None:
+        assert response.status_code == 403
+        row = await user_row(migrated_engine, alice.username)
+        assert (row.failed_logins, row.locked_until) == (expected, None)
+
+    for _ in range(5):
         await check(await signin(client, alice.username, WRONG_PASSWORD), 401)
-    for _ in range(3):
+    for _ in range(2):
+        await not_counted(await change_password(client, alice.token, WRONG_PASSWORD))
+    for _ in range(4):
         await check(await recover(client, alice.username, KNOWN_CODE), 401)
     for _ in range(2):
-        await check(await change_password(client, alice.token, WRONG_PASSWORD), 403)
-    for _ in range(2):
-        await check(await rotate(client, alice.token, WRONG_PASSWORD), 403)
+        await not_counted(await rotate(client, alice.token, WRONG_PASSWORD))
+    await check(await recover(client, alice.username, KNOWN_CODE), 401)
 
     row = await user_row(migrated_engine, alice.username)
     assert (row.failed_logins, row.locked_until) == (0, t0 + timedelta(minutes=15))
@@ -799,90 +807,71 @@ async def test_recover_success_resets_the_counter(
     assert (await user_row(migrated_engine, alice.username)).locked_until is None
 
 
-async def test_ten_wrong_current_passwords_lock_and_block_signin(
-    client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine, clock: Clock
+async def test_ten_wrong_current_passwords_revoke_the_session_not_lock_the_account(
+    client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
 ) -> None:
     alice = await new_account(client, accounts)
-    t0 = clock.now
 
-    for attempt in range(10):
+    for attempt in range(9):
         response = await change_password(client, alice.token, WRONG_PASSWORD)
         assert response.status_code == 403, f"failure #{attempt + 1} was {response.status_code}"
+    tenth = await change_password(client, alice.token, WRONG_PASSWORD)
+    assert_envelope(tenth, 401, "UNAUTHENTICATED")
+    assert_cleared(tenth)
 
+    assert await token_hashes(migrated_engine, alice.id) == set()
     row = await user_row(migrated_engine, alice.username)
-    assert (row.failed_logins, row.locked_until) == (0, t0 + timedelta(minutes=15))
-    assert_locked(await signin(client, alice.username, PASSWORD), 900)
+    assert (row.failed_logins, row.locked_until) == (0, None)
+    assert (await signin(client, alice.username, PASSWORD)).status_code == 200
 
 
-async def test_ten_wrong_rotation_passwords_lock_and_block_recover(
-    client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine, clock: Clock
+async def test_ten_wrong_rotation_passwords_revoke_the_session_not_lock_the_account(
+    client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
 ) -> None:
     alice = await new_account(client, accounts)
-    t0 = clock.now
 
-    for attempt in range(10):
+    for attempt in range(9):
         response = await rotate(client, alice.token, WRONG_PASSWORD)
         assert response.status_code == 403, f"failure #{attempt + 1} was {response.status_code}"
+    tenth = await rotate(client, alice.token, WRONG_PASSWORD)
+    assert_envelope(tenth, 401, "UNAUTHENTICATED")
+    assert_cleared(tenth)
 
+    assert await token_hashes(migrated_engine, alice.id) == set()
     row = await user_row(migrated_engine, alice.username)
-    assert (row.failed_logins, row.locked_until) == (0, t0 + timedelta(minutes=15))
-    assert_locked(await recover(client, alice.username, alice.code), 900)
+    assert (row.failed_logins, row.locked_until) == (0, None)
+    assert (await recover(client, alice.username, alice.code)).status_code == 200
 
 
-async def test_locked_account_password_change_and_rotation_are_429(
+async def test_locked_account_does_not_refuse_password_change_or_rotation(
     client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine, clock: Clock
 ) -> None:
-    """
-    Implementation-defined: the contract lists 429 for both routes and says only
-    signin and recover are refused while locked. Dev's reading is that password
-    change and rotation share the lock: correct credentials get 429 with
-    ``Retry-After`` = seconds left, and nothing changes.
-    """
+    """Entry 33: the account lockout never refuses the signed-in routes, nor is touched by them."""
     alice = await new_account(client, accounts)
-    t0 = clock.now
     for _ in range(10):
         assert (await signin(client, alice.username, WRONG_PASSWORD)).status_code == 401
     before = await user_row(migrated_engine, alice.username)
-    clock.now = t0 + timedelta(minutes=10)
+    assert before.locked_until is not None
 
-    changed = await change_password(client, alice.token, PASSWORD)
-    assert_locked(changed, 300)
-    rotated = await rotate(client, alice.token, PASSWORD)
-    assert_locked(rotated, 300)
-    assert "recoveryCode" not in rotated.text
-
-    after = await user_row(migrated_engine, alice.username)
-    assert after.password_hash == before.password_hash
-    assert after.recovery_code_hash == before.recovery_code_hash
-    assert after.locked_until == before.locked_until
-    assert await token_hashes(migrated_engine, alice.id) == {sha256_bytes(alice.token)}
-
-    # After the lock, both work.
-    clock.now = t0 + timedelta(minutes=15)
+    assert_envelope(await rotate(client, alice.token, WRONG_PASSWORD), 403, "FORBIDDEN")
     assert (await rotate(client, alice.token, PASSWORD)).status_code == 200
     assert (await change_password(client, alice.token, PASSWORD)).status_code == 200
 
+    after = await user_row(migrated_engine, alice.username)
+    assert (after.failed_logins, after.locked_until) == (before.failed_logins, before.locked_until)
 
-async def test_password_change_and_rotation_success_reset_the_counter(
+
+async def test_right_password_resets_the_session_counter(
     client: AsyncClient, accounts: Accounts, migrated_engine: AsyncEngine
 ) -> None:
-    """
-    Implementation-defined: the contract says a successful signin or recovery
-    resets ``failed_logins``; dev's reading extends that to a successful password
-    change and a successful rotation.
-    """
     alice = await new_account(client, accounts)
 
-    for _ in range(4):
+    for _ in range(9):
         assert (await rotate(client, alice.token, WRONG_PASSWORD)).status_code == 403
     assert (await rotate(client, alice.token, PASSWORD)).status_code == 200
-    assert (await user_row(migrated_engine, alice.username)).failed_logins == 0
-
-    for _ in range(4):
-        assert (await change_password(client, alice.token, WRONG_PASSWORD)).status_code == 403
-    changed = await change_password(client, alice.token, PASSWORD)
-    assert changed.status_code == 200
-    assert (await user_row(migrated_engine, alice.username)).failed_logins == 0
+    for _ in range(9):
+        assert (await rotate(client, alice.token, WRONG_PASSWORD)).status_code == 403
+    assert await me_status(client, alice.token) == 200
 
 
 # --------------------------------------------------------------------------
