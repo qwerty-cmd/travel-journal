@@ -2840,6 +2840,8 @@ DONE 2026-10-06. `/trips/new` (signed-in only; UUID minted at submit, reused on 
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+DONE 2026-10-06. `components/JoinRequest.tsx`: `JoinRequestPanel` on the trip shell (anonymous → sign-in link; none → message form with a 280 code-point counter; pending → Cancel; anything else or no role → nothing), `LegacyJoinPanel` on `/t/$slug` (claim; 404 → "This link can't be used to join"; slug only in the request body). `/account` My requests (rejected and blocked both "Not approved"). 409s verbatim, 429 countdown, single-flight. Tests: joinFlow 20; frontend 523 + build. QA PASS. Debt: t-am-fe-join-gaps.
+
 ## t-am-fe-leader-review
 **Goal.** The leader's join-request review screen. Split along the existing design specs (scrum change 20); this task is `docs/design/screens/leader-review.md`.
 **Route.** This task creates the leader area route. The specs name it `/trips/$tripId/members?view=requests`, while earlier AC said `/trips/$tripId/manage`. The router path is `dev`'s call (DESIGN.md §13 X1). `t-am-fe-members` and `t-am-fe-trip-settings` add their views to it.
@@ -3153,3 +3155,7 @@ ORDINARY DEBT (dev on t-am-fe-auth-screens). `npm run lint` fails because the fr
 ## t-am-fe-discover-gaps
 
 ORDINARY DEBT (dev + QA on t-am-fe-discover-trip-detail). Deferred spec extras: onboarding card, Create-a-trip entry on Discover, pending-requests and member continue cards, tabs, "You see stops live" notice, "Public from" chips, "Who can see this trip?" dialog, 429 countdown on Try again. `components/README.md` is stale. `/t/$slug/stops/$stopId` still has an inline gallery (use PhotoGallery). Timeline rows are `div role=link` (design wants `<a>`).
+
+## t-am-fe-join-gaps
+
+ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$tripId/join` route and its extras ("A leader didn't approve your last request" notice, already-member redirect, quoted message with Sent date, Back to the trip); `/account` row timestamps; legacy page signed-out and member variants; a 401 on create/claim redirecting to sign-in; "Request cancelled" as a toast. Missing tests: an emoji against the 280 counter; the slug absent from DOM/console/storage.
