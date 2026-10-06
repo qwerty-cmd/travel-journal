@@ -82,6 +82,20 @@ export function loadTripById(tripId: string): TripOut | undefined {
 export const saveTripById = (tripId: string, trip: TripOut) => write(tripByIdKey(tripId), JSON.stringify(trip))
 export const clearTripById = (tripId: string) => remove(tripByIdKey(tripId))
 
+/** Removes every v2 trip record (all `btj.tripById.*` keys): sign-out must not leave a private trip readable. */
+export function clearAllTripsById(): void {
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key?.startsWith('btj.tripById.')) keys.push(key)
+    }
+    keys.forEach(remove)
+  } catch {
+    // Storage unavailable: nothing was persisted to clean up.
+  }
+}
+
 export const getDisplayName = () => read(DISPLAY_NAME_KEY) || null
 export const setDisplayName = (name: string) => write(DISPLAY_NAME_KEY, name)
 

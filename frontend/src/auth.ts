@@ -14,11 +14,11 @@
  * APIs called: GET /api/v2/auth/me (through the generated hook).
  */
 import { useEffect, useRef, useState } from 'react'
-import type { QueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { ApiError } from './api/client'
 import { getMeApiV2AuthMeGetQueryKey, useGetMeApiV2AuthMeGet } from './api/gen/hooks/useGetMeApiV2AuthMeGet'
 import type { MeOut } from './api/gen/types/MeOut'
-import { clearCachedMe, setCachedMe } from './localStore'
+import { clearAllTripsById, clearCachedMe, getCachedMe, setCachedMe } from './localStore'
 
 export const AUTH_CHANNEL = 'auth'
 export type AuthMessage = { type: 'signin' | 'signout' }
@@ -32,13 +32,19 @@ export function broadcastAuth(type: AuthMessage['type']): void {
 
 /** The signed-in account, or a 401 error when nobody is. Never retries an answered request. */
 export function useMe() {
+  const queryClient = useQueryClient()
   const me = useGetMeApiV2AuthMeGet({
     query: { retry: (count, error) => error.status === undefined && count < 3 },
   })
   useEffect(() => {
-    if (me.data) setCachedMe(me.data)
-    else if (me.error?.status === 401) clearCachedMe()
-  }, [me.data, me.error])
+    // 401 first: after a refetch fails, TanStack keeps the previous `me.data`.
+    // A 401 with `btj.me` still set is a session that ended server-side (expiry,
+    // lockout, signout-all elsewhere): clean up as a sign-out would. Without it the
+    // data is already clean, so anonymous page loads don't keep wiping the cache.
+    if (me.error?.status === 401) {
+      if (getCachedMe()) clearSessionData(queryClient)
+    } else if (me.data) setCachedMe(me.data)
+  }, [me.data, me.error, queryClient])
   return me
 }
 
@@ -49,9 +55,26 @@ export function markSignedIn(queryClient: QueryClient, me: MeOut, broadcast = tr
   if (broadcast) broadcastAuth('signin')
 }
 
+/**
+ * Everything the signed-in account could read that must not outlive the session
+ * on a shared device: `btj.me`, every `btj.tripById.*` record, and every cached
+ * query except `me` itself (removing `me` while useMe observes it would rebuild
+ * and refetch it, and a 401 there would loop back here). All other queries go,
+ * public ones included: they just refetch, and sorting per-user from public keys
+ * would be a list to keep in sync. Storage is cleared first so a rebuilt query
+ * finds no initialData. Left alone on purpose: the offline queue (its `userId`
+ * hold protects it) and legacy `btj.trip.<slug>` records (slug holders' cache).
+ */
+export function clearSessionData(queryClient: QueryClient): void {
+  clearCachedMe()
+  clearAllTripsById()
+  const meKey = JSON.stringify(getMeApiV2AuthMeGetQueryKey())
+  queryClient.removeQueries({ predicate: (q) => JSON.stringify(q.queryKey) !== meKey })
+}
+
 /** After signout or signout-all. The offline queue is deliberately left alone. */
 export function markSignedOut(queryClient: QueryClient): void {
-  clearCachedMe()
+  clearSessionData(queryClient)
   queryClient.removeQueries({ queryKey: getMeApiV2AuthMeGetQueryKey() })
   broadcastAuth('signout')
 }
