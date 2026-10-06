@@ -3305,6 +3305,8 @@ Scope: infra/azure/smoke.sh only (arg: base URL; no secrets read).
 AC: asserts /api/health 200; / returns the SPA (HTML); http:// does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403 (Host passthrough); optional `--xff-burst` flag sends 121 requests from one network and expects exactly one 429; non-zero exit on any failure.
 Validation: `bash -n infra/azure/smoke.sh`; `shellcheck infra/azure/smoke.sh` if installed; `bash infra/azure/smoke.sh` with no args exits non-zero with usage. The live run is an owner step (t-iac-first-deploy).
 
+
+**DONE.** `infra/azure/smoke.sh <base-url> [--xff-burst]`: health 200; `/` is the SPA (`text/html`, `id="root"`); `http://` redirects to https or is refused; same-origin signin with a random `smoke-<hex>` user is 401 (403 means the ingress rewrote Host). `--xff-burst` targets the **signin** bucket (10 per 15 min per IP, `ratelimit.py`), not the 121-request public-read burst in runbook §7a: after the Host check it sends 10 more with fake XFF values and expects 9×401 then one 429; it locks the runner IP out of signin for ~15 min, so `deploy.yml` must not pass it on every deploy. shellcheck clean; checks 1, 2 and 4 passed against a local uvicorn. Runbook §7a gets a note in `t-iac-runbook-skill`.
 ## t-iac-deploy-workflow
 
 Goal: approval-gated deploy by workflow_dispatch.
