@@ -2868,6 +2868,8 @@ DONE 2026-10-06. Route `/trips/$tripId/members` (`view` = requests | members | b
 
 **Added AC (from t-am-fe-discover-trip-detail).** Any write control added on `/trips/$tripId` (Add stop, bikes, settings, members, join) must gate on `viewerRole()` from `tripV2.ts`, never on `isMember` or `access` — a pre-extension cached trip has no role and must get no write UI.
 
+DONE 2026-10-06. `components/MembersView.tsx` on `/trips/$tripId/members?view=members` (leader or rider via `viewerRole()`; others/no role → nothing loaded): leaders get Make leader and Revoke on rider rows only; own row offers Step down (leaders) and Leave (everyone); all confirmed via Dialog; sole leader sees the reason disabled; 409 shown verbatim; leave → invalidate trip + /me/trips → `/`. Members tab in LeaderReview, Members link for riders. Tests: members 16; frontend 557 + build. QA PASS.
+
 ## t-am-fe-trip-settings
 **Goal.** Trip settings, per `docs/design/screens/trip-settings.md` (scrum change 20).
 **Blockers.** `t-am-fe-leader-review` (shared route) and `t-am-trip-create` (PATCH).
@@ -3164,4 +3166,4 @@ ORDINARY DEBT (dev + QA on t-am-fe-join-flow). Not built: a dedicated `/trips/$t
 
 ## t-am-fe-ui-primitives
 
-ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders.
+ORDINARY DEBT (dev on t-am-fe-auth-screens, t-am-fe-leader-review). Shared UI pieces the specs use but no task built: Toast (outcome echoes are StatusNotice in a live region), Menu ("More options" is a toggle with "..." text), EmptyState with Copy trip link and a private variant, a live online/offline listener, skeleton loaders. Also no home-page notice after leaving a trip ("You left <trip>").
