@@ -2647,6 +2647,8 @@ cd frontend && npm run generate:api && npm test && npm run build
 
 **Added AC (from t-am-join-requester, triggered debt promoted here).** (1) Any claim path that creates a join request must take the same lock order as `join_requests.create` — trip row, then user row — or risk deadlocks. (2) `/me/join-requests` shows a private trip's *current* name to the requester (renames included); claims create requests on private trips by design, so get an architect ruling before this ships: freeze the name at request time, hide it, or accept it, and record the answer in the contract.
 
+DONE 2026-10-06. `POST /api/v2/trips/claim` on its own router registered before every `{tripId}` route (`limit_join`, then `require_session`); rider slug → `join_repo.create(via='legacy_rider_link')`, reusing every join rule and the trip → user lock order; viewer/unknown/NUL slug → the identical `UNKNOWN_TRIP_MESSAGE` 404. Added AC (2) decided by the orchestrator under the owner's delegated autonomy (no architect dispatch): `/me/join-requests` shows the current trip name — rider-link holders could already read the whole trip; recorded in the contract's Me / join-requests note. Also fixed a flaky presigned-url comparison in test_v2_rider_writes (separate commit). Tests: test_legacy_claim 54 + test_claim_route_order; suite 3202; frontend 385 + build. QA PASS, no slug oracle (timing equal, 404 bytes equal).
+
 ## t-am-operator-clis
 **Goal.** The only ways to make a legacy leader, reset an account or remove a rogue leader.
 **Scope.**
