@@ -2607,6 +2607,11 @@ unset GHCR_PAT
 
 Record the PAT's expiry date in the handover. The `passwordSecretRef` name ACA generates must match what the YAML files reference (check with `az containerapp show -g <rg> -n <app-name> --query properties.configuration.registries`).
 
+### Corrections during build (2026-10-07)
+Two points above were disproved while building the workflows; the workflows follow these, not the text above.
+- **Migrate step (sequence step 4, and the `--command` caveat).** `az containerapp job start --image <sha>` is wrong, not just `--command`: any start-time override replaces the whole container template, including env, secretRefs and command, so the Job would run without its `DATABASE_URL` and S3 secrets. `deploy.yml` runs `job update --image <sha>` first, then `job start` with no options, and polls the execution to Succeeded.
+- **Revision suffix (the OPEN caveat).** `az containerapp update --yaml` ignores `--revision-suffix`: the CLI warns that extra options are ignored, so passing it alongside `--yaml` does nothing. The fallback in that caveat therefore does not work. What protects the deploy is the `rel-<sha12>` suffix inside the YAML (substituted into `app.yaml`) plus an assertion that the resulting revision name is `<app>--rel-<sha12>` and runs the expected image. Do not "fix" this by adding `--revision-suffix` back.
+
 ### What follows
 Milestone `m6-iac-deploy` in `progress.json` (13 tasks), details in `docs/progress-notes.md` per task ID. Tasks 2 to 8 of the plan are scoped there; `t-iac-first-deploy` supersedes `t-owner-cutover` for future deploys. Wording that still says CI never deploys is owned by `t-iac-deploy-workflow` (`ci.yml` header) and `t-iac-runbook-skill` (deploy `SKILL.md`, runbook).
 

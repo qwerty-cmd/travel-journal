@@ -3335,6 +3335,8 @@ Scope: docs/deploy-cutover-runbook.md §6 and §8, with §7/§7a cross-links; .c
 AC: §6 describes dispatching deploy.yml and approving it; manual steps kept only for the fallback and the owner-only list (secret entry, grant_leader/reset_account, real-device tests); the SKILL "never deploys" and "owner runs migrations" text is replaced; old `az` command blocks are moved under "manual fallback".
 Validation: `! grep -n "never deploys" docs/deploy-cutover-runbook.md .claude/skills/deploy/SKILL.md`; grep -n "deploy.yml" on both files.
 
+
+**DONE.** Runbook §6 and §8 rewritten around deploy.yml, rollback.yml and deactivate-revisions.yml (old az blocks kept under "Manual fallback"); new "One-time setup for the deploy workflows" (OIDC identity, production environment + main-only branch rule + 12 vars, GHCR PAT on app and both Jobs, package Actions access, creating each Job from a temp render outside the repo that adds the `secrets:` list — the committed YAML references secrets that do not exist yet — and the first-run verification list); §7a cross-links the smoke `--xff-burst`. Entry 32 gained "Corrections during build". `.claude/skills/deploy/SKILL.md` now routes every deploy and rollback through the workflows.
 ## t-iac-first-deploy
 
 Goal: prove the pipeline end to end.
