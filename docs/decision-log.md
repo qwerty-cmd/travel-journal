@@ -2617,6 +2617,15 @@ Two points above were disproved while building the workflows; the workflows foll
 ### What follows
 Milestone `m6-iac-deploy` in `progress.json` (13 tasks), details in `docs/progress-notes.md` per task ID. Tasks 2 to 8 of the plan are scoped there; `t-iac-first-deploy` supersedes `t-owner-cutover` for future deploys. Wording that still says CI never deploys is owned by `t-iac-deploy-workflow` (`ci.yml` header) and `t-iac-runbook-skill` (deploy `SKILL.md`, runbook).
 
+### Amendment 2026-10-07 (owner, option A)
+The start of a deploy is now automatic; the approval is not. When a CI push run on `main` completes green and has published the image, `deploy.yml` starts by itself for that commit (`workflow_run` on `CI`) and waits in the `production` environment for the owner's approval. Nothing deploys until the owner approves. Manual `workflow_dispatch` stays for retries (`attempt`) and older SHAs. PR CI runs, failed or cancelled runs and manual CI dispatches never start a deploy (they yield a skipped run). Several quick merges keep only the newest pending run, so the latest `main` is what deploys. A merge also replaces a pending rollback or deactivate run in the shared `deploy` concurrency group, so don't merge while a rollback is waiting.
+
+Options considered and not chosen:
+- **B, fully automatic with no approval.** Rejected: a bad merge would reach production with no human act in between, and the approval is the guardrail that justified reversing "CI never deploys".
+- **C, manual dispatch with a blank SHA defaulting to the newest green main commit.** Rejected: it still needs the owner to remember to start every deploy, and it saves less than A while adding a "which SHA did it pick" ambiguity.
+
+Source of truth is the header comment of `.github/workflows/deploy.yml`.
+
 ---
 
 ## 33. Per-session confirmation limit: signed-in wrong passwords stop counting toward the account lockout
