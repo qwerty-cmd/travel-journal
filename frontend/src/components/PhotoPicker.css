@@ -1,0 +1,55 @@
+/* Photo picker (add-stop.md §7, stop-detail.md §7). Tokens only. */
+.photo-picker__muted {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
+
+.photo-picker__error {
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-status-danger);
+}
+
+.photo-picker__previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+}
+
+.photo-picker__preview {
+  position: relative;
+}
+
+/* 72 px tiles (add-stop.md): no size token, so composed from spacing tokens (48 + 24). */
+.photo-picker__thumb {
+  display: block;
+  width: calc(var(--space-12) + var(--space-6));
+  height: calc(var(--space-12) + var(--space-6));
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunken);
+}
+
+/* A 48 px target over the tile's top-right corner. */
+.photo-picker__remove {
+  position: absolute;
+  top: calc(-1 * var(--space-3));
+  right: calc(-1 * var(--space-3));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-target-min);
+  height: var(--size-target-min);
+  background: transparent;
+  border: 0;
+  color: var(--color-text-on-inverse);
+  cursor: pointer;
+}
+
+.photo-picker__remove svg {
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-inverse);
+}
