@@ -27,7 +27,7 @@
 # reuse the app's names and values, in the Job's own secret store.
 #
 # Registry credential: the ACA secret holding the GHCR classic PAT (read:packages
-# only) must be called `ghcr-read-packages`, or this reference must be edited to
+# only) must be called `ghcrio-qwerty-cmd`, or this reference must be edited to
 # the name ACA generated. For a public GHCR package, delete the `registries` block.
 #
 # Command/args: no token may start with a dash (README "Command"), so the module
@@ -49,7 +49,7 @@ properties:
     registries:
       - server: ghcr.io
         username: ${GHCR_USERNAME}
-        passwordSecretRef: ghcr-read-packages
+        passwordSecretRef: ghcrio-qwerty-cmd
   template:
     containers:
       - name: ${JOB_CONTAINER_NAME}
