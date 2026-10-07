@@ -86,6 +86,11 @@ async function stored(): Promise<number> {
 }
 
 let locks: FakeLocks;
+// Vitest 4 leaves Node's AbortSignal global, whose timeout() fake timers can't
+// reach; jsdom's schedules via the (faked) global setTimeout, as under Vitest 3.
+// Set once for this file (not stubGlobal: unstubAllGlobals would undo it).
+globalThis.AbortSignal = (globalThis as unknown as { jsdom: { window: typeof globalThis } }).jsdom.window.AbortSignal;
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   vi.stubGlobal("indexedDB", new IDBFactory());
