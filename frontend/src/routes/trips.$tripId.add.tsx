@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useCallback, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useGetTripApiV2TripsTripIdGet } from "../api/gen/hooks/useGetTripApiV2TripsTripIdGet";
 import type { LocationSource } from "../api/gen/types/LocationSource";
@@ -7,14 +7,14 @@ import { useMe } from "../auth";
 import { BottomActionBar } from "../components/BottomActionBar";
 import { Button } from "../components/Button";
 import { Dialog, DialogActions } from "../components/Dialog";
+import { AddPhotosControl, PickedPreviews, PickStatus, usePhotoPicks } from "../components/PhotoPicker";
 import { LocationStatus, type LocationState } from "../components/LocationStatus";
 import { StatusNotice } from "../components/StatusNotice";
 import { TextField } from "../components/TextField";
 import { TripMap } from "../components/TripMap";
-import { CameraIcon, GlobeIcon, XIcon } from "../icons";
+import { GlobeIcon, XIcon } from "../icons";
 import { getCachedMe } from "../localStore";
 import { enqueue, type V2PhotoItem, type V2StopItem } from "../offline/queue";
-import { processPhoto } from "../photo";
 import { viewerRole } from "../tripV2";
 import "./trips.$tripId.add.css";
 
@@ -52,7 +52,6 @@ export const Route = createFileRoute("/trips/$tripId/add")({
 const GPS_FALLBACK_MS = 15_000;
 
 type Position = { lat: number; lng: number; locationSource: LocationSource };
-type Picked = { id: string; fileName: string; blob: Blob; takenAt: string };
 
 function AddStop() {
   const { tripId } = Route.useParams();
@@ -112,13 +111,10 @@ function AddStopForm({
   const [gpsFailed, setGpsFailed] = useState(() => !navigator.geolocation);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [photos, setPhotos] = useState<Picked[]>([]);
-  const [processing, setProcessing] = useState(0);
-  const [photoErrors, setPhotoErrors] = useState<string[]>([]);
+  const { photos, processing, errors: photoErrors, pick, remove } = usePhotoPicks();
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const notesId = useId();
   const photosId = useId();
-  const fileInput = useRef<HTMLInputElement>(null);
 
   // Mounted only for a rider or leader, so nobody else is ever asked for geolocation.
   useEffect(() => {
@@ -146,21 +142,6 @@ function AddStopForm({
 
   // A tap and "Use map centre" set the same manual location.
   const setManual = useCallback((lat: number, lng: number) => setPosition({ lat, lng, locationSource: "manual" }), []);
-
-  function pick(e: ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    setPhotoErrors([]);
-    for (const file of files) {
-      setProcessing((n) => n + 1);
-      processPhoto(file)
-        .then(({ blob, takenAt }) =>
-          setPhotos((ps) => [...ps, { id: crypto.randomUUID(), fileName: file.name, blob, takenAt }]),
-        )
-        .catch(() => setPhotoErrors((es) => [...es, `Couldn't read photo ${file.name}`]))
-        .finally(() => setProcessing((n) => n - 1));
-    }
-  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -231,40 +212,9 @@ function AddStopForm({
           <h3 id={`${photosId}-h`} className="add__label">
             Photos
           </h3>
-          <label htmlFor={photosId} className="visually-hidden">
-            Photos
-          </label>
-          <input id={photosId} ref={fileInput} className="visually-hidden" type="file" accept="image/*" multiple onChange={pick} tabIndex={-1} />
-          <Button type="button" variant="secondary" size="lg" leadingIcon={<CameraIcon />} onClick={() => fileInput.current?.click()}>
-            Add photos
-          </Button>
-          {processing > 0 && (
-            <p className="add__muted" role="status">
-              Processing {processing} {processing === 1 ? "photo" : "photos"}…
-            </p>
-          )}
-          {photoErrors.map((m) => (
-            <p key={m} className="add__error" role="alert">
-              {m}
-            </p>
-          ))}
-          {photos.length > 0 && (
-            <ul className="add__previews">
-              {photos.map((p, i) => (
-                <li key={p.id} className="add__preview">
-                  <Preview blob={p.blob} alt={p.fileName} />
-                  <button
-                    type="button"
-                    className="add__remove"
-                    aria-label={`Remove photo ${i + 1}`}
-                    onClick={() => setPhotos((ps) => ps.filter((x) => x.id !== p.id))}
-                  >
-                    <XIcon size="sm" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <AddPhotosControl inputId={photosId} onPick={pick} size="lg" />
+          <PickStatus processing={processing} errors={photoErrors} />
+          <PickedPreviews photos={photos} onRemove={remove} />
         </section>
         {note && (
           <p className="add__note">
@@ -298,15 +248,4 @@ function AddStopForm({
       </Dialog>
     </main>
   );
-}
-
-/** A 72 px preview of a processed photo; the object URL lives as long as the tile. */
-function Preview({ blob, alt }: { blob: Blob; alt: string }) {
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    const u = URL.createObjectURL(blob);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [blob]);
-  return url ? <img className="add__thumb" src={url} alt={alt} /> : <span className="add__thumb" />;
 }
