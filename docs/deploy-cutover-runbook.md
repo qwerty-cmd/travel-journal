@@ -329,7 +329,7 @@ real values into the repo or an agent chat.
   `ACA_SYNC_JOB_NAME`, `ACA_SYNC_CONTAINER_NAME`, `GHCR_USERNAME`, `APP_BASE_URL`. Their meanings are listed in
   the header of `.github/workflows/deploy.yml`.
 - [ ] **GHCR pull credential.** A classic PAT with `read:packages` only, stored in ACA as the secret
-  `ghcr-read-packages` on the app **and both Jobs** (the YAML names that secret via `passwordSecretRef`,
+  `ghcrio-qwerty-cmd` on the app **and both Jobs** (the YAML names that secret via `passwordSecretRef`,
   never the value). Entry 32 "Owner setup" (step 3) shows the commands; confirm the generated secret name with
   `az containerapp show ... --query properties.configuration.registries`. Record the PAT's expiry in the handover.
 - [ ] **GHCR package access.** Package settings → Manage Actions access → add this repository with the
@@ -340,14 +340,14 @@ real values into the repo or an agent chat.
   `job create --yaml` on the committed file fails. Instead:
   1. Render the YAML with `envsubst` (`IMAGE`, `GHCR_USERNAME`; see the file header) to a temp file **outside the repo**.
   2. In that temp file only, add a `properties.configuration.secrets` list with those five names plus
-     `ghcr-read-packages`. Read each value at a no-echo prompt (`read -rs`) and write it in; never type it on a
+     `ghcrio-qwerty-cmd`. Read each value at a no-echo prompt (`read -rs`) and write it in; never type it on a
      command line or into a chat.
   3. `az containerapp job create --name <migrate-job-name> --resource-group <resource-group> --environment <env-name> --yaml <temp-file>`
   4. Delete the temp file. Never commit or paste it.
 
   There is no separate `job secret set` step for this Job. The sync Job (`infra/azure/sync-job.yaml`, create-only)
   is created or re-created the same way, with the same five secrets plus `graph-client-id`, `graph-client-secret`,
-  `graph-refresh-token` and `ghcr-read-packages`. Later updates to either Job use `job update --image`.
+  `graph-refresh-token` and `ghcrio-qwerty-cmd`. Later updates to either Job use `job update --image`.
 - [ ] **First-run verification** (owner checks from the build notes), on the first dispatch:
   - the YAML traffic pin holds (the new revision shows 0% and the previous one 100% after `update --yaml`);
   - the `candidate` label URL format and the revision state strings the workflow polls are as expected;

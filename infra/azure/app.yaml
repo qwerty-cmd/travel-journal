@@ -31,7 +31,8 @@
 #
 # Registry credential: the owner sets the GHCR classic PAT (read:packages only) in
 # ACA; this file only names it. The ACA secret holding it must be called
-# `ghcr-read-packages`, or this reference must be edited to the name ACA generated
+# `ghcrio-qwerty-cmd` (the name `az containerapp registry set` generates for
+# server ghcr.io + user qwerty-cmd; confirmed on the live app and sync Job), or this reference must be edited to the name ACA generated
 # (check: az containerapp show -g <rg> -n <app-name>
 #   --query properties.configuration.registries).
 #
@@ -53,7 +54,7 @@ properties:
     registries:
       - server: ghcr.io
         username: ${GHCR_USERNAME}
-        passwordSecretRef: ghcr-read-packages
+        passwordSecretRef: ghcrio-qwerty-cmd
   template:
     revisionSuffix: ${REVISION_SUFFIX}
     containers:
