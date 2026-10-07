@@ -4,11 +4,15 @@
 # Decision: docs/decision-log.md Entry 32. The Job reuses the app's image (one
 # deployable artifact); it only runs a different command in it.
 #
-# Later runs (the deploy workflow, before the app update):
-#   az containerapp job start -g <rg> -n <migrate-job-name> --image <same image as the app>
-# NEVER pass --command/--args (or any other template override) to `job start`: an
-# override replaces the whole template, env and secretRefs included, so the
-# migrator would start without DATABASE_URL. The command is baked in below.
+# Later runs (the deploy workflow, .github/workflows/deploy.yml, before the app update):
+#   az containerapp job update -g <rg> -n <migrate-job-name> \
+#     --container-name <migrate-container-name> --image <same image as the app>
+#   az containerapp job start -g <rg> -n <migrate-job-name>
+# `job start` takes NO options. Any start override, --image included (as well as
+# --command/--args/--env-vars/--cpu/--memory), sends an execution template whose one
+# container holds only the overridden fields: it replaces the whole container, env,
+# secretRefs and command included, so the migrator would run without DATABASE_URL
+# and without its command. The command is baked in below.
 # Never re-apply this file with `job update --yaml`: whether that keeps the Job's
 # secrets is unverified (Entry 32). Image changes go through `--image` only.
 #
