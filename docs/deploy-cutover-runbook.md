@@ -273,9 +273,16 @@ See "Image publishing (GitHub Actions to GHCR)" at the end of this section for p
    green (backend, frontend and publish).
 2. **Dispatch.** GitHub → Actions → Deploy → Run workflow (branch `main`), or:
    `gh workflow run deploy.yml --ref main -f sha=<full-sha>`
-   Optional input `xff_burst` (default off), see "Smoke checks" below.
+   Optional inputs:
+   - `attempt` (1..99, default 1). Attempt 1 names the revision `<app-name>--rel-<sha12>`; any other N names it
+     `<app-name>--rel-<sha12>-a<N>`. A revision suffix can never be reused. If a revision already exists for the
+     suffix and is failed or unhealthy, the run fails fast with a hint: re-dispatch with `attempt=N+1`, e.g.
+     `gh workflow run deploy.yml --ref main -f sha=<full-sha> -f attempt=2`.
+   - `xff_burst` (default off), see "Smoke checks" below.
 3. **Approve.** The run waits in the `production` environment until you approve it (you are the required
    reviewer). Nothing starts before that. Only one deploy, rollback or cleanup runs at a time (`concurrency: deploy`).
+   **Don't queue a second dispatch behind a pending one.** GitHub keeps one pending run per group, so a newer
+   dispatch cancels the older pending run (e.g. a rollback queued behind a deploy). Cancel or wait instead.
 4. **Watch it.** The run does these steps, and stops at the first failure:
    1. Verifies `main` contains the SHA, its CI run is green and the GHCR image exists, then checks out that SHA.
    2. Signs in to Azure with OIDC (no stored Azure secret).
@@ -283,8 +290,11 @@ See "Image publishing (GitHub Actions to GHCR)" at the end of this section for p
    4. Migrates Neon: `job update --image` on the migrate Job, then `job start` with no options, and polls
       the execution to Succeeded. Traffic still sits on the old revision, so a migration must keep working with
       the previous image (step 8, "Schema is forward-only").
-   5. Renders `infra/azure/app.yaml` and runs `az containerapp update --yaml`, creating revision
-      `<app-name>--rel-<first 12 chars of SHA>` at 0% traffic. The workflow asserts the revision name and image.
+   5. Renders `infra/azure/app.yaml` (explicit `envsubst` list, which includes `PREV_REVISION`) and runs
+      `az containerapp update --yaml`, creating revision `<app-name>--rel-<first 12 chars of SHA>`
+      (`-a<N>` appended when `attempt` > 1) at 0% traffic. The YAML's ingress `traffic:` list pins
+      `${PREV_REVISION}` at 100 and the latest revision at 0. The workflow asserts the revision name and image;
+      if traffic moved anyway it re-pins, verifies, and fails if the pin did not hold.
       Redeploying the same SHA takes a traffic-only path and creates no revision.
    6. Warms the new revision through a `candidate` label until it is healthy, then shifts 100% of traffic.
    7. Updates the OneDrive sync Job to the same image and asserts the app and Job images are equal.
@@ -339,7 +349,7 @@ real values into the repo or an agent chat.
   is created or re-created the same way, with the same five secrets plus `graph-client-id`, `graph-client-secret`,
   `graph-refresh-token` and `ghcr-read-packages`. Later updates to either Job use `job update --image`.
 - [ ] **First-run verification** (owner checks from the build notes), on the first dispatch:
-  - the traffic pin survives `update --yaml`;
+  - the YAML traffic pin holds (the new revision shows 0% and the previous one 100% after `update --yaml`);
   - the `candidate` label URL format and the revision state strings the workflow polls are as expected;
   - `GITHUB_TOKEN` can read the private package;
   - `update --yaml` kept the registry credential (diff `infra/azure/app.yaml` against `az containerapp show -o yaml`:
@@ -560,9 +570,12 @@ hop). If that premise is wrong, one client can mint a fresh bucket per request b
 
 - [ ] **Dispatch `deactivate-revisions.yml`** with `dry_run` left at its default (`true`) first. Read the list it
   prints, then re-run with `dry_run` off and approve it. It keeps every revision with traffic, the rollback target
-  (the newest active revision older than the oldest serving one) and the optional `keep` input, and refuses to
-  deactivate anything that gained traffic since it read the list. The reasoning is the second item of
-  "Manual fallback" below.
+  and the optional `keep` input, and refuses to deactivate anything that gained traffic since it read the list.
+  The rollback target is the **newest active healthy revision before the oldest serving one**. To be certain it
+  keeps the right one, pass deploy's previous revision (named in the deploy summary) as `keep`. The reasoning is
+  the second item of "Manual fallback" below.
+- [ ] **Don't queue this behind another run.** It shares the `deploy` concurrency group, and a newer dispatch
+  cancels an older pending run. Wait for a running deploy to finish before dispatching a rollback or cleanup.
 
 ### Manual fallback (if the workflow is unavailable)
 
