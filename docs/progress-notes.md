@@ -3325,6 +3325,8 @@ Scope: .github/workflows/rollback.yml, .github/workflows/deactivate-revisions.ym
 AC: same trigger, environment, concurrency and OIDC rules as deploy.yml; rollback takes a `revision` input, verifies it exists, shifts 100% traffic, runs smoke.sh, and warns (annotation) when the target predates Entry 29 (security-degrading, runbook §7a); deactivate refuses to deactivate the active or the rollback-target revision.
 Validation: actionlint if installed; [V-common]; the grep for no push/pull_request triggers as above.
 
+
+**DONE.** `rollback.yml` (input `revision`, optional `sync_job_image`): validates the name, activates if inactive, warms via a `rollback` label until healthy, shifts 100% and verifies, runs smoke.sh from main; warns (annotation + summary banner quoting runbook §7a) when the target predates Entry 29 — tested by `git merge-base --is-ancestor` of the PR #8 merge `9e8561f` against the revision image SHA (or the `rel-<sha12>` suffix; unknown also warns); summary says migrations are not undone. `deactivate-revisions.yml` (`dry_run` default true, `keep`): keeps every revision with traffic, the newest active one created before the oldest serving one (rollback target) and `keep`; re-reads traffic before each deactivation and stops if any. Same guards, environment, `deploy` concurrency and OIDC as deploy.yml; actionlint clean. **Owner, first run:** traffic set leaves only the target, the label URL format, activate on a scaled-to-0 revision, dry-run the cleanup first (the recorded rollback target `rel-1bbe81bcbec5` is pre-Entry 29).
 ## t-iac-runbook-skill
 
 Goal: docs match reality.

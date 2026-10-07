@@ -1,0 +1,358 @@
+# Rollback: send 100% of traffic back to an existing Container Apps revision.
+# Runbook: docs/deploy-cutover-runbook.md section 8 "Rollback" (and 7a, see below).
+# Decision: docs/decision-log.md Entry 32 (approval-gated workflows).
+#
+# GUARDRAILS (same as deploy.yml)
+#   - Manual `workflow_dispatch` only, from main. No push, pull_request or schedule
+#     trigger, ever.
+#   - Runs in the GitHub `production` environment: the owner is the required reviewer,
+#     so nothing below starts until the owner approves the run.
+#   - Shares deploy.yml's `deploy` concurrency group: a rollback never runs during a
+#     deploy (or another rollback / revision cleanup), and never cancels one.
+#   - Azure access is OIDC (azure/login). No stored Azure secret; no secret values.
+#   - Never builds and never creates a revision: it only re-activates and re-routes
+#     to a revision that already exists.
+#
+# WHAT A ROLLBACK DOES NOT DO
+#   - It does not undo migrations. The schema is forward-only (runbook section 8, "Schema
+#     is forward-only"): the database stays at the newer schema and the older image must
+#     work against it.
+#   - It does not change the OneDrive sync Job's image unless input `sync_job_image` is
+#     true, in which case the sync Job is set to the target revision's image.
+#
+# PRE-ENTRY 29 TARGETS (runbook section 7a, "Rolling back past Entry 29 is
+# security-degrading"): an image built before Entry 29 restores slug-bearer writes and
+# makes trips created after the cutover (NULL slugs) unreachable. The workflow still
+# rolls back (it is a last resort the owner may need) but raises a ::warning and says so
+# in the summary. Test: the image tag is the full commit SHA ci.yml published it under
+# (for an older image without a SHA tag, the `rel-<sha12>` revision suffix is resolved
+# instead). The target is post-Entry 29 iff that commit has the Entry 29 merge commit
+# (ENTRY29_MERGE, PR #8, which brought migration 0003 to main) as an ancestor
+# (`git merge-base --is-ancestor`, full history of main). If the commit cannot be
+# resolved, it is reported as "unknown" and warned about as possibly pre-Entry 29.
+#
+# INPUTS
+#   revision        revision name, `<app>--<suffix>` (e.g. `<app>--rel-1a2b3c4d5e6f`)
+#   sync_job_image  also set the sync Job to the revision's image (default false)
+#
+# Variables: the `production` environment variables listed in deploy.yml's header
+# (this workflow does not use the migrate-Job or GHCR_USERNAME ones).
+
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: "Existing revision to send 100% of traffic to (<app>--<suffix>)"
+        required: true
+        type: string
+      sync_job_image:
+        description: "Also set the OneDrive sync Job to the revision's image"
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege, job-wide (one job):
+#   id-token: write  - mint the OIDC token azure/login exchanges for an Azure token
+#   contents: read   - check out main (smoke.sh, history for the pre-Entry 29 test)
+permissions:
+  id-token: write
+  contents: read
+
+# Same group as deploy.yml: one traffic-changing run at a time, never cancelled.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ inputs.revision }}
+      SYNC_JOB_IMAGE: ${{ inputs.sync_job_image }}
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      APP: ${{ vars.ACA_APP_NAME }}
+      APP_CONTAINER_NAME: ${{ vars.ACA_APP_CONTAINER_NAME }}
+      SYNC_JOB: ${{ vars.ACA_SYNC_JOB_NAME }}
+      SYNC_CONTAINER: ${{ vars.ACA_SYNC_CONTAINER_NAME }}
+      BASE_URL: ${{ vars.APP_BASE_URL }}
+      # Merge of PR #8 (Entry 29: accounts, membership-gated writes, migration 0003).
+      ENTRY29_MERGE: 9e8561f6376b87cf86256d467c3885c07ccad5a0
+
+    steps:
+      # ---- 1. Inputs and configuration ---------------------------------------------------
+      - name: Validate inputs and configuration
+        env:
+          REF: ${{ github.ref }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "::error::rollback.yml must be dispatched from main (got $REF)"
+            exit 1
+          fi
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID RG APP \
+                   APP_CONTAINER_NAME BASE_URL; do
+            if [[ -z "${!v}" ]]; then
+              echo "::error::environment variable for $v is not set (see the header of deploy.yml)"
+              missing=1
+            fi
+          done
+          if [[ "$SYNC_JOB_IMAGE" == "true" ]]; then
+            for v in SYNC_JOB SYNC_CONTAINER; do
+              if [[ -z "${!v}" ]]; then
+                echo "::error::environment variable for $v is not set (needed for sync_job_image)"
+                missing=1
+              fi
+            done
+          fi
+          [[ "$missing" -eq 0 ]] || exit 1
+          if [[ ! "$BASE_URL" =~ ^https:// ]]; then
+            echo "::error::APP_BASE_URL must start with https://"
+            exit 1
+          fi
+          if [[ ! "$TARGET" =~ ^[a-z0-9][a-z0-9-]*--[a-z0-9][a-z0-9-]*$ || "$TARGET" != "${APP}--"* ]]; then
+            echo "::error::input revision must look like ${APP}--<suffix> (lower-case letters, digits, hyphens)"
+            exit 1
+          fi
+          {
+            echo "TRAFFIC_STATE=unchanged (rollback stopped before any traffic change)"
+            echo "ENTRY29_STATUS=not checked"
+          } >> "$GITHUB_ENV"
+
+      # main's reviewed smoke.sh, and full history for the ancestry test.
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # ---- 2. Azure login (OIDC) ----------------------------------------------------------
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # ---- 3. Target revision: exists, image, Entry 29 test -------------------------------
+      - name: Verify the target revision exists
+        run: |
+          set -euo pipefail
+          revisions=$(az containerapp revision list -g "$RG" -n "$APP" --all --only-show-errors -o json)
+          if ! jq -e --arg r "$TARGET" 'any(.[]; .name == $r)' <<<"$revisions" > /dev/null; then
+            echo "::error::revision ${TARGET} does not exist. Existing revisions:"
+            jq -r '.[] | "  \(.name)  active=\(.properties.active)  created=\(.properties.createdTime)"' <<<"$revisions"
+            exit 1
+          fi
+          image=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$TARGET" \
+            --only-show-errors -o json \
+            | jq -r --arg c "$APP_CONTAINER_NAME" '.properties.template.containers[] | select(.name == $c) | .image')
+          if [[ -z "$image" ]]; then
+            echo "::error::${TARGET} has no container named ${APP_CONTAINER_NAME}"
+            exit 1
+          fi
+          latest_ready=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+            --query properties.latestReadyRevisionName -o tsv)
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          echo "Traffic before rollback:"
+          jq -c '.[]' <<<"$traffic"
+          serving=$(jq -r --arg lr "$latest_ready" \
+            '[.[] | select(.weight > 0) | if .latestRevision then $lr else .revisionName end] | unique | join(",")' \
+            <<<"$traffic")
+          {
+            echo "TARGET_IMAGE=${image}"
+            echo "PREV_SERVING=${serving}"
+          } >> "$GITHUB_ENV"
+          echo "${TARGET} runs ${image}; serving before rollback: ${serving:-none}"
+
+      - name: Check whether the target predates Entry 29
+        run: |
+          set -euo pipefail
+          tag="${TARGET_IMAGE##*:}"
+          commit=""
+          if [[ "$TARGET_IMAGE" != *@* && "$tag" =~ ^[0-9a-f]{40}$ ]]; then
+            commit="$tag"
+          elif [[ "$TARGET" =~ --rel-([0-9a-f]{12})$ ]]; then
+            commit=$(git rev-parse --verify --quiet "${BASH_REMATCH[1]}^{commit}" || true)
+          fi
+          if [[ -n "$commit" ]] && git cat-file -e "${commit}^{commit}" 2> /dev/null; then
+            if git merge-base --is-ancestor "$ENTRY29_MERGE" "$commit"; then
+              status="post-Entry 29 (${commit:0:12} descends from ${ENTRY29_MERGE:0:12})"
+              pre=false
+            else
+              status="PRE-Entry 29 (${commit:0:12} does not descend from ${ENTRY29_MERGE:0:12})"
+              pre=true
+            fi
+          else
+            status="UNKNOWN (no commit resolvable from image '${TARGET_IMAGE}' or the revision suffix)"
+            pre=unknown
+          fi
+          echo "ENTRY29_STATUS=${status}" >> "$GITHUB_ENV"
+          echo "ENTRY29_PRE=${pre}" >> "$GITHUB_ENV"
+          echo "$status"
+          if [[ "$pre" != "false" ]]; then
+            echo "::warning title=Security-degrading rollback::${TARGET} is ${status}. Rolling back past Entry 29 restores slug-bearer writes (anyone with a rider link can write) and makes post-cutover trips (NULL slugs) unreachable. Last resort only; roll forward as soon as possible (runbook 7a)."
+          fi
+
+      # ---- 4. Activate, warm and check health --------------------------------------------
+      - name: Activate the target revision if inactive
+        run: |
+          set -euo pipefail
+          active=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$TARGET" \
+            --only-show-errors --query properties.active -o tsv)
+          if [[ "$active" != "true" ]]; then
+            az containerapp revision activate -g "$RG" -n "$APP" --revision "$TARGET" \
+              --only-show-errors -o none
+            echo "ACTIVATED=yes" >> "$GITHUB_ENV"
+            echo "activated ${TARGET}"
+          else
+            echo "ACTIVATED=no (already active)" >> "$GITHUB_ENV"
+            echo "${TARGET} already active"
+          fi
+
+      # minReplicas is 0: wake the target through a revision label URL before moving users.
+      - name: Wait for the target revision to be healthy
+        run: |
+          set -euo pipefail
+          az containerapp revision label add -g "$RG" -n "$APP" --only-show-errors \
+            --label rollback --revision "$TARGET" --yes -o none
+          fqdn=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          label_url="https://${APP}---rollback.${fqdn#*.}"
+          echo "rollback URL: ${label_url}"
+          state=""
+          code=""
+          for _ in $(seq 1 60); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${label_url}/api/health" || true)
+            state=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$TARGET" \
+              --only-show-errors -o json \
+              | jq -r '[.properties.provisioningState, .properties.healthState, .properties.runningState] | join("/")')
+            echo "health=${code} state=${state}"
+            if [[ "$code" == "200" && "$state" =~ ^Provisioned/Healthy/Running ]]; then
+              echo "${TARGET} is healthy"
+              exit 0
+            fi
+            if [[ "$state" =~ ^Failed/ || "$state" =~ /Failed$ ]]; then
+              break
+            fi
+            sleep 10
+          done
+          echo "::error::${TARGET} did not become healthy (last: health=${code} state=${state}); traffic unchanged (${PREV_SERVING:-none})"
+          exit 1
+
+      # ---- 5. Shift traffic ---------------------------------------------------------------
+      - name: Shift 100% traffic to the target revision
+        run: |
+          set -euo pipefail
+          # Zero every other named revision currently weighted, and the latest pointer.
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          mapfile -t others < <(jq -r --arg t "$TARGET" \
+            '.[] | select(.weight > 0 and (.latestRevision | not) and .revisionName != $t) | "\(.revisionName)=0"' \
+            <<<"$traffic")
+          echo "TRAFFIC_STATE=unknown (traffic shift to ${TARGET} was attempted; check az containerapp ingress traffic show)" >> "$GITHUB_ENV"
+          az containerapp ingress traffic set -g "$RG" -n "$APP" --only-show-errors \
+            --revision-weight latest=0 "${TARGET}=100" "${others[@]}" -o none
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          jq -c '.[]' <<<"$traffic"
+          if ! jq -e --arg t "$TARGET" \
+              '([.[] | select(.weight > 0)] | length == 1) and any(.[]; .revisionName == $t and .weight == 100 and (.latestRevision | not))' \
+              <<<"$traffic" > /dev/null; then
+            echo "::error::traffic is not 100% on ${TARGET}"
+            exit 1
+          fi
+          echo "TRAFFIC_STATE=100% on ${TARGET} (rollback target, pinned by name)" >> "$GITHUB_ENV"
+          az containerapp revision label remove -g "$RG" -n "$APP" --only-show-errors \
+            --label rollback -o none || echo "::warning::could not remove the rollback label"
+
+      # ---- 6. Sync Job image (opt-in) -----------------------------------------------------
+      - name: Set the sync Job to the target image
+        if: ${{ inputs.sync_job_image }}
+        run: |
+          set -euo pipefail
+          echo "SYNC_JOB_STATE=update attempted, not verified" >> "$GITHUB_ENV"
+          az containerapp job update -g "$RG" -n "$SYNC_JOB" --only-show-errors \
+            --container-name "$SYNC_CONTAINER" --image "$TARGET_IMAGE" -o none
+          sync_image=$(az containerapp job show -g "$RG" -n "$SYNC_JOB" --only-show-errors -o json \
+            | jq -r --arg c "$SYNC_CONTAINER" '.properties.template.containers[] | select(.name == $c) | .image')
+          if [[ "$sync_image" != "$TARGET_IMAGE" ]]; then
+            echo "::error::sync Job image is '${sync_image}', expected ${TARGET_IMAGE}"
+            exit 1
+          fi
+          echo "SYNC_JOB_STATE=set to \`${TARGET_IMAGE}\`" >> "$GITHUB_ENV"
+
+      # ---- 7. Smoke -----------------------------------------------------------------------
+      # main's smoke.sh includes Entry 29 checks (signin CSRF); against a pre-Entry 29
+      # target those are expected to fail. The step still fails: traffic has already moved,
+      # and the summary says where it is.
+      - name: Smoke checks
+        run: |
+          set -euo pipefail
+          echo "SMOKE_RESULT=failed" >> "$GITHUB_ENV"
+          if [[ "${ENTRY29_PRE:-unknown}" != "false" ]]; then
+            echo "::notice::target is not known to be post-Entry 29: smoke checks of Entry 29 endpoints may fail by design"
+          fi
+          bash infra/azure/smoke.sh "$BASE_URL"
+          echo "SMOKE_RESULT=passed" >> "$GITHUB_ENV"
+
+      # ---- 8. Summary (always) ------------------------------------------------------------
+      - name: Rollback summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          live="(not read)"
+          if [[ -n "${TARGET_IMAGE:-}" ]]; then
+            live=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json 2>/dev/null \
+              | jq -r '[.[] | select(.weight > 0) | "\(.revisionName // "latest")=\(.weight)%"] | join(", ")' \
+              2>/dev/null || echo "(could not read)")
+          fi
+          if [[ "$SYNC_JOB_IMAGE" == "true" ]]; then
+            sync_line="${SYNC_JOB_STATE:-not reached}"
+          else
+            sync_line="NOT changed (input sync_job_image=false); it still runs the image deploy.yml last set"
+          fi
+          {
+            echo "### Rollback ${JOB_STATUS}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Target revision | \`${TARGET}\` |"
+            echo "| Target image | \`${TARGET_IMAGE:-n/a}\` |"
+            echo "| Entry 29 | ${ENTRY29_STATUS:-not checked} |"
+            echo "| Activated | ${ACTIVATED:-n/a} |"
+            echo "| Serving before | \`${PREV_SERVING:-n/a}\` |"
+            echo "| Sync Job image | ${sync_line} |"
+            echo "| Smoke | ${SMOKE_RESULT:-not run} |"
+            echo "| Traffic (recorded) | ${TRAFFIC_STATE:-n/a} |"
+            echo "| Traffic (live) | ${live} |"
+            echo ""
+            if [[ "${ENTRY29_PRE:-}" == "true" || "${ENTRY29_PRE:-}" == "unknown" ]]; then
+              echo "> **Warning: security-degrading.** The target is not known to include Entry 29."
+              echo "> A pre-Entry 29 image restores slug-bearer writes (anyone holding a rider link can"
+              echo "> write without an account) and post-cutover trips (NULL slugs) are unreachable."
+              echo "> Last resort only; roll forward as soon as you can (runbook section 7a)."
+              echo ""
+            fi
+            echo "**Migrations are not undone.** The database stays at the newer schema; the schema"
+            echo "is forward-only (runbook section 8). The target image must work against it."
+            echo ""
+            if [[ -n "${PREV_SERVING:-}" && "${PREV_SERVING}" != *,* && "${PREV_SERVING}" != "$TARGET" ]]; then
+              echo "Undo this rollback (back to the revision that was serving):"
+              echo ""
+              echo "\`\`\`"
+              echo "gh workflow run rollback.yml --ref main -f revision=${PREV_SERVING}"
+              echo "\`\`\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
