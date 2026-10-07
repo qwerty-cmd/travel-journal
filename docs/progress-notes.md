@@ -3358,3 +3358,17 @@ Validation: `grep -rn "<probe-script-name>" . --include=*.md --include=*.yml` re
 ## t-iac-auto-start-deploy
 
 DONE (2026-10-07, owner option A, decision-log Entry 32 amendment). `deploy.yml` gained a `workflow_run` trigger on `CI`: it starts automatically only for a successful `push` CI run on `main` and still waits for owner approval in the `production` environment. Manual dispatch is kept for retries (`attempt`) and older SHAs. Other CI completions give a skipped run. Quick successive merges keep only the newest pending run. A merge replaces a pending rollback/deactivate run in the shared concurrency group, so runbook §8 says not to merge while one waits. Docs updated: decision-log Entry 32, runbook §6 and §8.
+
+## t-history-rewrite-owner-only
+
+ORDINARY DEBT (Gate 4), filed 2026-09-30 at the owner's request. **The owner said "not now".** **Full prompt: `docs/future-work-prompt.md`.**
+- **Owner's reason.** Remove Claude as a contributor, and remove the owner's personal email from public history.
+- **Scope:**
+  - Rewrite every branch with `git filter-repo` so that every author and committer is `qwerty-cmd <58459738+qwerty-cmd@users.noreply.github.com>`.
+  - Strip the `Co-Authored-By: Claude` and `Claude-Session:` trailers.
+  - Remap the short hashes cited in tracked docs, using filter-repo's commit-map.
+  - Force-push.
+- **Scale grew after filing.** The 149 commits merged by 2026-10-06 (PRs #8–#14) were mostly authored `Claude` with trailers. Re-inventory before starting.
+- **Known residue.** GitHub keeps `refs/pull/*` for every PR, so those PRs will still show the old history. Removing it needs GitHub Support or a recreated repo, and that is the owner's call.
+- Story: filed under `s-handover-docs` (in progress). No existing story fits exactly. This is the closest one still open, and it avoids reopening a done story.
+- Agent: `owner`. Every destructive step needs the owner's approval in-session.

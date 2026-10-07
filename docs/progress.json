@@ -334,8 +334,9 @@
     {"id": "t-am-fe-signout-cleanup-gaps", "storyId": "s-am-frontend-auth", "title": "Sign-out cleanup: a create/settings mutation resolving after sign-out re-saves a btj.tripById record; other open tabs keep in-memory caches until reload or their own me 401; a failed btj.me write skips the 401 cleanup \u2014 ORDINARY DEBT", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary"},
     {"id": "t-fe-stop-add-photos", "storyId": "s-am-frontend-rider", "title": "Riders and leaders add photos to an existing stop (stop-detail.md); shared PhotoPicker extracted from add-stop", "status": "done", "agent": "dev", "blockers": [], "gate": "none"},
     {"id": "t-fe-stop-add-photos-gaps", "storyId": "s-am-frontend-rider", "title": "Stop add photos: loading shows text not 6 skeleton tiles; empty state hand-built (no shared EmptyState); Cancel during processing lets the photo appear after; 'Couldn't read photo' is an alert not a polite status (same as add-stop) \u2014 ORDINARY DEBT", "status": "not_started", "agent": "dev", "blockers": [], "gate": "ordinary"},
-    { "id": "t-iac-auto-start-deploy", "storyId": "s-iac-workflows", "title": "deploy.yml starts automatically after a green CI publish on main and waits for production approval (owner option A, Entry 32 amendment)", "status": "done", "agent": "devops", "blockers": [], "gate": "none" }
+    { "id": "t-iac-auto-start-deploy", "storyId": "s-iac-workflows", "title": "deploy.yml starts automatically after a green CI publish on main and waits for production approval (owner option A, Entry 32 amendment)", "status": "done", "agent": "devops", "blockers": [], "gate": "none" },
+    { "id": "t-history-rewrite-owner-only", "storyId": "s-handover-docs", "title": "Rewrite git history to owner-only authorship, strip Claude trailers, remap cited hashes, force-push; owner said not now — prompt: docs/future-work-prompt.md", "status": "not_started", "agent": "owner", "blockers": [], "gate": "ordinary" }
   ],
   "currentTask": null,
-  "lastUpdated": "2026-10-06T14:00:00Z"
+  "lastUpdated": "2026-10-07T12:00:00Z"
 }
