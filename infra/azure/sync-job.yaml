@@ -18,9 +18,12 @@
 #   ${GRAPH_ONEDRIVE_FOLDER} OneDrive archive folder path, e.g. /BikeTrip2026; plain
 #                            value, not a secret (README env/secret split, runbook §2)
 #
-# NEVER add a `secrets:` key. Secret values live only in ACA; the owner sets them
-# with `az containerapp job secret set` (README) before or right after create. The
-# graph-* secrets exist on the Job only (Entry 27). The database and R2 secrets
+# NEVER add a `secrets:` key to this committed file. Secret values live only in ACA.
+# Create (or re-create) the Job per docs/deploy-cutover-runbook.md §6 "One-time setup
+# for the deploy workflows": render to a temp file OUTSIDE the repo, add a
+# `properties.configuration.secrets` list there only (values read at a no-echo
+# prompt), `az containerapp job create --yaml <temp file>`, then delete the temp file.
+# The graph-* secrets exist on the Job only (Entry 27). The database and R2 secrets
 # reuse the app's names and values, in the Job's own secret store.
 #
 # Registry credential: the ACA secret holding the GHCR classic PAT (read:packages

@@ -8,15 +8,21 @@
 #   - Manual `workflow_dispatch` only, from main. No push, pull_request or schedule
 #     trigger, ever.
 #   - Runs in the GitHub `production` environment (owner approval before anything runs).
-#   - Shares deploy.yml's `deploy` concurrency group, never cancelled.
+#   - Shares deploy.yml's `deploy` concurrency group: never runs during a deploy or
+#     rollback, and a running one is never cancelled. GitHub keeps at most one PENDING
+#     run per group, so a newer dispatch cancels an older pending one (see deploy.yml).
 #   - Azure access is OIDC (azure/login). No stored Azure secret; no secret values.
 #   - dry_run defaults to true: it only lists what it would do.
 #
 # KEPT (never deactivated)
 #   - every revision with traffic > 0 (a `latestRevision` entry resolves to the latest
 #     ready revision);
-#   - the rollback target: the most recently created ACTIVE revision older than the
-#     oldest serving revision (same choice as deploy.yml's "previous revision");
+#   - the rollback target: the newest ACTIVE, HEALTHY revision (healthState Healthy,
+#     provisioning and running state not Failed) created before the oldest serving
+#     revision. This skips failed never-served candidates. If none older is healthy,
+#     the newest active older one is kept anyway, with a warning. This is not
+#     necessarily deploy.yml's "previous revision" (the one serving before a deploy);
+#     pass that as `keep` to be sure it stays active;
 #   - input `keep`, if given.
 # Every other active revision is deactivated. Immediately before each deactivation the
 # traffic is re-read, and a revision with traffic > 0 is refused (job fails).
@@ -45,6 +51,9 @@ on:
 permissions:
   id-token: write
 
+# Same group as deploy.yml. At most one PENDING run per group: a newer dispatch cancels
+# an older pending one. Don't queue a second dispatch while one is pending (e.g. a
+# rollback waiting behind a deploy); cancel the pending one or wait instead.
 concurrency:
   group: deploy
   cancel-in-progress: false
@@ -117,12 +126,24 @@ jobs:
             echo "::error::keep revision ${KEEP} does not exist"
             exit 1
           fi
-          # Rollback target: newest active revision created before the oldest serving one.
-          target=$(jq -r --argjson s "$serving" '
+          # Rollback target: newest active HEALTHY revision created before the oldest
+          # serving one (same failed-state test as deploy.yml, plus healthState Healthy);
+          # if none is healthy, the newest active one, with a warning.
+          older=$(jq -c --argjson s "$serving" '
             ([.[] | select(.name as $n | any($s[]; . == $n)) | .properties.createdTime] | min) as $t
             | [.[] | select(.properties.active and (.name as $n | any($s[]; . == $n) | not)
                             and .properties.createdTime < $t)]
-            | sort_by(.properties.createdTime) | last | .name // empty' <<<"$revisions")
+            | sort_by(.properties.createdTime)' <<<"$revisions")
+          target=$(jq -r '[.[] | select(.properties.healthState == "Healthy"
+                                         and .properties.provisioningState != "Failed"
+                                         and .properties.runningState != "Failed")]
+            | last | .name // empty' <<<"$older")
+          if [[ -z "$target" ]]; then
+            target=$(jq -r 'last | .name // empty' <<<"$older")
+            if [[ -n "$target" ]]; then
+              echo "::warning::no healthy active revision older than the serving one; keeping the newest (${target}) as rollback target anyway"
+            fi
+          fi
           keep_set=$(jq -c --arg t "$target" --arg k "$KEEP" \
             '. + [$t, $k] | map(select(. != "")) | unique' <<<"$serving")
           plan=$(jq -c --argjson keep "$keep_set" \

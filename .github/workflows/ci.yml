@@ -248,6 +248,7 @@ jobs:
         env:
           IMAGE: ${{ steps.ref.outputs.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          SHA: ${{ github.sha }}
         run: |
           {
             echo "### Published image"
@@ -257,5 +258,11 @@ jobs:
             echo "| Image | \`${IMAGE}\` |"
             echo "| Digest | \`${DIGEST}\` |"
             echo ""
-            echo "Not deployed. Deploying is manual: docs/deploy-cutover-runbook.md section 6."
+            echo "Not deployed. To deploy this image:"
+            echo ""
+            echo "\`\`\`"
+            echo "gh workflow run deploy.yml --ref main -f sha=${SHA}"
+            echo "\`\`\`"
+            echo ""
+            echo "Approval required in the \`production\` environment; manual fallback: docs/deploy-cutover-runbook.md §6."
           } >> "$GITHUB_STEP_SUMMARY"

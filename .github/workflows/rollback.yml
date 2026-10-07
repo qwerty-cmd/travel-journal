@@ -8,7 +8,9 @@
 #   - Runs in the GitHub `production` environment: the owner is the required reviewer,
 #     so nothing below starts until the owner approves the run.
 #   - Shares deploy.yml's `deploy` concurrency group: a rollback never runs during a
-#     deploy (or another rollback / revision cleanup), and never cancels one.
+#     deploy (or another rollback / revision cleanup), and a running one is never
+#     cancelled. GitHub keeps at most one PENDING run per group, so a newer dispatch
+#     cancels an older pending one (see the concurrency block below).
 #   - Azure access is OIDC (azure/login). No stored Azure secret; no secret values.
 #   - Never builds and never creates a revision: it only re-activates and re-routes
 #     to a revision that already exists.
@@ -60,7 +62,10 @@ permissions:
   id-token: write
   contents: read
 
-# Same group as deploy.yml: one traffic-changing run at a time, never cancelled.
+# Same group as deploy.yml: one traffic-changing run at a time; a RUNNING one is never
+# cancelled. At most one PENDING run per group: a newer dispatch cancels an older
+# pending one. Don't queue a second dispatch while one is pending (e.g. a rollback
+# waiting behind a deploy); cancel the pending one or wait instead.
 concurrency:
   group: deploy
   cancel-in-progress: false
