@@ -54,6 +54,7 @@ empirically disproves another.
 | 31 | Full-file JPEG metadata strip, pure Python (`t-am-jpeg-after-sos` promoted early) | `core/jpeg.py`, `api-contract.md` (Photo upload section), `test_jpeg_strip.py` | **Owner chose Option B, accepted by the orchestrator.** The pre-SOS-only strip let through APPn/COM between scans and everything after EOI (MPF, Motion Photo, gain maps). Now one forward walk to the first top-level EOI; malformed or EOI-less input is 422, never repaired. **Rejected:** Pillow re-encode (lossy, decompression bomb, new dep), `jpegtran -copy none` (subprocess, decode bomb), piexif (APP1 only), exiftool (Perl). ICC dropped; Adobe APP14 kept. Reopen if an original-bytes path ships and P3 colour matters |
 | 32 | Deploy as code: ACA YAML specs + approval-gated GitHub Actions (OIDC); reverses "CI never deploys" and partly supersedes Entry 28 | `infra/azure/*.yaml`, `.github/workflows/{deploy,rollback,deactivate-revisions}.yml`, `deploy-cutover-runbook.md` §6/§8, `.claude/skills/deploy/SKILL.md`, `ci.yml` header | **Owner decisions, 2026-10-06, on the architect plan.** Deploy only by manual `workflow_dispatch` in the `production` environment, owner as required reviewer. **azd, Bicep/ARM, Terraform, k8s lost** (see entry). Committed YAML never has `secrets:`; Jobs updated with `--image` only; fresh `rel-<sha12>` suffix. Private GHCR read-only PAT lives in ACA only, owner rotates. **Entry 28's `az rest` choice reopened and overruled by the owner**; its `revisionSuffix` finding (azure-cli#32272) is an open verification |
 | 33 | Per-session confirmation limit: signed-in wrong passwords no longer count toward the account lockout | `0004_session_confirm_failures.sql`, `data/repositories/sessions.py`, `core/sessions.py`, `routes/v2/auth.py`, `models/account.py`, `api-contract.md` | **Owner yes (option B on `t-am-auth-account-gaps` item 1), 2026-10-06.** Per-session `failed_confirmations`, claimed before argon2; 10th wrong deletes the session and is **401** (not 403); correct password resets; fully decoupled from `failed_logins`/`locked_until`; per-IP bucket unchanged. **Rejected:** keep counting toward the account lock (a stolen session can lock the owner out), and stop counting with no limit (unbounded guessing). Judgement calls: 401 vs 403, and the account lock no longer refuses signed-in password changes |
+| 34 | Ride tracks: manual FIT/GPX upload, `fitdecode`, members-only, Strava rejected | `docs/api-contract.md` (Ride tracks), `0005_tracks.sql`, `storage/` track helper, `models/track.py`, `progress.json` m7 | **Owner/architect decisions, 2026-10-07; `fitdecode` owner-approved.** **Strava lost on licence:** the API Agreement (11 Nov 2024) shows an athlete's data only to that athlete (primary page unread; secondary source only). Garmin SDK lost on licence, `fitparse` on maintenance. One ownership column (`created_by`), originals private and never served, geometry stored without `ele`, `map.py` untouched. Non-members, public-trip readers included, get 404. Privacy trim and OneDrive archive deferred |
 
 ---
 
@@ -2654,3 +2655,35 @@ The column is additive with a default: the old image ignores it and its inserts 
 
 ### What follows
 `t-am-session-confirm-limit` (`docs/progress-notes.md`) implements it. Contract text is already updated: `api-contract.md` "Rate limits and lockout", "Sessions" revocation, the password-change and recovery-code-rotation paragraphs, the `UNAUTHENTICATED` row, and the "Migration 0004" note. `dev` must update the route "How it works" text in `auth.py` and the `currentPassword`/`password` field descriptions in `models/account.py`.
+
+## 34. Ride tracks: manual FIT/GPX upload, `fitdecode`, members-only, no Strava
+
+**Ruling:** owner and architect decisions, 2026-10-07, recorded as agreed. The new dependency `fitdecode` is **owner-approved**. Not a disagreement between agents; it is logged because each rejected option is one a later agent would reasonably try first.
+
+### Context
+The owner wants the recorded ride shown on the trip map. Contract: `api-contract.md` "Ride tracks". Tasks: milestone `m7-ride-tracks`, story `s-ride-track-upload`.
+
+### Decision
+1. **Manual upload only, FIT first, GPX second,** into one internal `TrackPoint(t, lat, lon, ele)` model. Heart rate, cadence and power are never stored.
+2. **Parser: `fitdecode`** (MIT, active, pure Python). Its CRC strictness, truncation handling and compressed-timestamp behaviour are to be **proven by fixtures** in `t-trk-fit-core`, not assumed.
+3. **Limits and strictness.** 20 MiB cap with its own route-class cap (the photos' 16 MiB cap is unchanged), ~500k records, header size larger than the file rejected, parse in a threadpool, magic-byte detection. CRC failure, truncation or no GPS → `422 VALIDATION_ERROR`, never repaired (the Entry 31 stance). Oversize is `422`, not `413`, for the reasons in the photo-upload section.
+4. **Storage.** One `tracks` table (migration 0005) with a single ownership column `created_by` (`SET NULL`; a `NULL` owner means leader-only delete), originals in the private bucket under `tracks/{trip_id}/{track_id}.{fit|gpx}`, never served. Simplified geometry (Douglas-Peucker ~10 m, at most 2000 points) is stored in `jsonb` **without elevation**; stats are computed on the full-resolution points.
+5. **Access.** Upload by active riders and leaders. Read and delete by active members only; a public trip gives non-members nothing, and they get `404`. Delete by the uploader or a leader.
+6. **`map.py` and `MapFeatureCollection` do not change.** The frontend fetches tracks as a second query and a failed fetch must not break the pins.
+7. **Deferred:** privacy trim of the track ends (owner: not needed now), and OneDrive archiving of the originals (intent approved, owner-gated task).
+
+### Rejected options
+- **Strava import.** The Strava API Agreement (effective 11 Nov 2024) lets one athlete's data be shown only to that athlete and caps caching at 7 days, so showing the owner's Strava track to other trip members would breach it. Sources: DC Rainmaker, Nov 2024, and strava.com/legal/api. **Uncertainty:** the research could not read the primary Strava page verbatim, so this rests on the secondary source. Check the primary text before reopening.
+- **Garmin `garmin-fit-sdk`.** The official SDK ships under a proprietary "FIT Protocol License Agreement" (internal business purposes, no third-party distribution). Not a licence this project can rely on.
+- **`fitparse`.** Unmaintained since 2020.
+- **A second ownership column `uploaded_by`.** Every other table has one (`created_by`). A second one invites the two drifting apart, and a `NULL` owner already has a defined meaning.
+- **`defusedxml` for GPX.** Not approved as a dependency. A size cap plus rejecting `<!DOCTYPE` / `<!ENTITY` before stdlib `xml.etree` parsing covers the entity attacks.
+- **Storing `ele` in the geometry now.** Nobody asked for an elevation profile; filed as triggered debt. It would mean a re-parse of originals, which are kept for that.
+
+### Reopen
+- Privacy trim: promote when trip members go beyond the trusted friend group, or a public/follower view exists.
+- Offline queue for tracks: when riders upload on poor signal.
+- `fitdecode` unmaintained or a fixture exposes a strictness gap: reconsider the parser; the licence objection to the Garmin SDK still stands.
+
+### Where the rationale also lives
+`api-contract.md` "Ride tracks". Code comments beside the parser and the GPX entity check are to be written by `t-trk-fit-core` and `t-trk-gpx`.

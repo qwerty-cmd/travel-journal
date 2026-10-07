@@ -8,6 +8,7 @@ The "how." The full spec is `bike-trip-journal-spec.md` — only the `ba` agent 
 - Identity & access: local accounts in Postgres — username + password (argon2id via `argon2-cffi>=25.1,<26`) + one-time recovery code; session = opaque token in the `__Host-btj_session` HttpOnly cookie (only its SHA-256 stored); no identity provider. Every write is authorised by an active `trip_members` row checked on every request; slugs are legacy locators, never credentials (decision-log Entry 29).
 - Database: Postgres — local via `docker-compose` (service `postgres`), prod via Neon. Access only through `backend/app/data/`.
 - Object storage: S3-compatible — local via `docker-compose` (service `minio`), prod via Cloudflare R2. Access only through `backend/app/storage/`. Photos upload as one idempotent request each (client-compressed, far below S3's 5 MiB multipart part minimum, so multipart could never resume them); resumability lives in the offline queue — a failed upload retries whole under the same client id. See decision-log Entry 20.
+- Ride tracks: manual FIT/GPX upload only (Strava is out — its API terms forbid showing one athlete's data to other users). FIT is parsed with `fitdecode` (MIT, pure Python — owner-approved, decision-log Entry 34); GPX with stdlib `xml.etree`. Both feed one internal track model; originals stay private in object storage, never served.
 - Archive: OneDrive via Microsoft Graph — write-only background sync, never a read dependency.
 - Deploy target: Azure Container Apps (free tier), last priority — get it working locally first.
 
