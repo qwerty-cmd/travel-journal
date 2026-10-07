@@ -222,3 +222,51 @@ def test_nul_byte_paths_serve_index_html_when_resolve_rejects_nul(
 
     monkeypatch.setattr(Path, "resolve", linux_like_resolve)
     _assert_nul_paths_serve_index(spa[0])
+
+
+@pytest.fixture
+def spa_with_outside_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[ModuleType]:
+    """Like `spa`, but dist holds a symlink to a file outside it before startup."""
+    import app.main
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text(INDEX, encoding="utf-8")
+    (tmp_path / "secret.txt").write_text(SENTINEL, encoding="utf-8")
+    try:
+        (dist / "leak.txt").symlink_to(tmp_path / "secret.txt")
+    except OSError:
+        pytest.skip("symlinks not supported on this platform")
+
+    monkeypatch.setenv("STATIC_FILES_DIR", str(dist))
+    get_settings.cache_clear()
+    module = importlib.reload(app.main)
+    try:
+        yield module
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+        importlib.reload(app.main)
+
+
+def test_symlink_inside_dist_pointing_outside_is_not_served(spa_with_outside_symlink) -> None:
+    module = spa_with_outside_symlink
+    response = make_test_client(module.app).get("/leak.txt")
+    assert response.status_code == HTTPStatus.OK
+    assert SENTINEL not in response.text
+    assert response.text == INDEX
+
+
+def test_file_added_after_startup_is_not_served_until_reload(spa) -> None:
+    """The dist is immutable in the container, so it is indexed once at startup."""
+    module, root = spa
+    (root / "dist" / "late.js").write_text("// late\n", encoding="utf-8")
+    response = make_test_client(module.app).get("/late.js")
+    assert response.status_code == HTTPStatus.OK
+    assert response.text == INDEX
+
+    reloaded = importlib.reload(module)
+    response = make_test_client(reloaded.app).get("/late.js")
+    assert response.text == "// late\n"
