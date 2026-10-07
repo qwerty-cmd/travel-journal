@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { Navigate, createFileRoute, useRouter } from "@tanstack/react-router";
+import { Navigate, createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../api/client";
 import { useChangePasswordApiV2AuthPasswordPost } from "../api/gen/hooks/useChangePasswordApiV2AuthPasswordPost";
@@ -92,9 +92,20 @@ function FormError({ error, remaining }: { error: unknown; remaining: number }) 
 
 const status = (e: unknown) => (e instanceof ApiError ? e.status : undefined);
 
+/** A 401 from a password-checked action: sign out locally and go to sign-in, as for a 401 on `me`. */
+function useSignedOutRedirect() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  return () => {
+    markSignedOut(queryClient);
+    void navigate({ to: "/signin", search: { next: "/account" }, replace: true });
+  };
+}
+
 function ChangePassword() {
   const queryClient = useQueryClient();
   const change = useChangePasswordApiV2AuthPasswordPost();
+  const signedOut = useSignedOutRedirect();
   const flight = useSingleFlight();
   const countdown = useRetryCountdown();
   const [current, setCurrent] = useState("");
@@ -127,6 +138,8 @@ function ChangePassword() {
             setDone(true);
           },
           onError: (err) => {
+            // 401: the session is gone (e.g. the 10th wrong password deleted it, Entry 33).
+            if (status(err) === 401) return signedOut();
             setError(err);
             countdown.startFrom(err);
           },
@@ -158,6 +171,7 @@ type Issued = { code: string; displayName: string };
 function NewRecoveryCode({ displayName }: { displayName: string }) {
   const queryClient = useQueryClient();
   const rotate = useRotateRecoveryCodeApiV2AuthRecoveryCodePost({ mutation: { gcTime: 0 } });
+  const signedOut = useSignedOutRedirect();
   const flight = useSingleFlight();
   const countdown = useRetryCountdown();
   const titleId = useId();
@@ -199,6 +213,8 @@ function NewRecoveryCode({ displayName }: { displayName: string }) {
             markSignedIn(queryClient, account, false);
           },
           onError: (err) => {
+            // 401: the session is gone (e.g. the 10th wrong password deleted it, Entry 33).
+            if (status(err) === 401) return signedOut();
             setError(err);
             countdown.startFrom(err);
           },
