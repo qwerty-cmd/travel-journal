@@ -1,0 +1,214 @@
+# Deactivate superseded Container Apps revisions, keeping the serving one(s) and one
+# rollback target.
+# Runbook: docs/deploy-cutover-runbook.md section 8 "Rollback", second item: in multiple-
+# revision mode a superseded revision stays active (one replica, one Neon pool each) until
+# deactivated; keep the serving revision and one known-good rollback target.
+#
+# GUARDRAILS (same as deploy.yml)
+#   - Manual `workflow_dispatch` only, from main. No push, pull_request or schedule
+#     trigger, ever.
+#   - Runs in the GitHub `production` environment (owner approval before anything runs).
+#   - Shares deploy.yml's `deploy` concurrency group: never runs during a deploy or
+#     rollback, and a running one is never cancelled. GitHub keeps at most one PENDING
+#     run per group, so a newer dispatch cancels an older pending one (see deploy.yml).
+#   - Azure access is OIDC (azure/login). No stored Azure secret; no secret values.
+#   - dry_run defaults to true: it only lists what it would do.
+#
+# KEPT (never deactivated)
+#   - every revision with traffic > 0 (a `latestRevision` entry resolves to the latest
+#     ready revision);
+#   - the rollback target: the newest ACTIVE, HEALTHY revision (healthState Healthy,
+#     provisioning and running state not Failed) created before the oldest serving
+#     revision. This skips failed never-served candidates. If none older is healthy,
+#     the newest active older one is kept anyway, with a warning. This is not
+#     necessarily deploy.yml's "previous revision" (the one serving before a deploy);
+#     pass that as `keep` to be sure it stays active;
+#   - input `keep`, if given.
+# Every other active revision is deactivated. Immediately before each deactivation the
+# traffic is re-read, and a revision with traffic > 0 is refused (job fails).
+#
+# Variables: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+# AZURE_RESOURCE_GROUP, ACA_APP_NAME (see deploy.yml's header).
+
+name: Deactivate revisions
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: "Optional extra revision to keep active (<app>--<suffix>)"
+        required: false
+        type: string
+        default: ""
+      dry_run:
+        description: "Only list what would be deactivated"
+        required: false
+        type: boolean
+        default: true
+
+# Least privilege: id-token: write to mint the OIDC token azure/login exchanges.
+# No checkout, no other API access.
+permissions:
+  id-token: write
+
+# Same group as deploy.yml. At most one PENDING run per group: a newer dispatch cancels
+# an older pending one. Don't queue a second dispatch while one is pending (e.g. a
+# rollback waiting behind a deploy); cancel the pending one or wait instead.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deactivate:
+    name: deactivate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    env:
+      KEEP: ${{ inputs.keep }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      APP: ${{ vars.ACA_APP_NAME }}
+
+    steps:
+      - name: Validate inputs and configuration
+        env:
+          REF: ${{ github.ref }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "::error::deactivate-revisions.yml must be dispatched from main (got $REF)"
+            exit 1
+          fi
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID RG APP; do
+            if [[ -z "${!v}" ]]; then
+              echo "::error::environment variable for $v is not set (see the header of deploy.yml)"
+              missing=1
+            fi
+          done
+          [[ "$missing" -eq 0 ]] || exit 1
+          if [[ -n "$KEEP" ]] && [[ ! "$KEEP" =~ ^[a-z0-9][a-z0-9-]*--[a-z0-9][a-z0-9-]*$ || "$KEEP" != "${APP}--"* ]]; then
+            echo "::error::input keep must look like ${APP}--<suffix> (lower-case letters, digits, hyphens)"
+            exit 1
+          fi
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Plan
+        run: |
+          set -euo pipefail
+          revisions=$(az containerapp revision list -g "$RG" -n "$APP" --all --only-show-errors -o json)
+          latest_ready=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+            --query properties.latestReadyRevisionName -o tsv)
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          echo "Traffic:"
+          jq -c '.[]' <<<"$traffic"
+          serving=$(jq -c --arg lr "$latest_ready" \
+            '[.[] | select(.weight > 0) | if .latestRevision then $lr else .revisionName end] | unique' \
+            <<<"$traffic")
+          if jq -e 'length == 0 or any(.[]; . == "" or . == null)' <<<"$serving" > /dev/null; then
+            echo "::error::could not determine the serving revision(s) (${serving}); refusing"
+            exit 1
+          fi
+          if [[ -n "$KEEP" ]] && ! jq -e --arg k "$KEEP" 'any(.[]; .name == $k)' <<<"$revisions" > /dev/null; then
+            echo "::error::keep revision ${KEEP} does not exist"
+            exit 1
+          fi
+          # Rollback target: newest active HEALTHY revision created before the oldest
+          # serving one (same failed-state test as deploy.yml, plus healthState Healthy);
+          # if none is healthy, the newest active one, with a warning.
+          older=$(jq -c --argjson s "$serving" '
+            ([.[] | select(.name as $n | any($s[]; . == $n)) | .properties.createdTime] | min) as $t
+            | [.[] | select(.properties.active and (.name as $n | any($s[]; . == $n) | not)
+                            and .properties.createdTime < $t)]
+            | sort_by(.properties.createdTime)' <<<"$revisions")
+          target=$(jq -r '[.[] | select(.properties.healthState == "Healthy"
+                                         and .properties.provisioningState != "Failed"
+                                         and .properties.runningState != "Failed")]
+            | last | .name // empty' <<<"$older")
+          if [[ -z "$target" ]]; then
+            target=$(jq -r 'last | .name // empty' <<<"$older")
+            if [[ -n "$target" ]]; then
+              echo "::warning::no healthy active revision older than the serving one; keeping the newest (${target}) as rollback target anyway"
+            fi
+          fi
+          keep_set=$(jq -c --arg t "$target" --arg k "$KEEP" \
+            '. + [$t, $k] | map(select(. != "")) | unique' <<<"$serving")
+          plan=$(jq -c --argjson keep "$keep_set" \
+            '[.[] | select(.properties.active and (.name as $n | any($keep[]; . == $n) | not)) | .name]' \
+            <<<"$revisions")
+          echo "Active revisions:"
+          jq -r '.[] | select(.properties.active) | "  \(.name)  created=\(.properties.createdTime)  health=\(.properties.healthState)"' <<<"$revisions"
+          echo "Serving: $(jq -r 'join(", ")' <<<"$serving")"
+          echo "Rollback target: ${target:-none (no older active revision)}"
+          echo "Keep: $(jq -r 'join(", ")' <<<"$keep_set")"
+          echo "Deactivate: $(jq -r 'if length == 0 then "nothing" else join(", ") end' <<<"$plan")"
+          {
+            echo "SERVING=$(jq -r 'join(", ")' <<<"$serving")"
+            echo "ROLLBACK_TARGET=${target:-none}"
+            echo "KEEP_SET=$(jq -r 'join(", ")' <<<"$keep_set")"
+            echo "PLAN=${plan}"
+          } >> "$GITHUB_ENV"
+
+      - name: Deactivate
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          done_list=()
+          mapfile -t to_deactivate < <(jq -r '.[]' <<<"$PLAN")
+          for rev in "${to_deactivate[@]}"; do
+            # Re-read traffic right before each write: never deactivate a weighted revision.
+            latest_ready=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+              --query properties.latestReadyRevisionName -o tsv)
+            traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+            if jq -e --arg r "$rev" --arg lr "$latest_ready" \
+                'any(.[]; .weight > 0 and ((.revisionName == $r) or (.latestRevision and $lr == $r)))' \
+                <<<"$traffic" > /dev/null; then
+              echo "::error::${rev} has traffic > 0; refusing to deactivate it (stopped)"
+              echo "DONE=$(IFS=,; echo "${done_list[*]:-}")" >> "$GITHUB_ENV"
+              exit 1
+            fi
+            az containerapp revision deactivate -g "$RG" -n "$APP" --revision "$rev" \
+              --only-show-errors -o none
+            echo "deactivated ${rev}"
+            done_list+=("$rev")
+          done
+          echo "DONE=$(IFS=,; echo "${done_list[*]:-}")" >> "$GITHUB_ENV"
+
+      - name: Summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "### Deactivate revisions (dry run) ${JOB_STATUS}"
+            else
+              echo "### Deactivate revisions ${JOB_STATUS}"
+            fi
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Serving (kept) | ${SERVING:-n/a} |"
+            echo "| Rollback target (kept) | ${ROLLBACK_TARGET:-n/a} |"
+            echo "| Kept | ${KEEP_SET:-n/a} |"
+            echo "| Planned to deactivate | $(jq -r 'if length == 0 then "nothing" else join(", ") end' <<<"${PLAN:-[]}") |"
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "| Deactivated | nothing (dry run) |"
+            else
+              echo "| Deactivated | ${DONE:-nothing} |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

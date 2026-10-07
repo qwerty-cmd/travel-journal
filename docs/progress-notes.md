@@ -3249,8 +3249,10 @@ Scope: infra/azure/app.yaml only.
 AC: no `secrets:` key; env entries use `secretRef` only, names match .env.example (kebab-case secret names); registries block uses passwordSecretRef naming the owner-set secret, no value; probes, ingress (external, https-only), scale min 0 max 1, `activeRevisionsMode: Multiple`; image and revisionSuffix are explicit placeholders (`${IMAGE}`, `${REVISION_SUFFIX}`) for the workflow to substitute; no GRAPH_* anywhere.
 Validation: [V-common]; `! grep -n GRAPH_ infra/azure/app.yaml`. Owner step, in the PR description: diff against `az containerapp show -o yaml`, verify that `update --yaml` keeps the registry credential.
 
-[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github`. If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
+[V-common] = `python3 -I -c "import yaml,sys;[yaml.safe_load(open(f)) for f in sys.argv[1:]]" <files>`; `! grep -nE '^\s*secrets:' infra/azure/*.yaml`; `! grep -rnE 'ghp_|github_pat_|gho_|password:\s*\S' infra/azure .github | grep -v '\${{'` (a `${{ secrets.X }}` expression is a reference, not a value). actionlint and shellcheck are run from the orchestrator's scratchpad (not project dependencies). If `actionlint` or `shellcheck` is absent, the AC falls back to the YAML parse.
 
+
+**DONE.** `infra/azure/app.yaml`: ingress external :8000 https-only, Multiple revisions, scale 0..1, Startup + Liveness probes on `/api/health` (from the README PATCH script), five secretRef env vars plus `S3_REGION=auto`, `ENVIRONMENT=production`, `TRUSTED_PROXY_HOPS="1"`; registry ghcr.io with `passwordSecretRef: ghcr-read-packages`. Placeholders `${IMAGE}`, `${REVISION_SUFFIX}`, `${APP_CONTAINER_NAME}`, `${GHCR_USERNAME}` for an explicit-list envsubst. No `secrets:` key, no GRAPH_*. **Owner to confirm against `az containerapp show -o yaml`:** transport `auto`, resources 0.5 CPU / 1Gi (CLI defaults; the create command set none), `ENVIRONMENT` value, container name, and the PAT secret name.
 ## t-iac-migrate-job-yaml
 
 Goal: manual-trigger Job spec that runs migrations on the same image.
@@ -3259,6 +3261,8 @@ Scope: infra/azure/migrate-job.yaml only.
 AC: triggerType Manual; command `python -m app.data.migrate` baked into the container; same secretRefs and registry reference as app.yaml; no `secrets:`; image placeholder.
 Validation: [V-common]; grep -n "app.data.migrate" infra/azure/migrate-job.yaml.
 
+
+**DONE.** `infra/azure/migrate-job.yaml`: Manual trigger, parallelism 1, 600 s timeout, `replicaRetryLimit: 0` (each migration file is its own transaction; a blind retry would hide the failure the deploy must stop on), 0.25 CPU / 0.5Gi, `python -m app.data.migrate` with `PYTHONPATH=/app/backend`, env `DATABASE_URL` + the four `S3_*` secretRefs (Settings requires them at import). Container name `migrate`. Placeholders `${IMAGE}`, `${GHCR_USERNAME}`. **Owner:** set the same five secrets on the Job (it has its own store) and check the registry secret name.
 ## t-iac-sync-job-yaml
 
 Goal: create-time-only spec for the OneDrive sync Job.
@@ -3267,6 +3271,8 @@ Scope: infra/azure/sync-job.yaml only; header comment says "create-only: later u
 AC: GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_REFRESH_TOKEN appear as secretRef names only; plain GRAPH_ONEDRIVE_FOLDER placeholder; no `secrets:`; schedule matches the README's existing Job.
 Validation: [V-common]; `git diff --stat` shows no change to backend/app/storage/onedrive_sync.py.
 
+
+**DONE.** `infra/azure/sync-job.yaml` (create-only): Schedule `*/30 * * * *`, timeout 900 s, no retry, 0.25 CPU / 0.5Gi, `python /app/backend/app/storage/onedrive_sync.py` with no dash-leading args, DB + S3 secretRefs as the app, `GRAPH_CLIENT_ID/SECRET/REFRESH_TOKEN` as secretRefs only, `GRAPH_ONEDRIVE_FOLDER` as a placeholder value. Placeholders `${IMAGE}`, `${JOB_CONTAINER_NAME}`, `${GHCR_USERNAME}`, `${GRAPH_ONEDRIVE_FOLDER}`. `onedrive_sync.py` untouched. **Owner to confirm:** `ENVIRONMENT` value, registry secret name, container name (CLI default = Job name), and whether `job create --yaml` needs `properties.environmentId`; secret values set with `job secret set`.
 ## t-iac-owner-identity
 
 Goal: Azure identity the workflow signs in as, with minimum scope.
@@ -3299,6 +3305,8 @@ Scope: infra/azure/smoke.sh only (arg: base URL; no secrets read).
 AC: asserts /api/health 200; / returns the SPA (HTML); http:// does not serve the app; same-origin POST sign-in with bad credentials returns 401, not 403 (Host passthrough); optional `--xff-burst` flag sends 121 requests from one network and expects exactly one 429; non-zero exit on any failure.
 Validation: `bash -n infra/azure/smoke.sh`; `shellcheck infra/azure/smoke.sh` if installed; `bash infra/azure/smoke.sh` with no args exits non-zero with usage. The live run is an owner step (t-iac-first-deploy).
 
+
+**DONE.** `infra/azure/smoke.sh <base-url> [--xff-burst]`: health 200; `/` is the SPA (`text/html`, `id="root"`); `http://` redirects to https or is refused; same-origin signin with a random `smoke-<hex>` user is 401 (403 means the ingress rewrote Host). `--xff-burst` targets the **signin** bucket (10 per 15 min per IP, `ratelimit.py`), not the 121-request public-read burst in runbook §7a: after the Host check it sends 10 more with fake XFF values and expects 9×401 then one 429; it locks the runner IP out of signin for ~15 min, so `deploy.yml` must not pass it on every deploy. shellcheck clean; checks 1, 2 and 4 passed against a local uvicorn. Runbook §7a gets a note in `t-iac-runbook-skill`.
 ## t-iac-deploy-workflow
 
 Goal: approval-gated deploy by workflow_dispatch.
@@ -3307,6 +3315,8 @@ Scope: .github/workflows/deploy.yml; .github/workflows/ci.yml header comment onl
 AC: trigger is workflow_dispatch only, input `sha`; `environment: production`; `concurrency: deploy`; `permissions: id-token: write, contents: read`; steps follow the plan: verify CI green and GHCR tag, azure/login via vars, record current revision and pin traffic, migrate Job start with --image and poll Succeeded, `update --yaml` with fresh `rel-<sha12>` suffix, poll Healthy and shift traffic, sync `job update --image` and assert images equal, run smoke.sh, write step summary with new and previous revision. No `secrets:` use beyond GITHUB_TOKEN; no secret values.
 Validation: `actionlint .github/workflows/deploy.yml .github/workflows/ci.yml` if installed; [V-common]; `grep -n "workflow_dispatch" .github/workflows/deploy.yml` and `! grep -nE '^\s*(push|pull_request|schedule):' .github/workflows/deploy.yml`.
 
+
+**DONE.** `.github/workflows/deploy.yml`: `workflow_dispatch` from main only (`sha` 40-hex, `xff_burst` default false), `environment: production`, `concurrency: deploy`, OIDC `azure/login`. Steps: verify main contains the SHA, its `ci.yml` run is green (backend, frontend, publish) and the GHCR image exists, then check out that SHA; pin 100% traffic to the serving revision; migrate via `job update --image` then `job start` with **no options** (any start override, `--image` included, replaces the whole container: env, secretRefs, command — this corrects Entry 32 step 4); render app.yaml with an explicit envsubst list, `update --yaml` as `rel-<sha12>` (existing suffix → traffic-only), assert revision name and image; warm through a `candidate` label until healthy, then shift 100%; `job update --image` on the sync Job and assert images match; `smoke.sh`; always-on summary with traffic and the rollback command. 12 environment variables listed in the header. actionlint + shellcheck clean. **Owner, first run:** traffic pin survives `update --yaml`, label URL format, state strings, GITHUB_TOKEN reading the private package, add a main-only deployment-branch rule on `production`. `ci.yml` header now points to deploy.yml.
 ## t-iac-rollback-workflows
 
 Goal: gated rollback and revision cleanup.
@@ -3315,6 +3325,8 @@ Scope: .github/workflows/rollback.yml, .github/workflows/deactivate-revisions.ym
 AC: same trigger, environment, concurrency and OIDC rules as deploy.yml; rollback takes a `revision` input, verifies it exists, shifts 100% traffic, runs smoke.sh, and warns (annotation) when the target predates Entry 29 (security-degrading, runbook §7a); deactivate refuses to deactivate the active or the rollback-target revision.
 Validation: actionlint if installed; [V-common]; the grep for no push/pull_request triggers as above.
 
+
+**DONE.** `rollback.yml` (input `revision`, optional `sync_job_image`): validates the name, activates if inactive, warms via a `rollback` label until healthy, shifts 100% and verifies, runs smoke.sh from main; warns (annotation + summary banner quoting runbook §7a) when the target predates Entry 29 — tested by `git merge-base --is-ancestor` of the PR #8 merge `9e8561f` against the revision image SHA (or the `rel-<sha12>` suffix; unknown also warns); summary says migrations are not undone. `deactivate-revisions.yml` (`dry_run` default true, `keep`): keeps every revision with traffic, the newest active one created before the oldest serving one (rollback target) and `keep`; re-reads traffic before each deactivation and stops if any. Same guards, environment, `deploy` concurrency and OIDC as deploy.yml; actionlint clean. **Owner, first run:** traffic set leaves only the target, the label URL format, activate on a scaled-to-0 revision, dry-run the cleanup first (the recorded rollback target `rel-1bbe81bcbec5` is pre-Entry 29).
 ## t-iac-runbook-skill
 
 Goal: docs match reality.
@@ -3323,6 +3335,8 @@ Scope: docs/deploy-cutover-runbook.md §6 and §8, with §7/§7a cross-links; .c
 AC: §6 describes dispatching deploy.yml and approving it; manual steps kept only for the fallback and the owner-only list (secret entry, grant_leader/reset_account, real-device tests); the SKILL "never deploys" and "owner runs migrations" text is replaced; old `az` command blocks are moved under "manual fallback".
 Validation: `! grep -n "never deploys" docs/deploy-cutover-runbook.md .claude/skills/deploy/SKILL.md`; grep -n "deploy.yml" on both files.
 
+
+**DONE.** Runbook §6 and §8 rewritten around deploy.yml, rollback.yml and deactivate-revisions.yml (old az blocks kept under "Manual fallback"); new "One-time setup for the deploy workflows" (OIDC identity, production environment + main-only branch rule + 12 vars, GHCR PAT on app and both Jobs, package Actions access, creating each Job from a temp render outside the repo that adds the `secrets:` list — the committed YAML references secrets that do not exist yet — and the first-run verification list); §7a cross-links the smoke `--xff-burst`. Entry 32 gained "Corrections during build". `.claude/skills/deploy/SKILL.md` now routes every deploy and rollback through the workflows.
 ## t-iac-first-deploy
 
 Goal: prove the pipeline end to end.

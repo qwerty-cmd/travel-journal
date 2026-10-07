@@ -256,15 +256,113 @@ successful run after the fix archives everything that was missed.
 
 ## 6. Deploy (following `.claude/skills/deploy/SKILL.md`; `t-owner-cutover` covers §6–§7)
 
-devops runs these steps after you have confirmed the cutover.
+Deploys run through `.github/workflows/deploy.yml`, approved by you (decision-log Entry 32). The `az`
+steps further down are the manual fallback.
 
 Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be **lower case**
 (GHCR rejects upper case). It is the same image path as `infra/azure/README.md`.
 
 **Images are built by CI, not by hand.** `.github/workflows/ci.yml` publishes
 `ghcr.io/<owner>/<repo>:<full-commit-sha>` on every merge to `main`, after the backend and frontend
-checks pass. It never deploys: every step below stays manual. See "Image publishing (GitHub Actions to GHCR)"
-at the end of this section for package visibility and access.
+checks pass. `ci.yml` only builds and publishes; `deploy.yml` deploys, and only when you dispatch and approve it.
+See "Image publishing (GitHub Actions to GHCR)" at the end of this section for package visibility and access.
+
+### Deploy with the workflow
+
+1. **Pick the SHA.** The full 40-character SHA of the `main` commit to deploy. Its `ci.yml` run must be
+   green (backend, frontend and publish).
+2. **Dispatch.** GitHub → Actions → Deploy → Run workflow (branch `main`), or:
+   `gh workflow run deploy.yml --ref main -f sha=<full-sha>`
+   Optional inputs:
+   - `attempt` (1..99, default 1). Attempt 1 names the revision `<app-name>--rel-<sha12>`; any other N names it
+     `<app-name>--rel-<sha12>-a<N>`. A revision suffix can never be reused. If a revision already exists for the
+     suffix and is failed or unhealthy, the run fails fast with a hint: re-dispatch with `attempt=N+1`, e.g.
+     `gh workflow run deploy.yml --ref main -f sha=<full-sha> -f attempt=2`.
+   - `xff_burst` (default off), see "Smoke checks" below.
+3. **Approve.** The run waits in the `production` environment until you approve it (you are the required
+   reviewer). Nothing starts before that. Only one deploy, rollback or cleanup runs at a time (`concurrency: deploy`).
+   **Don't queue a second dispatch behind a pending one.** GitHub keeps one pending run per group, so a newer
+   dispatch cancels the older pending run (e.g. a rollback queued behind a deploy). Cancel or wait instead.
+4. **Watch it.** The run does these steps, and stops at the first failure:
+   1. Verifies `main` contains the SHA, its CI run is green and the GHCR image exists, then checks out that SHA.
+   2. Signs in to Azure with OIDC (no stored Azure secret).
+   3. Records the serving revision and pins 100% of traffic to it, so the update cannot move traffic by itself.
+   4. Migrates Neon: `job update --image` on the migrate Job, then `job start` with no options, and polls
+      the execution to Succeeded. Traffic still sits on the old revision, so a migration must keep working with
+      the previous image (step 8, "Schema is forward-only").
+   5. Renders `infra/azure/app.yaml` (explicit `envsubst` list, which includes `PREV_REVISION`) and runs
+      `az containerapp update --yaml`, creating revision `<app-name>--rel-<first 12 chars of SHA>`
+      (`-a<N>` appended when `attempt` > 1) at 0% traffic. The YAML's ingress `traffic:` list pins
+      `${PREV_REVISION}` at 100 and the latest revision at 0. The workflow asserts the revision name and image;
+      if traffic moved anyway it re-pins, verifies, and fails if the pin did not hold.
+      Redeploying the same SHA takes a traffic-only path and creates no revision.
+   6. Warms the new revision through a `candidate` label until it is healthy, then shifts 100% of traffic.
+   7. Updates the OneDrive sync Job to the same image and asserts the app and Job images are equal.
+   8. Runs `infra/azure/smoke.sh` against `APP_BASE_URL`.
+   9. Writes the run summary (always, even on failure).
+5. **Read the summary.** It names the revision now serving traffic, the previous revision (the rollback
+   target) and the exact `rollback.yml` command. There is no automatic rollback: if smoke fails after the
+   traffic shift, you decide whether to roll back (step 8).
+
+**Smoke checks (`infra/azure/smoke.sh <base-url> [--xff-burst]`).** `/api/health` is 200; `/` is the SPA;
+plain `http://` does not serve the app; a same-origin sign-in with bad credentials is 401 (a 403 means the
+ingress rewrote Host). `--xff-burst` is **not** the 121-request public-read check in §7a: it uses the
+**signin** bucket (10 per 15 minutes per IP), expecting 9 x 401 then one 429. It locks the runner's IP
+out of signin for about 15 minutes, which is why it is off by default. The §7a manual check and the
+second-network half of it (`t-am-verify-aca-xff`) stay yours.
+
+**What stays manual:** entering secret values in ACA, the GHCR PAT, `grant_leader` / `reset_account` in your
+own shell (§7a), real-device tests (§7), and the second-network XFF check.
+
+### One-time setup for the deploy workflows
+
+Do these once, in your own shell and the GitHub UI. Use placeholders in anything you write down; never paste
+real values into the repo or an agent chat.
+
+- [ ] **Azure identity.** A user-assigned managed identity, a federated credential with subject
+  `repo:<owner>/<repo>:environment:production`, and Contributor on the app's **resource group only**.
+  Commands: decision-log Entry 32, "Owner setup" (step 1).
+- [ ] **GitHub `production` environment** (Settings → Environments): you as required reviewer, and a
+  deployment-branch rule restricting it to `main`. Add these 12 environment **variables** (names only here;
+  none is a secret): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`,
+  `ACA_APP_NAME`, `ACA_APP_CONTAINER_NAME`, `ACA_MIGRATE_JOB_NAME`, `ACA_MIGRATE_CONTAINER_NAME`,
+  `ACA_SYNC_JOB_NAME`, `ACA_SYNC_CONTAINER_NAME`, `GHCR_USERNAME`, `APP_BASE_URL`. Their meanings are listed in
+  the header of `.github/workflows/deploy.yml`.
+- [ ] **GHCR pull credential.** A classic PAT with `read:packages` only, stored in ACA as the secret
+  `ghcr-read-packages` on the app **and both Jobs** (the YAML names that secret via `passwordSecretRef`,
+  never the value). Entry 32 "Owner setup" (step 3) shows the commands; confirm the generated secret name with
+  `az containerapp show ... --query properties.configuration.registries`. Record the PAT's expiry in the handover.
+- [ ] **GHCR package access.** Package settings → Manage Actions access → add this repository with the
+  **Write** role. Until this is done the first publish on `main` fails with `permission_denied: read_package`.
+- [ ] **Create the migrate Job once** from `infra/azure/migrate-job.yaml`. The committed YAML has no `secrets:`
+  block on purpose, but its env `secretRef`s (`database-url`, `s3-endpoint-url`, `s3-access-key-id`,
+  `s3-secret-access-key`, `s3-bucket-name`) do not exist on a Job that does not exist yet, so a plain
+  `job create --yaml` on the committed file fails. Instead:
+  1. Render the YAML with `envsubst` (`IMAGE`, `GHCR_USERNAME`; see the file header) to a temp file **outside the repo**.
+  2. In that temp file only, add a `properties.configuration.secrets` list with those five names plus
+     `ghcr-read-packages`. Read each value at a no-echo prompt (`read -rs`) and write it in; never type it on a
+     command line or into a chat.
+  3. `az containerapp job create --name <migrate-job-name> --resource-group <resource-group> --environment <env-name> --yaml <temp-file>`
+  4. Delete the temp file. Never commit or paste it.
+
+  There is no separate `job secret set` step for this Job. The sync Job (`infra/azure/sync-job.yaml`, create-only)
+  is created or re-created the same way, with the same five secrets plus `graph-client-id`, `graph-client-secret`,
+  `graph-refresh-token` and `ghcr-read-packages`. Later updates to either Job use `job update --image`.
+- [ ] **First-run verification** (owner checks from the build notes), on the first dispatch:
+  - the YAML traffic pin holds (the new revision shows 0% and the previous one 100% after `update --yaml`);
+  - the `candidate` label URL format and the revision state strings the workflow polls are as expected;
+  - `GITHUB_TOKEN` can read the private package;
+  - `update --yaml` kept the registry credential (diff `infra/azure/app.yaml` against `az containerapp show -o yaml`:
+    transport, 0.5 CPU / 1Gi, `ENVIRONMENT`, container name, PAT secret name);
+  - the migrate Job's secrets and registry secret name are right, and `job create --yaml` did not need
+    `properties.environmentId` added;
+  - the run summary names the new and previous revision, and the app and Job images match;
+  - the main-only deployment-branch rule is in place on `production`.
+
+### Manual fallback (if the workflow is unavailable)
+
+devops runs these steps after you have confirmed the cutover. They are what `deploy.yml` automates, in the
+same order.
 
 - [ ] **devops. Pick the tag.** Use the full 40-character SHA of the `main` commit being deployed. Its
   CI run must be green, and that run's summary shows the image and digest. `$TAG` is used by every
@@ -339,8 +437,8 @@ and pushes it to GHCR on every push to `main`, and on a manual
 - **Build only.** The workflow never logs in to Azure, runs `az`, changes a
   revision or traffic, or updates the Job. Its only credential is the per-run
   `GITHUB_TOKEN`, with `packages: write` in the publish job alone. Deploying
-  stays manual, per this section. Building and pushing by hand is now the
-  fallback there.
+  is the separate `deploy.yml` (see "Deploy with the workflow" above).
+  Building and pushing by hand is the fallback.
 - **Package visibility.** The first push creates the GHCR package as
   **private**. Choose one of these:
   - **Public.** On GitHub, open the package, then Package settings → Change
@@ -355,6 +453,7 @@ and pushes it to GHCR on every push to `main`, and on a manual
   write access to it. This happens, for example, if the package was first
   created by a manual push. Open Package settings → Manage Actions access, add
   this repository, and give it the **Write** role. Then re-run the workflow.
+  (The same setting fixes `permission_denied: read_package`, seen on the first publish on `main`.)
 
 ## 7. Post-deploy checks
 
@@ -429,7 +528,8 @@ Rate limits are keyed by client IP, taken as the **right-most** `X-Forwarded-For
 (`TRUSTED_PROXY_HOPS`, default `1`, on the premise that the Container Apps ingress appends exactly one
 hop). If that premise is wrong, one client can mint a fresh bucket per request by spoofing the header.
 
-- [ ] **You. Spoofed-XFF burst.** From one network, send 121 requests to a public-read endpoint (120 per
+- [ ] **You. Spoofed-XFF burst.** (`smoke.sh --xff-burst` is a different, signin-bucket check; see §6
+  "Smoke checks". It does not replace this one.) From one network, send 121 requests to a public-read endpoint (120 per
   minute per IP) with a spoofed header, within a minute:
   `for i in $(seq 121); do curl -s -o /dev/null -w "%{http_code}\n" -H "X-Forwarded-For: 1.2.3.4" https://<app-host>/api/v2/trips; done | sort | uniq -c`
   Expected: 120 x `200` and 1 x `429`. Then, inside the same minute, from a **second network** (for
@@ -453,6 +553,32 @@ hop). If that premise is wrong, one client can mint a fresh bucket per request b
 
 ## 8. Rollback
 
+### Roll back with the workflow
+
+- [ ] **Dispatch `rollback.yml`** (Actions → Rollback → Run workflow, or
+  `gh workflow run rollback.yml --ref main -f revision=<app-name>--<suffix>`) and approve it in the `production`
+  environment. The deploy summary prints this exact command with the previous revision filled in. It validates the
+  name, activates the revision if it is inactive, warms it through a `rollback` label until healthy, shifts 100% of
+  traffic, verifies it, and runs `smoke.sh`. Optional input `sync_job_image` (default false) also sets the sync Job to
+  that revision's image. It never builds and never creates a revision. Don't rebuild forward under pressure.
+- [ ] **Migrations are not undone.** The database stays at the newer schema (see "Schema is forward-only" below).
+- [ ] **Pre-Entry 29 targets are security-degrading.** If the target image does not contain the Entry 29 merge
+  (PR #8), or it cannot be resolved, the run raises a warning annotation and a summary banner. It still
+  rolls back, since it may be your last resort: read the warning at the end of step 7a first.
+
+### Clean up superseded revisions with the workflow
+
+- [ ] **Dispatch `deactivate-revisions.yml`** with `dry_run` left at its default (`true`) first. Read the list it
+  prints, then re-run with `dry_run` off and approve it. It keeps every revision with traffic, the rollback target
+  and the optional `keep` input, and refuses to deactivate anything that gained traffic since it read the list.
+  The rollback target is the **newest active healthy revision before the oldest serving one**. To be certain it
+  keeps the right one, pass deploy's previous revision (named in the deploy summary) as `keep`. The reasoning is
+  the second item of "Manual fallback" below.
+- [ ] **Don't queue this behind another run.** It shares the `deploy` concurrency group, and a newer dispatch
+  cancels an older pending run. Wait for a running deploy to finish before dispatching a rollback or cleanup.
+
+### Manual fallback (if the workflow is unavailable)
+
 - [ ] **devops, after your confirmation.** Send traffic back to the last known-good revision with
   `az containerapp ingress traffic set ... --revision-weight <good-revision>=100`, or reactivate that
   revision. Don't rebuild forward under pressure. **If the good revision predates Entry 29, this
@@ -468,6 +594,8 @@ hop). If that premise is wrong, one client can mint a fresh bucket per request b
   its own initiative. Applying the probes in step 1 left three active revisions this way
   (`t-owner-deactivate-superseded-revisions` — done 2026-09-30; the rollback target is
   `bike-trip-journal--rel-1bbe81bcbec5`).
+### Rules that apply either way
+
 - [ ] **Schema is forward-only.** An image rollback does not undo a migration, so check that the older
   image still works with the current schema before you rely on it.
 - [ ] **A leaked rider link is a different kind of incident.** Handle it by rotating `trips.rider_slug`

@@ -15,15 +15,12 @@ Deployment target is Azure Container Apps (free tier), built from the repo-root 
    - **OneDrive sync Job:** the same database and R2 values, plus `GRAPH_CLIENT_ID`/`GRAPH_CLIENT_SECRET`/`GRAPH_REFRESH_TOKEN` and plain `GRAPH_ONEDRIVE_FOLDER`.
    - **The Graph secrets go on the Job only.** The web app never reads them (only `onedrive_sync.py` does), so least privilege keeps the long-lived OneDrive credential off the internet-facing app.
 
-**Every deploy:**
-1. **Pick the image — don't build it.** Every push to `main` that passes CI publishes `ghcr.io/<owner>/<repo>:<full-commit-sha>` via `.github/workflows/ci.yml` (never `latest`; the workflow only builds and pushes, it never deploys). Deploy that exact SHA tag; the run summary shows the image reference and digest.
-2. Only if CI can't publish (e.g. GitHub Actions down): build the repo-root `Dockerfile` and push to GHCR by hand with the same full-SHA tag — runbook §6 "fallback". ACR has no free tier and is not used.
-3. **Apply migrations against Neon before moving traffic** (`python -m app.data.migrate`, run by the owner with the production `DATABASE_URL`). Migrations are forward-only; a new revision must never serve an old schema.
-4. Update the Container App to the new image tag. Update the OneDrive sync Container Apps Job to the same tag (`az containerapp job update --image`), so it never runs a stale image against a newer schema — see `infra/azure/README.md`.
-5. Confirm `/api/health` responds and the SPA loads, before considering the deploy done.
+**Every deploy runs through `.github/workflows/deploy.yml` (decision-log Entry 32).** Agents never run it; the owner dispatches it and approves it in the GitHub `production` environment.
+1. **Pick the image — don't build it.** Every push to `main` that passes CI publishes `ghcr.io/<owner>/<repo>:<full-commit-sha>` via `.github/workflows/ci.yml` (never `latest`). The deploy input is that full SHA.
+2. The workflow, in order: verifies CI and the image; pins traffic to the serving revision; migrates with the manual Job (`job update --image`, then `job start` with **no options** — any start override replaces the whole container, env and command included); applies `infra/azure/app.yaml` as revision `rel-<sha12>` (or `rel-<sha12>-a<N>` with input `attempt=N`, to retry a SHA whose revision failed) at 0% traffic, pinned in the YAML's `traffic:` list; shifts traffic once the revision is healthy; updates the OneDrive sync Job to the same image; runs `infra/azure/smoke.sh`. Migrations are forward-only; a new revision never serves an old schema.
+3. Committed YAML never carries a `secrets:` key (a partial list deletes the omitted secrets) or any secret value.
+4. Only if Actions is unavailable: the manual fallback in `docs/deploy-cutover-runbook.md` §6, still owner-run. ACR has no free tier and is not used.
 
-Exact commands for each step: `docs/deploy-cutover-runbook.md` §6.
-
-**Rollback:** Container Apps keeps prior revisions — route traffic back to the last known-good revision rather than rebuilding forward under pressure.
+**Rollback:** `.github/workflows/rollback.yml` with the previous revision name (the deploy summary prints the exact command). It moves traffic only — migrations are not undone — and warns when the target predates Entry 29, which is security-degrading (runbook §7a). Clean old revisions with `deactivate-revisions.yml`, dry run first.
 
 **Never do without explicit human confirmation first:** provisioning new billable resources, changing a secret value, or a production cutover — per the `devops` agent's scope (spec Section 11), this work always needs review before it's applied, not just after.

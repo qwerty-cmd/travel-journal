@@ -2607,6 +2607,13 @@ unset GHCR_PAT
 
 Record the PAT's expiry date in the handover. The `passwordSecretRef` name ACA generates must match what the YAML files reference (check with `az containerapp show -g <rg> -n <app-name> --query properties.configuration.registries`).
 
+### Corrections during build (2026-10-07)
+Two points above were disproved while building the workflows; the workflows follow these, not the text above.
+- **Migrate step (sequence step 4, and the `--command` caveat).** `az containerapp job start --image <sha>` is wrong, not just `--command`: any start-time override replaces the whole container template, including env, secretRefs and command, so the Job would run without its `DATABASE_URL` and S3 secrets. `deploy.yml` runs `job update --image <sha>` first, then `job start` with no options, and polls the execution to Succeeded.
+- **Revision suffix (the OPEN caveat).** `az containerapp update --yaml` ignores `--revision-suffix`: the CLI warns that extra options are ignored, so passing it alongside `--yaml` does nothing. The fallback in that caveat therefore does not work. What protects the deploy is the `rel-<sha12>` suffix inside the YAML (substituted into `app.yaml`) plus an assertion that the resulting revision name is `<app>--rel-<sha12>` and runs the expected image. Do not "fix" this by adding `--revision-suffix` back.
+- **(c') Flag removed.** The ignored `--revision-suffix` flag has since been deleted from `deploy.yml`. The YAML suffix plus the revision-name assertion is the whole guard.
+- **(f) YAML traffic pin and `attempt` retry.** `app.yaml` carries an ingress `traffic:` list pinning `${PREV_REVISION}` at 100 and latest at 0 (`PREV_REVISION` is in the explicit `envsubst` list), so `update --yaml` cannot move traffic. If traffic moved anyway, the run re-pins, verifies, and fails if the pin did not hold. A revision suffix can never be reused, so a new `attempt` input (1..99) gives `rel-<sha12>` for 1 and `rel-<sha12>-a<N>` otherwise; a failed or unhealthy revision for the suffix fails the run fast with a hint to re-dispatch with `attempt=N+1`.
+
 ### What follows
 Milestone `m6-iac-deploy` in `progress.json` (13 tasks), details in `docs/progress-notes.md` per task ID. Tasks 2 to 8 of the plan are scoped there; `t-iac-first-deploy` supersedes `t-owner-cutover` for future deploys. Wording that still says CI never deploys is owned by `t-iac-deploy-workflow` (`ci.yml` header) and `t-iac-runbook-skill` (deploy `SKILL.md`, runbook).
 

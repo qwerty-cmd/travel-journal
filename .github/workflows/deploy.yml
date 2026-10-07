@@ -1,0 +1,536 @@
+# Deploy: put one already-published image on Azure Container Apps.
+# Decision: docs/decision-log.md Entry 32 (reverses "CI never deploys", with guardrails).
+#
+# GUARDRAILS
+#   - Manual `workflow_dispatch` only, from main. No push, pull_request or schedule
+#     trigger, ever.
+#   - Runs in the GitHub `production` environment: the owner is the required reviewer,
+#     so nothing below starts until the owner approves the run.
+#   - Azure access is OIDC (azure/login, federated credential on a user-assigned managed
+#     identity, Contributor on the app's resource group only). No stored Azure secret.
+#   - The only secret used is the built-in, per-run GITHUB_TOKEN. Every other input is a
+#     non-secret environment variable. Secret values live in ACA only (Entry 32).
+#   - Never builds: deploys ghcr.io/<owner>/<repo>:<full-sha> as published by ci.yml.
+#
+# INPUTS
+#   sha        full 40-hex commit SHA on main whose CI run succeeded and whose image exists
+#   attempt    1..99, default 1. The revision suffix is rel-<sha12> for 1 and
+#              rel-<sha12>-a<attempt> above that. A suffix can never be reused, so a SHA
+#              whose revision failed is retried by re-dispatching with attempt=N+1.
+#   xff_burst  also run smoke.sh --xff-burst. Off by default: it locks the runner's IP out
+#              of signin for ~15 min (signin rate-limit bucket).
+#
+# GITHUB `production` ENVIRONMENT VARIABLES (Settings > Environments > production >
+# Variables; IDs and names only, none of them is a secret):
+#   AZURE_CLIENT_ID          client ID of the deploy managed identity
+#   AZURE_TENANT_ID          Entra tenant ID
+#   AZURE_SUBSCRIPTION_ID    subscription holding the resource group
+#   AZURE_RESOURCE_GROUP     resource group of the app and both Jobs
+#   ACA_APP_NAME             Container App name
+#   ACA_APP_CONTAINER_NAME   app container name (app.yaml ${APP_CONTAINER_NAME})
+#   ACA_MIGRATE_JOB_NAME     migrate Job name
+#   ACA_MIGRATE_CONTAINER_NAME  migrate Job container name (migrate-job.yaml: `migrate`)
+#   ACA_SYNC_JOB_NAME        OneDrive sync Job name
+#   ACA_SYNC_CONTAINER_NAME  sync Job container name (CLI default: the Job name)
+#   GHCR_USERNAME            GitHub user owning the read:packages PAT (app.yaml ${GHCR_USERNAME})
+#   APP_BASE_URL             public https:// base URL the smoke checks hit
+# Recommended: restrict the environment's deployment branches to `main`.
+#
+# SEQUENCE: verify CI + image -> azure/login -> record serving revision and pin 100% of
+# traffic to it -> migrate Job -> app update (new revision `<app>--rel-<sha12>[-a<N>]`,
+# 0% traffic) -> wait healthy -> shift 100% -> sync Job image -> smoke -> summary with the
+# rollback command. No automatic rollback: the summary names the revision serving
+# traffic and the exact rollback.yml command.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-character commit SHA on main to deploy (its CI run must be green)"
+        required: true
+        type: string
+      attempt:
+        description: "Attempt number, 1-99: >1 deploys the same SHA as a fresh revision rel-<sha12>-a<attempt> (retry after a failed revision)"
+        required: false
+        type: number
+        default: 1
+      xff_burst:
+        description: "Also run the XFF signin burst (locks the runner IP out of signin ~15 min)"
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege, job-wide (one job):
+#   id-token: write  - mint the OIDC token azure/login exchanges for an Azure token
+#   contents: read   - check out the deployed SHA and call the compare API (SHA on main)
+#   actions: read    - list ci.yml runs and their jobs for the SHA
+#   packages: read   - log in to GHCR and inspect the image manifest
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  packages: read
+
+# One traffic-changing run at a time (shared with rollback.yml and
+# deactivate-revisions.yml); cancel-in-progress: false never stops a RUNNING one. But
+# GitHub keeps at most one PENDING run per group: a newer dispatch cancels an older
+# pending one. Don't queue a second dispatch while one is pending (e.g. a rollback
+# waiting behind a deploy); cancel the pending one or wait for it instead.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production
+    defaults:
+      run:
+        shell: bash
+    env:
+      SHA: ${{ inputs.sha }}
+      ATTEMPT: ${{ inputs.attempt }}
+      XFF_BURST: ${{ inputs.xff_burst }}
+      REPOSITORY: ${{ github.repository }}
+      RG: ${{ vars.AZURE_RESOURCE_GROUP }}
+      APP: ${{ vars.ACA_APP_NAME }}
+      APP_CONTAINER_NAME: ${{ vars.ACA_APP_CONTAINER_NAME }}
+      MIGRATE_JOB: ${{ vars.ACA_MIGRATE_JOB_NAME }}
+      MIGRATE_CONTAINER: ${{ vars.ACA_MIGRATE_CONTAINER_NAME }}
+      SYNC_JOB: ${{ vars.ACA_SYNC_JOB_NAME }}
+      SYNC_CONTAINER: ${{ vars.ACA_SYNC_CONTAINER_NAME }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+      BASE_URL: ${{ vars.APP_BASE_URL }}
+      # ARM api-version for the raw GET that exposes properties.deploymentErrors,
+      # which `az containerapp show` drops (infra/azure/README.md).
+      ARM_API_VERSION: "2026-07-01"
+
+    steps:
+      # ---- 1. Inputs, configuration, CI status and image --------------------------------
+      - name: Validate inputs and configuration
+        env:
+          REF: ${{ github.ref }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          # The workflow file that runs is the one on the dispatched ref; only main's
+          # reviewed copy may deploy.
+          if [[ "$REF" != "refs/heads/main" ]]; then
+            echo "::error::deploy.yml must be dispatched from main (got $REF)"
+            exit 1
+          fi
+          if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::input sha must be a full 40-character lower-case hex commit SHA"
+            exit 1
+          fi
+          missing=0
+          for v in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID RG APP \
+                   APP_CONTAINER_NAME MIGRATE_JOB MIGRATE_CONTAINER SYNC_JOB SYNC_CONTAINER \
+                   GHCR_USERNAME BASE_URL; do
+            if [[ -z "${!v}" ]]; then
+              echo "::error::environment variable for $v is not set (see the header of deploy.yml)"
+              missing=1
+            fi
+          done
+          [[ "$missing" -eq 0 ]] || exit 1
+          if [[ ! "$BASE_URL" =~ ^https:// ]]; then
+            echo "::error::APP_BASE_URL must start with https://"
+            exit 1
+          fi
+          if [[ ! "$ATTEMPT" =~ ^[1-9][0-9]?$ ]]; then
+            echo "::error::input attempt must be a whole number from 1 to 99 (got '${ATTEMPT}')"
+            exit 1
+          fi
+          suffix="rel-${SHA:0:12}"
+          if [[ "$ATTEMPT" -gt 1 ]]; then
+            suffix="${suffix}-a${ATTEMPT}"
+          fi
+          # ACA suffix rules: lower-case alphanumerics and single hyphens, starts with a
+          # letter, ends alphanumeric; <app>--<suffix> kept within 54 characters
+          # (conservative revision-name limit).
+          if [[ ! "$suffix" =~ ^[a-z][a-z0-9-]*[a-z0-9]$ || "$suffix" == *--* ]] \
+              || [[ ${#APP} -eq 0 || $(( ${#APP} + 2 + ${#suffix} )) -gt 54 ]]; then
+            echo "::error::revision name ${APP}--${suffix} breaks the ACA suffix/length rules"
+            exit 1
+          fi
+          # Same naming as ci.yml's publish job: lower-case repository, full SHA tag.
+          image="ghcr.io/${REPOSITORY,,}:${SHA}"
+          {
+            echo "IMAGE=${image}"
+            echo "REVISION_SUFFIX=${suffix}"
+            echo "NEW_REVISION=${APP}--${suffix}"
+            echo "TRAFFIC_STATE=unchanged (deploy stopped before any traffic change)"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify the SHA is on main and its CI run succeeded
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # main must contain the SHA: compare SHA...main is "identical" or "ahead".
+          status=$(gh api "repos/${REPOSITORY}/compare/${SHA}...main" --jq '.status')
+          if [[ "$status" != "identical" && "$status" != "ahead" ]]; then
+            echo "::error::${SHA} is not on main (compare status: ${status})"
+            exit 1
+          fi
+          # A successful ci.yml run for exactly this SHA on main (push or manual dispatch).
+          run_id=$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&branch=main&status=success&per_page=1" \
+            --jq '.workflow_runs[0].id // empty')
+          if [[ -z "$run_id" ]]; then
+            echo "::error::no successful ci.yml run on main for ${SHA}"
+            exit 1
+          fi
+          # The run's conclusion covers every job; assert the three that matter by name.
+          jobs=$(gh api "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "success") | .name]')
+          for j in backend frontend "publish image to GHCR"; do
+            if ! jq -e --arg j "$j" 'index($j) != null' <<<"$jobs" > /dev/null; then
+              echo "::error::CI run ${run_id} has no successful '${j}' job"
+              exit 1
+            fi
+          done
+          echo "CI run ${run_id} green for ${SHA}"
+          echo "CI_RUN_ID=${run_id}" >> "$GITHUB_ENV"
+
+      - name: Log in to GHCR (read-only)
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the image exists
+        run: |
+          set -euo pipefail
+          if ! docker manifest inspect "$IMAGE" > /dev/null; then
+            echo "::error::image ${IMAGE} not found in GHCR (did ci.yml's publish job run for this SHA?)"
+            exit 1
+          fi
+          echo "found ${IMAGE}"
+
+      # The specs and smoke script come from the deployed commit, so app.yaml matches
+      # the image it is applied with.
+      - name: Check out the deployed commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      # ---- 2. Azure login (OIDC) ----------------------------------------------------------
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # ---- 3. Record the serving revision and pin traffic to it ---------------------------
+      - name: Record and pin the serving revision
+        run: |
+          set -euo pipefail
+          latest_ready=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+            --query properties.latestReadyRevisionName -o tsv)
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          echo "Traffic before deploy:"
+          jq -c '.[]' <<<"$traffic"
+          # Effective serving revisions: a latestRevision entry routes to the latest ready one.
+          serving=$(jq -r --arg lr "$latest_ready" \
+            '[.[] | select(.weight > 0) | if .latestRevision then $lr else .revisionName end] | unique | .[]' \
+            <<<"$traffic")
+          if [[ $(grep -c . <<<"$serving") -ne 1 ]]; then
+            echo "::error::traffic is split or empty (${serving//$'\n'/, }); resolve it by hand (rollback.yml) before deploying"
+            exit 1
+          fi
+          prev="$serving"
+          {
+            echo "PREV_REVISION=${prev}"
+            echo "PREV_TRAFFIC=$(jq -c . <<<"$traffic")"
+          } >> "$GITHUB_ENV"
+          # Pin by name, so a revision created by the update below gets 0% until shifted.
+          az containerapp ingress traffic set -g "$RG" -n "$APP" --only-show-errors \
+            --revision-weight latest=0 "${prev}=100" -o none
+          pinned=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          if ! jq -e --arg p "$prev" \
+              '([.[] | select(.weight > 0)] | length == 1) and any(.[]; .revisionName == $p and .weight == 100 and (.latestRevision | not))' \
+              <<<"$pinned" > /dev/null; then
+            echo "::error::pinning traffic to ${prev} did not take effect"
+            jq -c '.[]' <<<"$pinned"
+            exit 1
+          fi
+          echo "TRAFFIC_STATE=100% on ${prev} (previous revision, pinned by name)" >> "$GITHUB_ENV"
+          echo "pinned 100% to ${prev}"
+
+      # ---- 4. Migrate ---------------------------------------------------------------------
+      # NOT `job start --image`: in azure-cli, any container override on `job start`
+      # (--image included) sends a one-container execution template holding only the
+      # name and image, so the execution would lose the Job's env/secretRefs and its baked
+      # command (same trap as --command, Entry 32). Instead the Job's image is updated
+      # in place (`job update --image`, the sanctioned Job change) and the Job is started
+      # with no overrides.
+      - name: Run the migrate Job
+        run: |
+          set -euo pipefail
+          az containerapp job update -g "$RG" -n "$MIGRATE_JOB" --only-show-errors \
+            --container-name "$MIGRATE_CONTAINER" --image "$IMAGE" -o none
+          job_image=$(az containerapp job show -g "$RG" -n "$MIGRATE_JOB" --only-show-errors -o json \
+            | jq -r --arg c "$MIGRATE_CONTAINER" '.properties.template.containers[] | select(.name == $c) | .image')
+          if [[ "$job_image" != "$IMAGE" ]]; then
+            echo "::error::migrate Job image is '${job_image}', expected ${IMAGE}"
+            exit 1
+          fi
+          execution=$(az containerapp job start -g "$RG" -n "$MIGRATE_JOB" --only-show-errors \
+            --query name -o tsv)
+          if [[ -z "$execution" ]]; then
+            echo "::error::job start returned no execution name"
+            exit 1
+          fi
+          echo "MIGRATE_EXECUTION=${execution}" >> "$GITHUB_ENV"
+          echo "migrate execution: ${execution}"
+          # replicaTimeout is 600 s; poll up to 15 min.
+          status=""
+          for _ in $(seq 1 90); do
+            status=$(az containerapp job execution show -g "$RG" -n "$MIGRATE_JOB" --only-show-errors \
+              --job-execution-name "$execution" --query properties.status -o tsv)
+            case "$status" in
+              Succeeded) echo "migrate ${execution}: Succeeded"; exit 0 ;;
+              Failed | Stopped | Degraded) break ;;
+            esac
+            sleep 10
+          done
+          echo "::error::migrate execution ${execution} ended as '${status:-timeout}'; the app was NOT updated"
+          echo "Status: az containerapp job execution show -g <rg> -n ${MIGRATE_JOB} --job-execution-name ${execution}"
+          echo "Logs:   portal > ${MIGRATE_JOB} > Execution history > ${execution}, or Log Analytics:"
+          echo "        ContainerAppConsoleLogs_CL | where ContainerGroupName_s startswith '${execution}'"
+          exit 1
+
+      # ---- 5. New revision (or traffic-only for a redeploy of the same SHA) ---------------
+      - name: Render app.yaml
+        run: |
+          set -euo pipefail
+          rendered="${RUNNER_TEMP}/app.rendered.yaml"
+          if [[ -z "${PREV_REVISION:-}" ]]; then
+            echo "::error::PREV_REVISION is not recorded; refusing to render app.yaml's traffic pin"
+            exit 1
+          fi
+          export IMAGE REVISION_SUFFIX APP_CONTAINER_NAME GHCR_USERNAME PREV_REVISION
+          # Explicit list, never a bare envsubst (app.yaml header).
+          # shellcheck disable=SC2016
+          envsubst '${IMAGE} ${REVISION_SUFFIX} ${APP_CONTAINER_NAME} ${GHCR_USERNAME} ${PREV_REVISION}' \
+            < infra/azure/app.yaml > "$rendered"
+          if grep -nF -e "\${" "$rendered"; then
+            echo "::error::unsubstituted placeholder left in the rendered app.yaml"
+            exit 1
+          fi
+          if grep -nE '^\s*secrets:' "$rendered"; then
+            echo "::error::rendered app.yaml has a secrets: key; refusing (it would delete omitted secrets)"
+            exit 1
+          fi
+          echo "RENDERED_APP_YAML=${rendered}" >> "$GITHUB_ENV"
+
+      - name: Update the app (new revision at 0% traffic)
+        run: |
+          set -euo pipefail
+          if az containerapp revision list -g "$RG" -n "$APP" --all --only-show-errors -o json \
+              | jq -e --arg r "$NEW_REVISION" 'any(.[]; .name == $r)' > /dev/null; then
+            # Same SHA deployed before: re-creating the suffix would be rejected by the RP.
+            echo "revision ${NEW_REVISION} already exists: traffic-only redeploy, no update"
+            echo "DEPLOY_MODE=traffic-only (revision existed)" >> "$GITHUB_ENV"
+            existing=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$NEW_REVISION" \
+              --only-show-errors -o json)
+            active=$(jq -r '.properties.active' <<<"$existing")
+            state=$(jq -r '[.properties.provisioningState, .properties.healthState, .properties.runningState] | join("/")' <<<"$existing")
+            echo "existing ${NEW_REVISION}: active=${active} state=${state}"
+            # Same failed-state test as the health wait below; an active revision must
+            # also already be Healthy. A suffix can't be reused, so polling cannot help.
+            if [[ "$state" =~ ^Failed/ || "$state" =~ /Failed$ ]] \
+                || [[ "$active" == "true" && ! "$state" =~ /Healthy/ ]]; then
+              echo "::error::existing revision ${NEW_REVISION} is not healthy (${state}); it cannot be retried under the same suffix. Re-dispatch deploy.yml with attempt=$(( ATTEMPT + 1 )) to create a fresh revision"
+              exit 1
+            fi
+            if [[ "$active" != "true" ]]; then
+              az containerapp revision activate -g "$RG" -n "$APP" --revision "$NEW_REVISION" \
+                --only-show-errors -o none
+              echo "re-activated ${NEW_REVISION}"
+            fi
+          else
+            # No --revision-suffix flag: `update --yaml` ignores extra options (Entry 32,
+            # "Corrections during build"). The guard is revisionSuffix inside the rendered
+            # YAML plus the assertion below that the new revision is <app>--<suffix>
+            # running $IMAGE. Do not add --revision-suffix back.
+            az containerapp update -g "$RG" -n "$APP" --only-show-errors \
+              --yaml "$RENDERED_APP_YAML" -o none
+            latest=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+              --query properties.latestRevisionName -o tsv)
+            if [[ "$latest" != "$NEW_REVISION" ]]; then
+              echo "::error::latest revision is '${latest}', expected ${NEW_REVISION}: the update did not create the new revision"
+              app_id=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors --query id -o tsv)
+              echo "deploymentErrors (raw ARM GET; az containerapp show drops this field):"
+              az rest --method get \
+                --uri "https://management.azure.com${app_id}?api-version=${ARM_API_VERSION}" \
+                --query properties.deploymentErrors || true
+              exit 1
+            fi
+            echo "DEPLOY_MODE=new revision" >> "$GITHUB_ENV"
+          fi
+          rev_image=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$NEW_REVISION" \
+            --only-show-errors -o json \
+            | jq -r --arg c "$APP_CONTAINER_NAME" '.properties.template.containers[] | select(.name == $c) | .image')
+          if [[ "$rev_image" != "$IMAGE" ]]; then
+            echo "::error::${NEW_REVISION} runs '${rev_image}', expected ${IMAGE}"
+            exit 1
+          fi
+          # app.yaml's traffic: block pins PREV_REVISION; check the update kept it (e.g. did
+          # not reset to latestRevision=100). If it did, re-pin and verify; fail if the pin
+          # is not back to 100% on PREV_REVISION.
+          # shellcheck disable=SC2016
+          pin_filter='([.[] | select(.weight > 0)] | length == 1) and any(.[]; .revisionName == $p and .weight == 100 and (.latestRevision | not))'
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          if [[ "$NEW_REVISION" != "$PREV_REVISION" ]] && ! jq -e --arg p "$PREV_REVISION" "$pin_filter" \
+              <<<"$traffic" > /dev/null; then
+            live=$(jq -r '[.[] | select(.weight > 0) | "\(.revisionName // "latest")=\(.weight)%"] | join(", ")' <<<"$traffic")
+            echo "TRAFFIC_STATE=changed by the update (${live}); re-pin to ${PREV_REVISION} attempted" >> "$GITHUB_ENV"
+            echo "::warning::the update changed traffic (${live}); re-pinning 100% to ${PREV_REVISION}"
+            jq -c '.[]' <<<"$traffic"
+            az containerapp ingress traffic set -g "$RG" -n "$APP" --only-show-errors \
+              --revision-weight latest=0 "${PREV_REVISION}=100" -o none || true
+            repinned=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json || echo '[]')
+            if ! jq -e --arg p "$PREV_REVISION" "$pin_filter" <<<"$repinned" > /dev/null; then
+              echo "TRAFFIC_STATE=NOT pinned: re-pin to ${PREV_REVISION} failed (was ${live}); check az containerapp ingress traffic show" >> "$GITHUB_ENV"
+              echo "::error::re-pin to ${PREV_REVISION} did not take effect"
+              jq -c '.[]' <<<"$repinned"
+              exit 1
+            fi
+            echo "TRAFFIC_STATE=100% on ${PREV_REVISION} (re-pinned after the update changed traffic)" >> "$GITHUB_ENV"
+            echo "re-pinned and verified 100% on ${PREV_REVISION}"
+          fi
+
+      # ---- 6. Wait healthy, then shift traffic -------------------------------------------
+      # minReplicas is 0 and the revision has no traffic, so it is woken through a revision
+      # label URL (<app>---<label>.<environment domain>) while users stay on the old one.
+      - name: Wait for the new revision to be healthy
+        run: |
+          set -euo pipefail
+          az containerapp revision label add -g "$RG" -n "$APP" --only-show-errors \
+            --label candidate --revision "$NEW_REVISION" --yes -o none
+          fqdn=$(az containerapp show -g "$RG" -n "$APP" --only-show-errors \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          label_url="https://${APP}---candidate.${fqdn#*.}"
+          echo "candidate URL: ${label_url}"
+          state=""
+          code=""
+          for _ in $(seq 1 60); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${label_url}/api/health" || true)
+            state=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$NEW_REVISION" \
+              --only-show-errors -o json \
+              | jq -r '[.properties.provisioningState, .properties.healthState, .properties.runningState] | join("/")')
+            echo "health=${code} state=${state}"
+            if [[ "$code" == "200" && "$state" =~ ^Provisioned/Healthy/Running ]]; then
+              echo "${NEW_REVISION} is healthy"
+              exit 0
+            fi
+            if [[ "$state" =~ ^Failed/ || "$state" =~ /Failed$ ]]; then
+              break
+            fi
+            sleep 10
+          done
+          echo "::error::${NEW_REVISION} did not become healthy (last: health=${code} state=${state}); traffic stays on ${PREV_REVISION}. To retry this SHA after a fix outside the image, re-dispatch with attempt=$(( ATTEMPT + 1 ))"
+          exit 1
+
+      - name: Shift 100% traffic to the new revision
+        run: |
+          set -euo pipefail
+          if [[ "$NEW_REVISION" == "$PREV_REVISION" ]]; then
+            echo "${NEW_REVISION} already serves 100%; nothing to shift"
+          else
+            # TRAFFIC_STATE is set before the call: if the call fails half-way the
+            # summary must not claim traffic is still on the previous revision.
+            echo "TRAFFIC_STATE=unknown (traffic shift to ${NEW_REVISION} was attempted; check az containerapp ingress traffic show)" >> "$GITHUB_ENV"
+            az containerapp ingress traffic set -g "$RG" -n "$APP" --only-show-errors \
+              --revision-weight latest=0 "${NEW_REVISION}=100" "${PREV_REVISION}=0" -o none
+          fi
+          traffic=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json)
+          jq -c '.[]' <<<"$traffic"
+          if ! jq -e --arg n "$NEW_REVISION" \
+              '([.[] | select(.weight > 0)] | length == 1) and any(.[]; .revisionName == $n and .weight == 100)' \
+              <<<"$traffic" > /dev/null; then
+            echo "::error::traffic is not 100% on ${NEW_REVISION}"
+            exit 1
+          fi
+          echo "TRAFFIC_STATE=100% on ${NEW_REVISION} (new revision)" >> "$GITHUB_ENV"
+          az containerapp revision label remove -g "$RG" -n "$APP" --only-show-errors \
+            --label candidate -o none || echo "::warning::could not remove the candidate label"
+
+      # ---- 7. Sync Job image --------------------------------------------------------------
+      - name: Update the sync Job image
+        run: |
+          set -euo pipefail
+          az containerapp job update -g "$RG" -n "$SYNC_JOB" --only-show-errors \
+            --container-name "$SYNC_CONTAINER" --image "$IMAGE" -o none
+          # The revision now serving (NEW_REVISION), not `containerapp show`'s template,
+          # which is the latest revision's and differs on the traffic-only path.
+          app_image=$(az containerapp revision show -g "$RG" -n "$APP" --revision "$NEW_REVISION" \
+            --only-show-errors -o json \
+            | jq -r --arg c "$APP_CONTAINER_NAME" '.properties.template.containers[] | select(.name == $c) | .image')
+          sync_image=$(az containerapp job show -g "$RG" -n "$SYNC_JOB" --only-show-errors -o json \
+            | jq -r --arg c "$SYNC_CONTAINER" '.properties.template.containers[] | select(.name == $c) | .image')
+          if [[ "$app_image" != "$IMAGE" || "$sync_image" != "$app_image" ]]; then
+            echo "::error::image mismatch: ${NEW_REVISION} '${app_image}', sync Job '${sync_image}', expected ${IMAGE}"
+            exit 1
+          fi
+          echo "app and sync Job both run ${IMAGE}"
+
+      # ---- 8. Smoke -----------------------------------------------------------------------
+      - name: Smoke checks
+        run: |
+          set -euo pipefail
+          echo "SMOKE_RESULT=failed" >> "$GITHUB_ENV"
+          if [[ "$XFF_BURST" == "true" ]]; then
+            bash infra/azure/smoke.sh "$BASE_URL" --xff-burst
+            echo "SMOKE_RESULT=passed (with --xff-burst)" >> "$GITHUB_ENV"
+          else
+            bash infra/azure/smoke.sh "$BASE_URL"
+            echo "SMOKE_RESULT=passed" >> "$GITHUB_ENV"
+          fi
+
+      # ---- 9. Summary (always, so a failed deploy says where traffic is) ------------------
+      - name: Deploy summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          live="(not read)"
+          if [[ -n "${PREV_REVISION:-}" ]]; then
+            live=$(az containerapp ingress traffic show -g "$RG" -n "$APP" --only-show-errors -o json 2>/dev/null \
+              | jq -r '[.[] | select(.weight > 0) | "\(.revisionName // "latest")=\(.weight)%"] | join(", ")' \
+              2>/dev/null || echo "(could not read)")
+          fi
+          {
+            echo "### Deploy ${JOB_STATUS}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`${IMAGE:-n/a}\` |"
+            echo "| CI run | ${CI_RUN_ID:-n/a} |"
+            echo "| Mode | ${DEPLOY_MODE:-n/a} |"
+            echo "| New revision | \`${NEW_REVISION:-n/a}\` |"
+            echo "| Previous revision | \`${PREV_REVISION:-n/a}\` |"
+            echo "| Migrate execution | \`${MIGRATE_EXECUTION:-not started}\` |"
+            echo "| Smoke | ${SMOKE_RESULT:-not run} |"
+            echo "| Traffic (recorded) | ${TRAFFIC_STATE:-n/a} |"
+            echo "| Traffic (live) | ${live} |"
+            echo ""
+            if [[ -n "${PREV_REVISION:-}" && "${PREV_REVISION}" != "${NEW_REVISION:-}" ]]; then
+              echo "Rollback to the previous revision:"
+              echo ""
+              echo "\`\`\`"
+              echo "gh workflow run rollback.yml --ref main -f revision=${PREV_REVISION}"
+              echo "\`\`\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

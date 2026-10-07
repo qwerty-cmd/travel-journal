@@ -1,0 +1,88 @@
+# Azure Container Apps Job spec for the scheduled OneDrive sync, CREATE-ONLY:
+#   az containerapp job create -g <rg> -n <job-name> \
+#     --environment <containerapps-environment> --yaml <rendered file>
+# create-only: later updates use `az containerapp job update --image` only, e.g.
+#   az containerapp job update -g <rg> -n <job-name> --image ${IMAGE}
+# with the same tag as the app. Never `job update --yaml`: whether it keeps the
+# Job's secrets is unverified (docs/decision-log.md Entry 32).
+# Mirrors the `az containerapp job create` command in infra/azure/README.md
+# ("OneDrive sync job"); keep the two in step.
+#
+# Placeholders, substituted with an explicit variable list
+# (envsubst '${IMAGE} ${JOB_CONTAINER_NAME} ${GHCR_USERNAME} ${GRAPH_ONEDRIVE_FOLDER}'),
+# never a bare envsubst:
+#   ${IMAGE}                 ghcr.io/<owner>/<repo>:<sha>, lower case; same tag as the app
+#   ${JOB_CONTAINER_NAME}    container name; the README's create command sets none, so
+#                            the CLI default is the job name
+#   ${GHCR_USERNAME}         GitHub user owning the read:packages PAT (not a secret)
+#   ${GRAPH_ONEDRIVE_FOLDER} OneDrive archive folder path, e.g. /BikeTrip2026; plain
+#                            value, not a secret (README env/secret split, runbook §2)
+#
+# NEVER add a `secrets:` key to this committed file. Secret values live only in ACA.
+# Create (or re-create) the Job per docs/deploy-cutover-runbook.md §6 "One-time setup
+# for the deploy workflows": render to a temp file OUTSIDE the repo, add a
+# `properties.configuration.secrets` list there only (values read at a no-echo
+# prompt), `az containerapp job create --yaml <temp file>`, then delete the temp file.
+# The graph-* secrets exist on the Job only (Entry 27). The database and R2 secrets
+# reuse the app's names and values, in the Job's own secret store.
+#
+# Registry credential: the ACA secret holding the GHCR classic PAT (read:packages
+# only) must be called `ghcr-read-packages`, or this reference must be edited to
+# the name ACA generated. For a public GHCR package, delete the `registries` block.
+#
+# Command/args: no token may start with a dash (README "Command"), so the module
+# runs by file path with PYTHONPATH=/app/backend. Starting the Job never passes a
+# --command override; the command below is the only one.
+#
+# Overlap invariant (README): replicaTimeout x (replicaRetryLimit + 1) < 1800 s,
+# the 30-minute interval. Here 900 x 1 = 900 s. Re-check if either changes.
+properties:
+  configuration:
+    triggerType: Schedule
+    replicaTimeout: 900
+    replicaRetryLimit: 0
+    scheduleTriggerConfig:
+      # Evaluated in UTC.
+      cronExpression: "*/30 * * * *"
+      parallelism: 1
+      replicaCompletionCount: 1
+    registries:
+      - server: ghcr.io
+        username: ${GHCR_USERNAME}
+        passwordSecretRef: ghcr-read-packages
+  template:
+    containers:
+      - name: ${JOB_CONTAINER_NAME}
+        image: ${IMAGE}
+        command:
+          - /app/backend/.venv/bin/python
+        args:
+          - /app/backend/app/storage/onedrive_sync.py
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        env:
+          - name: DATABASE_URL
+            secretRef: database-url
+          - name: S3_ENDPOINT_URL
+            secretRef: s3-endpoint-url
+          - name: S3_ACCESS_KEY_ID
+            secretRef: s3-access-key-id
+          - name: S3_SECRET_ACCESS_KEY
+            secretRef: s3-secret-access-key
+          - name: S3_BUCKET_NAME
+            secretRef: s3-bucket-name
+          - name: S3_REGION
+            value: auto
+          - name: GRAPH_CLIENT_ID
+            secretRef: graph-client-id
+          - name: GRAPH_CLIENT_SECRET
+            secretRef: graph-client-secret
+          - name: GRAPH_REFRESH_TOKEN
+            secretRef: graph-refresh-token
+          - name: GRAPH_ONEDRIVE_FOLDER
+            value: ${GRAPH_ONEDRIVE_FOLDER}
+          - name: ENVIRONMENT
+            value: production
+          - name: PYTHONPATH
+            value: /app/backend

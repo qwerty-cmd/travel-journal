@@ -1,0 +1,106 @@
+# Azure Container Apps spec for the web app, applied by the deploy workflow with
+#   az containerapp update -g <rg> -n <app-name> --yaml <rendered file>
+# Decision: docs/decision-log.md Entry 32. Mirrors the live app created by
+# infra/azure/README.md (`az containerapp create` plus the probe PATCH script).
+#
+# Placeholders, substituted by the workflow with an explicit variable list
+# (envsubst '${IMAGE} ${REVISION_SUFFIX} ${APP_CONTAINER_NAME} ${GHCR_USERNAME} ${PREV_REVISION}'),
+# never a bare envsubst:
+#   ${IMAGE}              ghcr.io/<owner>/<repo>:<sha>, lower case
+#   ${REVISION_SUFFIX}    fresh per deploy, rel-<sha12> (rel-<sha12>-a<N> on a retry);
+#                         must never repeat an existing suffix or the RP rejects the
+#                         whole update (README, Entry 28)
+#   ${APP_CONTAINER_NAME} the <app-container-name> passed to `az containerapp create`;
+#                         a different name replaces the container instead of updating it
+#   ${GHCR_USERNAME}      GitHub user owning the read:packages PAT; passed from a GitHub
+#                         environment variable (not a secret)
+#   ${PREV_REVISION}      full name of the revision serving 100% before the deploy; the
+#                         traffic block keeps it there so the new revision gets 0%
+#
+# Revision suffix: `update --yaml` ignores `--revision-suffix` and any other extra
+# option (Entry 32, "Corrections during build"), so none is passed. The guard is the
+# revisionSuffix below plus the workflow's assertion that the resulting revision is
+# <app-name>--${REVISION_SUFFIX} running ${IMAGE}. Do not add --revision-suffix back.
+#
+# Traffic: the explicit `traffic:` list pins 100% to ${PREV_REVISION}; without it the
+# update may reset traffic to latestRevision=100 and serve the unverified revision
+# before the health wait. The workflow shifts traffic only after the health wait.
+#
+# NEVER add a `secrets:` key. A partial list deletes every omitted secret; omitting
+# the key keeps the secrets the owner set in ACA. Secret values live only in ACA.
+#
+# Registry credential: the owner sets the GHCR classic PAT (read:packages only) in
+# ACA; this file only names it. The ACA secret holding it must be called
+# `ghcr-read-packages`, or this reference must be edited to the name ACA generated
+# (check: az containerapp show -g <rg> -n <app-name>
+#   --query properties.configuration.registries).
+#
+# No OneDrive/Microsoft Graph variables on the app (decision-log Entry 27): only the
+# sync Job reads them.
+properties:
+  configuration:
+    activeRevisionsMode: Multiple
+    ingress:
+      external: true
+      targetPort: 8000
+      allowInsecure: false
+      transport: auto
+      traffic:
+        - revisionName: ${PREV_REVISION}
+          weight: 100
+        - latestRevision: true
+          weight: 0
+    registries:
+      - server: ghcr.io
+        username: ${GHCR_USERNAME}
+        passwordSecretRef: ghcr-read-packages
+  template:
+    revisionSuffix: ${REVISION_SUFFIX}
+    containers:
+      - name: ${APP_CONTAINER_NAME}
+        image: ${IMAGE}
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        env:
+          - name: DATABASE_URL
+            secretRef: database-url
+          - name: S3_ENDPOINT_URL
+            secretRef: s3-endpoint-url
+          - name: S3_ACCESS_KEY_ID
+            secretRef: s3-access-key-id
+          - name: S3_SECRET_ACCESS_KEY
+            secretRef: s3-secret-access-key
+          - name: S3_BUCKET_NAME
+            secretRef: s3-bucket-name
+          - name: S3_REGION
+            value: auto
+          - name: ENVIRONMENT
+            value: production
+          # Code default is 1; explicit so a fix after runbook §7a t-am-verify-aca-xff is a YAML edit.
+          - name: TRUSTED_PROXY_HOPS
+            value: "1"
+        # Startup + liveness only, not readiness: /api/health does not check
+        # Postgres or object storage (README probe section).
+        probes:
+          - type: Startup
+            httpGet:
+              path: /api/health
+              port: 8000
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          - type: Liveness
+            httpGet:
+              path: /api/health
+              port: 8000
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+    scale:
+      minReplicas: 0
+      maxReplicas: 1
