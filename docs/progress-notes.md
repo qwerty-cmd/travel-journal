@@ -3358,3 +3358,64 @@ Validation: `grep -rn "<probe-script-name>" . --include=*.md --include=*.yml` re
 ## t-iac-auto-start-deploy
 
 DONE (2026-10-07, owner option A, decision-log Entry 32 amendment). `deploy.yml` gained a `workflow_run` trigger on `CI`: it starts automatically only for a successful `push` CI run on `main` and still waits for owner approval in the `production` environment. Manual dispatch is kept for retries (`attempt`) and older SHAs. Other CI completions give a skipped run. Quick successive merges keep only the newest pending run. A merge replaces a pending rollback/deactivate run in the shared concurrency group, so runbook §8 says not to merge while one waits. Docs updated: decision-log Entry 32, runbook §6 and §8.
+
+## s-ride-track-upload
+
+Milestone `m7-ride-tracks`. Contract: `docs/api-contract.md` "Ride tracks"; decision-log Entry 34. Owner approved the `fitdecode` dependency. Task order: contract → fit-core → store-api → delete-acl → frontend; design-spec runs after the contract in parallel; gpx after fit-core and store-api. Notes on dev: the existing `require_trip_member_read` answers 403 to a non-active member, but tracks need 404, so a masked variant is needed; the photo routes' 16 MiB body cap must not apply to the track route (20 MiB file, 21 MiB `Content-Length` pre-check).
+
+## t-trk-contract
+
+Goal: write the ride-track contract and Entry 34.
+Blockers: none. Scope: `docs/` only.
+AC: endpoints table rows, the "Ride tracks" section (Context, How it works, Related APIs), migration 0005 SQL, model fields each with a description, `track-upload` rate-limit row, offline-queue row, Entry 34 and its index row.
+Validation: `grep -n "Entry 34" docs/decision-log.md` shows the index row and the heading; `grep -n "track-upload" docs/api-contract.md` shows the rate-limit row and both uses.
+
+## t-trk-fit-core
+
+Goal: FIT bytes in, validated stats and simplified geometry out, with no HTTP or database.
+Blockers: t-trk-contract. Scope: new `fitdecode` dependency (owner-approved), parse module under `backend/app/core/`, unit tests with fixtures.
+AC: magic-byte detection; bad CRC, truncation, header size over file size, over ~500k records and no GPS each raise a validation error; compressed-timestamp fixture decodes with correct times; semicircle conversion; stats and Douglas-Peucker per the contract; multi-session gives a `MultiLineString`; `[lon, lat]` order asserted.
+Validation: the new test file; ruff check and format; full suite once at the end.
+
+## t-trk-store-api
+
+Goal: upload, list and read tracks. test-writer mandatory. May split into (a) migration 0005, `tables.py` mirror, repository, `storage/` helper and (b) endpoints, rate-limit bucket, OpenAPI and Kubb regeneration.
+Blockers: t-trk-fit-core.
+AC: the contract's upload order, `201`/`200`/`409`/`422`/`429`, replay by id and by hash, a unique-violation race returns `200` never `500`, non-member and public-trip reader get `404` on reads, no key or URL in any response, `test_schema.py` green.
+Validation: contract-first access-control and idempotency tests; a concurrent double-upload test.
+
+## t-trk-delete-acl
+
+Goal: `DELETE` with the uploader-or-leader rule. test-writer mandatory.
+Blockers: t-trk-store-api.
+AC: uploader and leader `204`; other rider `403`; non-member, revoked rider and other-trip track `404`; `NULL` owner is leader-only; row deleted first, a failing object delete still returns `204`.
+Validation: access matrix test.
+
+## t-trk-design-spec
+
+Goal: designer spec in `docs/design/` for the overlay, upload form, stats and delete.
+Blockers: t-trk-contract. Scope: `docs/design/` only.
+AC: overlay colour and weight against the pins, upload states including each `422` cause, `429`, offline disabled state, and the delete confirmation; tokens only.
+Validation: spec reviewed against `DESIGN.md`.
+
+## t-trk-frontend
+
+Goal: build the designed UI on the generated client.
+Blockers: t-trk-delete-acl, t-trk-design-spec.
+AC: tracks are a second query; a failed fetch leaves pins working; overlay drawn above stop pins; upload disabled offline; Delete shown to the uploader (`uploadedByMe`) and to leaders.
+Validation: Vitest for the failed-fetch case and button visibility; `npm test`.
+
+## t-trk-gpx
+
+Goal: GPX through the same pipeline.
+Blockers: t-trk-fit-core, t-trk-store-api.
+AC: `<!DOCTYPE` and `<!ENTITY` rejected before parse; size cap; no `<time>` gives `422`; no `defusedxml`.
+Validation: a billion-laughs fixture and an external-entity fixture both give `422`.
+
+## t-trk-real-fit
+
+Blocked on the owner supplying a sample Garmin FIT file. The file stays out of the repo (path via an environment variable); the test skips when it is absent.
+
+## t-trk-onedrive-archive
+
+Owner-gated. `onedrive_sync.py` is off-limits without explicit approval. Graph's simple PUT is limited to about 4 MB and a FIT can be up to 20 MiB, so it needs a `createUploadSession`. Add the `one_drive_file_id` column only when this task is approved and built, not before.

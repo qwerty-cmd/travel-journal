@@ -140,6 +140,7 @@ Like `405`, the CSRF `403` is middleware-level. It is reachable on every unsafe 
 | `signin` | 10 per 15 min | IP | signin, recover, password change, recovery-code rotation |
 | `trip-create` | 3/day, plus a lifetime cap of 20 trips created (`409`) | user | `POST /api/v2/trips`. **A replay spends no token.** |
 | `join` | 10/hour | user | join-request create, claim |
+| `track-upload` | 30/hour | user | `POST /api/v2/trips/{tripId}/tracks` (replaces `writes` for this route; Entry 34) |
 | `writes` | 600/hour | user | every other session-gated unsafe route, legacy and v2 |
 
 `/api/health`, the `/api` catch-all and `signout` have no limiter.
@@ -425,6 +426,10 @@ Coordinates are bounded (`d2913ad`, `t-stop-coordinate-bounds`): `lat` must be i
 | `GET` | `/api/v2/trips/{tripId}/stops/{stopId}/photos` | reader | — | `PhotoOut[]` | 200, 404, 429 | public-read |
 | `POST` | `/api/v2/trips/{tripId}/stops/{stopId}/photos` | writer | multipart: `id`, `takenAt`, `file` | `PhotoOut` | 201, 200 replay, 401, 403, 404, 409, 422, 429 | writes |
 | `GET` | `/api/v2/trips/{tripId}/map` | reader | — | `MapFeatureCollection` | 200, 404, 429 | public-read |
+| `POST` | `/api/v2/trips/{tripId}/tracks` | writer | multipart: `id`, `file` | `TrackSummaryOut` | 201 new, 200 replay, 401, 403, 404, 409, 422, 429 | track-upload |
+| `GET` | `/api/v2/trips/{tripId}/tracks` | active member (404 mask) | — | `TrackSummaryOut[]` | 200, 401, 404, 429 | public-read |
+| `GET` | `/api/v2/trips/{tripId}/tracks/{trackId}` | active member (404 mask) | — | `TrackOut` | 200, 401, 404, 429 | public-read |
+| `DELETE` | `/api/v2/trips/{tripId}/tracks/{trackId}` | uploader or leader | — | — | 204, 401, 403, 404, 429 | writes |
 | `GET` | `/api/v2/trips/{tripId}/bikes` | reader | — | `BikeOut[]` | 200, 404, 429 | public-read |
 | `POST` | `/api/v2/trips/{tripId}/bikes` | writer | `BikeCreate` | `BikeOut` | 201, 200 replay, 401, 403, 404, 409, 422, 429 | writes |
 | `PATCH` | `/api/v2/trips/{tripId}/bikes/{bikeId}` | writer | `BikePatch` | `BikeOut` | 200, 401, 403, 404, 422, 429 | writes |
@@ -568,6 +573,7 @@ This is the same `422` already on both upload rows, not a new status, in the sam
   - `access` is kept and deprecated.
 - `JoinRequestState`, `JoinRequestVia`, `JoinDecisionAction`, `JoinRequestCreate`, `JoinClaimCreate`, `JoinDecisionCreate`, `MyJoinRequestOut`, `TripJoinRequestOut`, `PersonOut` — `backend/app/models/join_request.py`
 - `MemberRole`, `MemberOut` — `backend/app/models/member.py`
+- `TrackFormat`, `TrackSummaryOut`, `TrackGeometry`, `TrackOut` — `backend/app/models/track.py` (Entry 34; see "Ride tracks")
 - `PhotoOut` keeps its shape. `uploadedBy`'s description changes to say it is the uploading account's `displayName` at upload time, or the stored free-text label for photos uploaded before accounts existed.
 
 ---
@@ -901,12 +907,155 @@ Corrected 2026-09-29. Until `d534ea7` (`t-photo-insert-echoes-argument`), the `2
 
 ---
 
+## Ride tracks
+
+Decision-log Entry 34. Story `s-ride-track-upload`, milestone `m7-ride-tracks`. Paths below use the v2 locator `{tripId}`; there is no legacy-slug form of these routes (a slug is never a credential, Entry 29).
+
+### Context
+
+A rider uploads the recorded ride (a Garmin FIT file, later a GPX file) after the fact, and trip members see it as a line on the map above the stop pins. The upload is manual and online-only.
+
+- **Why not Strava.** The Strava API Agreement (effective 11 Nov 2024) allows one athlete's data to be shown only to that athlete, with a 7-day cache limit. Showing the owner's Strava track to other trip members would breach it. Sources: DC Rainmaker, Nov 2024; strava.com/legal/api. **The research could not read the primary Strava page verbatim**, so the clause wording rests on the secondary source; re-check the primary text before ever reopening this.
+- **Why FIT first.** It is what the owner's Garmin produces. GPX comes second, behind the same endpoint.
+- **One internal model.** Both formats are reduced to `TrackPoint(t, lat, lon, ele)`. Heart rate, cadence and power are discarded at parse time and never stored.
+- **Why members only.** A track reveals where a rider lives and the exact route. Unlike stop pins, there is no public delay and no public view: a non-member gets `404`, including on a public trip.
+
+### How it works
+
+**Endpoints**
+
+| Method | Path | Gate | Notes |
+|---|---|---|---|
+| `POST` | `/api/v2/trips/{tripId}/tracks` | `require_trip_writer` | multipart form: `id` (client-generated canonical lowercase UUID, else `422`) and `file`. Limit bucket `track-upload`. |
+| `GET` | `/api/v2/trips/{tripId}/tracks` | active member, masked | `TrackSummaryOut[]`, newest `startedAt` first, then `id`. No geometry. |
+| `GET` | `/api/v2/trips/{tripId}/tracks/{trackId}` | active member, masked | `TrackOut`: a GeoJSON `Feature` plus stats. |
+| `DELETE` | `/api/v2/trips/{tripId}/tracks/{trackId}` | uploader or leader | `204`. |
+
+**Read and delete access (masked).** Session first: no session → `401`. After that, anything short of an **active** membership on the trip (non-member, a reader of a public trip, a revoked rider, an unknown trip) → the byte-identical `404`, never `403`. A track that doesn't exist, or belongs to another trip, is the same `404`. This is `require_trip_member_read` with its final `403` turned into the `404`; the stock gate answers `403` for a public-trip reader and for a revoked rider, but tracks reveal the home and the route, so the owner ruled they are never acknowledged to anyone outside the active members. The implementation needs a masked variant of the gate, not the stock one. `DELETE` uses the same mask, then: the uploader (`tracks.created_by` equals the caller) or any active leader → `204`; an active rider who is neither → `403`. A track whose `created_by` is `NULL` (uploader's account gone) can be deleted by a leader only.
+
+**Upload, in order**
+
+1. Gate: `require_trip_writer` (session `401`, trip `404`, active rider/leader else `403`). The gate runs before any replay lookup, as for every create.
+2. Size. A declared `Content-Length` over 21 MiB is refused before the body is read; the file part over **20 MiB (20,971,520 bytes) → `422 VALIDATION_ERROR`**, not `413`, for the reasons given under "Photo upload" (an unlisted status maps to `INTERNAL_ERROR`, which the queue retries forever; a `413` code would be a ninth `ErrorCode`). This is its own route-class cap: the photo routes' 16 MiB cap is unchanged and must not apply to this route.
+3. Id replay check, by `(trip_id, id)`, never `id` alone (Idempotency section): same trip → `200` with the stored summary, **nothing parsed or written**; a different trip → `409 CONFLICT` with nothing disclosed.
+4. Format by **magic bytes, not extension or `Content-Type`**: FIT has `.FIT` at bytes 8–11 of its header; GPX is XML. Neither → `422`.
+5. Parse in a threadpool, so the event loop is not held. FIT: `fitdecode`. Header size greater than the file size, more than **~500,000 records**, a bad CRC, truncation, or **no usable GPS point** (fewer than 2 points with a valid position) → `422`. **Nothing is repaired** (the Entry 31 stance). GPX without `<time>` on its points → `422` (moving time needs it).
+6. `content_sha256` of the original bytes. Same `(trip_id, content_sha256)` already stored under a different id → `200` with the existing track (a re-upload of the same file is a replay, not an error).
+7. Write the original to `tracks/{trip_id}/{track_id}.{fit|gpx}` through the `storage/` helper, then insert the row. A replay performs no storage write.
+8. `201` with `TrackSummaryOut`.
+
+**Race handling.** Check-first is the mechanism, the constraints are the backstop. If the insert still hits a unique violation (`id` primary key or `(trip_id, content_sha256)`), the handler rolls back, re-reads by `(trip_id, id)` and then by `(trip_id, content_sha256)`, and returns that row with `200`. If only the primary key matched and that row is in another trip → `409`. A unique violation is never a `500`. If the losing request wrote an object under a key the winner doesn't use, it deletes it best-effort.
+
+**Derived values** (computed once at upload, stored, never recomputed on read)
+- Coordinates: FIT semicircles to degrees (`degrees = semicircles * 180 / 2^31`); the FIT invalid sentinel `0x7FFFFFFF` is skipped. All positions are `[longitude, latitude]` (see "Coordinate order").
+- Stats are computed on the **full-resolution** points, before simplification:
+  - `distanceM`: sum of haversine distances between consecutive points within a segment (the gap between two sessions is not counted).
+  - `ascentM`: sum of positive elevation change with a ~3 m hysteresis. It is `0` when the file has no elevation.
+  - `movingS`: sum of the gaps between consecutive points that are at most 30 s long and whose speed is above 0.5 m/s.
+  - `startedAt` / `endedAt`: first and last point time, **timezone-aware** (UTC). A naive GPX time is read as UTC only if it carries `Z` or an offset; otherwise `422`.
+- Geometry: Douglas-Peucker simplification at ~10 m tolerance, then capped at **2000 points** in total (the tolerance is widened until it fits). One FIT session or GPX segment gives a `LineString`; more than one gives a `MultiLineString`.
+- **Elevation is not stored in the geometry** (positions are `[lon, lat]`, two numbers). Recorded here deliberately: an elevation profile later would need `ele` as a third coordinate and a re-parse of originals; filed as triggered debt.
+
+**Storage.** The original file goes in the private bucket at `tracks/{trip_id}/{track_id}.{fit|gpx}` through a new thin helper in `backend/app/storage/`. It is **never served**: no presigned URL and no object key appears in any response. The route never imports a cloud SDK (invariant). `DELETE` removes the row first and the object best-effort afterwards, so a failed object delete leaves an unreferenced file, never a row pointing at nothing. Deleting a track frees its hash, so the same file can be uploaded again.
+
+**GPX hardening (second format).** Cap the size, and **reject any input containing `<!DOCTYPE` or `<!ENTITY` before parsing** with stdlib `xml.etree.ElementTree` (billion-laughs and external entities). `defusedxml` is not approved and must not be added.
+
+**Parser dependency.** `fitdecode` (MIT, active, pure Python): a new backend dependency, **owner-approved**. Rejected: Garmin `garmin-fit-sdk` (proprietary "FIT Protocol License Agreement", internal-business-purposes only, no third-party distribution) and `fitparse` (unmaintained since 2020). Behaviours that decide whether the library is good enough (CRC strictness, truncation, compressed timestamps) are to be **proven by test fixtures** in `t-trk-fit-core`, not assumed from its docs.
+
+**Map is unchanged.** `GET /trips/{id}/map` and `MapFeatureCollection` (`models/map.py`) do not change. The frontend fetches `GET .../tracks` and each `GET .../tracks/{trackId}` as a **second query** and draws the line as an overlay above the stop pins. A failed or `404` track fetch must not break the pins.
+
+### Models (`backend/app/models/track.py`)
+
+Every field carries a `description=` (OpenAPI feeds Kubb). camelCase on the wire.
+
+`TrackFormat`: string enum `fit` | `gpx`.
+
+`TrackSummaryOut` (list item and the upload response)
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Client-generated canonical UUID4 of the track; the idempotency key. |
+| `tripId` | string | Id of the trip the track belongs to. |
+| `sourceFormat` | `TrackFormat` | Format of the uploaded original. |
+| `startedAt` | datetime (timezone-aware) | Time of the first recorded point. |
+| `endedAt` | datetime (timezone-aware) | Time of the last recorded point. |
+| `distanceM` | number | Distance in metres, from the full-resolution points. |
+| `ascentM` | number | Total climb in metres, with ~3 m hysteresis; `0` if the file has no elevation. |
+| `movingS` | integer | Seconds spent moving (gaps of at most 30 s with speed above 0.5 m/s). |
+| `createdAt` | datetime | When the track was uploaded. |
+| `uploadedByMe` | boolean | True when the caller is the uploader. The UI offers Delete to the uploader and to leaders. |
+
+`uploadedByMe` is used instead of a user id so the response never carries an account id.
+
+`TrackGeometry`: GeoJSON `LineString` or `MultiLineString`; coordinates are `[longitude, latitude]` pairs (no elevation); at most 2000 positions in total.
+
+`TrackOut`: a GeoJSON `Feature`: `type: "Feature"`, `id` (the track id, on GeoJSON's own member as with stops), `geometry: TrackGeometry`, `properties: TrackSummaryOut`.
+
+No response contains the object key, a URL, or the content hash.
+
+### Data model: migration 0005
+
+`backend/migrations/0005_tracks.sql`. Forward-only and additive, in the style of 0003/0004; `tables.py` mirrors it in the same patch and `tests/test_schema.py` must stay green. The previous image ignores the table, so rollback is a redeploy.
+
+```sql
+-- 0005_tracks
+-- Decision-log Entry 34 (manual FIT/GPX ride-track upload).
+CREATE TABLE IF NOT EXISTS tracks (
+    id             text             NOT NULL PRIMARY KEY,          -- client-generated UUID4
+    trip_id        text             NOT NULL REFERENCES trips (id) ON DELETE CASCADE,
+    created_by     text             NULL REFERENCES users (id) ON DELETE SET NULL, -- the uploader; NULL = leader-only delete
+    source_format  text             NOT NULL,
+    content_sha256 text             NOT NULL,                      -- lowercase hex of the original bytes
+    object_key     text             NOT NULL,                      -- tracks/{trip_id}/{id}.{fit|gpx}; never in a response
+    started_at     timestamptz      NOT NULL,
+    ended_at       timestamptz      NOT NULL,
+    distance_m     double precision NOT NULL,
+    ascent_m       double precision NOT NULL,
+    moving_s       integer          NOT NULL,
+    geometry       jsonb            NOT NULL,                      -- GeoJSON LineString|MultiLineString, [lon, lat]
+    created_at     timestamptz      NOT NULL DEFAULT now(),
+    CONSTRAINT tracks_trip_content_key UNIQUE (trip_id, content_sha256),
+    CONSTRAINT tracks_source_format_check CHECK (source_format IN ('fit', 'gpx')),
+    CONSTRAINT tracks_content_sha256_check CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT tracks_time_order_check CHECK (ended_at >= started_at),
+    CONSTRAINT tracks_stats_check CHECK (distance_m >= 0 AND ascent_m >= 0 AND moving_s >= 0)
+);
+CREATE INDEX IF NOT EXISTS ix_tracks_trip_started ON tracks (trip_id, started_at DESC);
+```
+
+One ownership column, as on every other table: `created_by`, no `uploaded_by`. A `NULL` owner means only a leader can delete it. The cascade removes rows when a trip is deleted; the S3 objects are **not** removed by it (ordinary debt, shared with photos).
+
+### Rate limit and offline queue
+
+| Item | Value |
+|---|---|
+| Rate-limit bucket | `track-upload`, 30/hour per user (table under "Rate limits and lockout"). `429` carries `Retry-After`. Reads use `public-read`; `DELETE` uses `writes`. |
+| Offline queue | **Not queued (online-only).** The UI disables Upload offline and surfaces failures directly. If it is queued later: a new queue kind, the file blob in IndexedDB with a quota check, the same client `id` on every retry, retry on `5xx` and network failure (including `429` after `Retry-After`), drop and surface on `4xx`. Promotion event: riders uploading on poor signal. |
+
+Status codes the UI must handle: `422` (message names the cause: not a FIT/GPX file, corrupt, truncated, no GPS, too big), `409` (id under another trip: generate a new id), `429`.
+
+### Deferred, recorded
+
+- **Privacy trim of the track ends** (cut the first and last stretch so a home address isn't exposed). Owner: not needed now. Promotion event: trip members beyond the trusted friend group, or any public/follower view. The original is already private, so a trim can be applied later to the derived geometry only.
+- **OneDrive archive of the originals.** Intent approved by the owner; a separate owner-gated task (`onedrive_sync.py` is off-limits without explicit approval).
+- Elevation profile, photo placement along the track by `takenAt`, planned-route GPX, per-night accommodation: triggered debt in `docs/progress.json`.
+
+### Related APIs
+
+- **Called by:** the frontend trip map (overlay) and an upload form, both built by `t-trk-frontend`.
+- **Calls:** Postgres through `data/` (`tracks` repository), S3 through the new `storage/` track helper. Never OneDrive.
+- **Related:** `GET /api/v2/trips/{tripId}/map` (unchanged; the overlay is drawn on top of it); `POST .../stops/{stopId}/photos` (same multipart, 422-for-oversize and `(parent, id)` replay conventions); "Idempotency", "Coordinate order" and "Offline-queue classification" above.
+- **Introduced by:** `t-trk-contract` (decision-log Entry 34). Built by `t-trk-fit-core`, `t-trk-store-api`, `t-trk-delete-acl`; GPX by `t-trk-gpx`.
+
+---
+
 ## Related work
 
 - **Introduced by:** story `s-api-contract` (Session 1), tasks `t-error-envelope-model`, `t-trip-model`, `t-stop-model`, `t-bike-model`, `t-photo-model`, `t-map-model`, and this document, `t-api-contract-doc`.
 - **Depends on:** `docs/architecture-diagram.md` (Session 0) for where `data/` and `storage/` sit; spec Sections 3, 4, 5.
 - **Unblocks:** milestone `m2-core-api` — stories `s-trip-metadata-endpoint`, `s-stop-crud`, `s-photo-upload-onedrive-sync`, `s-bike-management`, `s-map-geojson-endpoint` — and, through the generated client, Week 3's frontend stories including `s-offline-queue`.
 - **Consumed by:** the frontend API client in `frontend/src/api/`, generated by Kubb from the backend's OpenAPI spec. Nothing on the frontend hand-writes a fetch call or a duplicate of these types.
+- **Ride tracks:** decision-log Entry 34, written into this document by `t-trk-contract` (story `s-ride-track-upload`, milestone `m7-ride-tracks`). Unblocks `t-trk-fit-core` and `t-trk-design-spec`.
 - **Accounts and membership additions:** decision-log Entry 29 (the ADR and the orchestrator ruling, including `ba`'s contract-level defaults), written into this document by `t-am-contract-doc` (story `s-am-contract`, milestone `m5-accounts-membership`). They unblock `t-am-contract-models`, `t-am-migration-0003` and `t-am-design-spec`, and through them every `t-am-*` build task.
 
 ---
