@@ -264,10 +264,22 @@ Replace every `<placeholder>`. `<owner>/<repo>` is the GitHub path and must be *
 
 **Images are built by CI, not by hand.** `.github/workflows/ci.yml` publishes
 `ghcr.io/<owner>/<repo>:<full-commit-sha>` on every merge to `main`, after the backend and frontend
-checks pass. `ci.yml` only builds and publishes; `deploy.yml` deploys, and only when you dispatch and approve it.
+checks pass. `ci.yml` only builds and publishes; `deploy.yml` deploys. After a green push run on `main`
+publishes the image, `deploy.yml` starts by itself and then waits for your approval; you can also dispatch it by hand.
 See "Image publishing (GitHub Actions to GHCR)" at the end of this section for package visibility and access.
 
 ### Deploy with the workflow
+
+**Automatic path (the normal one).** Merge to `main` → `ci.yml` runs and publishes the image → when that push run
+is green, `deploy.yml` starts by itself for that commit and **waits for your approval** in the `production`
+environment → approve from the GitHub notification or Actions → Deploy → the waiting run → read the run summary
+(step 5 below). Only a green CI *push* run on `main` starts a deploy: PR runs, failed or cancelled runs and manual CI
+dispatches give a skipped Deploy run, never an approval request. If several merges land quickly, only the newest
+pending run is kept, so the latest `main` is what deploys. An automatic run uses `attempt` 1 and no `xff_burst`.
+Steps 3 to 5 below apply to it unchanged. Don't merge to `main` while a rollback or cleanup run is pending (§8).
+
+**Manual path (retries and older SHAs).** Use it when a deploy failed and you need `attempt=N+1`, or to redeploy an
+older SHA. Steps 1 and 2:
 
 1. **Pick the SHA.** The full 40-character SHA of the `main` commit to deploy. Its `ci.yml` run must be
    green (backend, frontend and publish).
@@ -574,6 +586,9 @@ hop). If that premise is wrong, one client can mint a fresh bucket per request b
   The rollback target is the **newest active healthy revision before the oldest serving one**. To be certain it
   keeps the right one, pass deploy's previous revision (named in the deploy summary) as `keep`. The reasoning is
   the second item of "Manual fallback" below.
+- [ ] **Don't merge to `main` while a rollback or cleanup is pending approval.** The merge's automatic Deploy run
+  joins the same `deploy` concurrency group and replaces the pending rollback or deactivate run, so your rollback
+  would be cancelled and a new deploy would wait in its place. Approve or cancel the pending run first.
 - [ ] **Don't queue this behind another run.** It shares the `deploy` concurrency group, and a newer dispatch
   cancels an older pending run. Wait for a running deploy to finish before dispatching a rollback or cleanup.
 

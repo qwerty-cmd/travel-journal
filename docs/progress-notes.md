@@ -3354,3 +3354,7 @@ Blockers: t-iac-first-deploy.
 Scope: the az rest probe script in infra/azure/ and the superseded create commands in infra/azure/README.md (the README's probe section runs from about line 182 to 320; devops locates the exact range).
 AC: probe script deleted; README keeps one-time bootstrap (environment creation, secret entry) and points to the YAML and workflows for everything else; no dangling links.
 Validation: `grep -rn "<probe-script-name>" . --include=*.md --include=*.yml` returns nothing; [V-common].
+
+## t-iac-auto-start-deploy
+
+DONE (2026-10-07, owner option A, decision-log Entry 32 amendment). `deploy.yml` gained a `workflow_run` trigger on `CI`: it starts automatically only for a successful `push` CI run on `main` and still waits for owner approval in the `production` environment. Manual dispatch is kept for retries (`attempt`) and older SHAs. Other CI completions give a skipped run. Quick successive merges keep only the newest pending run. A merge replaces a pending rollback/deactivate run in the shared concurrency group, so runbook §8 says not to merge while one waits. Docs updated: decision-log Entry 32, runbook §6 and §8.

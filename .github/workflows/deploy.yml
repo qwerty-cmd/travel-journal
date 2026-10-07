@@ -2,17 +2,26 @@
 # Decision: docs/decision-log.md Entry 32 (reverses "CI never deploys", with guardrails).
 #
 # GUARDRAILS
-#   - Manual `workflow_dispatch` only, from main. No push, pull_request or schedule
-#     trigger, ever.
-#   - Runs in the GitHub `production` environment: the owner is the required reviewer,
-#     so nothing below starts until the owner approves the run.
+#   - Starts AUTOMATICALLY when a CI run (ci.yml, `workflow_run`) completes for a push to
+#     main: the deploy job runs only if that CI run's conclusion is success, its event is
+#     `push` and its head branch is main; every other CI completion (pull_request runs,
+#     failed/cancelled runs, manual CI dispatches) yields a SKIPPED deploy run, never a
+#     failed one and never an approval request. Owner decision 2026-10-07 ("option A").
+#   - Manual `workflow_dispatch` from main stays available: retry a SHA with `attempt`,
+#     or redeploy an older SHA. No push, pull_request or schedule trigger, ever.
+#   - Both paths run in the GitHub `production` environment: the owner is the required
+#     reviewer, so nothing below starts until the owner approves the run. An automatic
+#     start only QUEUES a deploy; approval is still a human act.
+#   - `workflow_run` always executes the default branch's (main's) copy of this file, so
+#     the main-ref guard below holds for both triggers.
 #   - Azure access is OIDC (azure/login, federated credential on a user-assigned managed
 #     identity, Contributor on the app's resource group only). No stored Azure secret.
 #   - The only secret used is the built-in, per-run GITHUB_TOKEN. Every other input is a
 #     non-secret environment variable. Secret values live in ACA only (Entry 32).
 #   - Never builds: deploys ghcr.io/<owner>/<repo>:<full-sha> as published by ci.yml.
 #
-# INPUTS
+# INPUTS (workflow_dispatch; an automatic run uses sha = the triggering CI run's head_sha,
+# attempt = 1, xff_burst = false)
 #   sha        full 40-hex commit SHA on main whose CI run succeeded and whose image exists
 #   attempt    1..99, default 1. The revision suffix is rel-<sha12> for 1 and
 #              rel-<sha12>-a<attempt> above that. A suffix can never be reused, so a SHA
@@ -61,6 +70,13 @@ on:
         required: false
         type: boolean
         default: false
+  # Automatic start after CI on main. `branches` filters on the triggering run's head
+  # branch only (a PR from a branch named main would pass it), so the job-level `if:`
+  # also requires event == push and conclusion == success.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 # Least privilege, job-wide (one job):
 #   id-token: write  - mint the OIDC token azure/login exchanges for an Azure token
@@ -78,13 +94,33 @@ permissions:
 # GitHub keeps at most one PENDING run per group: a newer dispatch cancels an older
 # pending one. Don't queue a second dispatch while one is pending (e.g. a rollback
 # waiting behind a deploy); cancel the pending one or wait for it instead.
+# Automatic starts: several quick merges to main while a deploy holds the group leave
+# only the NEWEST pending run, so the latest main is what deploys next (desired). A
+# merge also replaces a pending rollback/deactivate run in the group: check the
+# pending queue before merging while one waits.
+# Only ELIGIBLE runs (same condition as the job's `if:`) join the shared `deploy`
+# group; an ineligible workflow_run (PR CI, failed CI) gets a throwaway per-run group,
+# so its skipped run can never displace a pending deploy or rollback.
 concurrency:
-  group: deploy
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' ||
+    (github.event.workflow_run.conclusion == 'success' &&
+    github.event.workflow_run.event == 'push' &&
+    github.event.workflow_run.head_branch == 'main'))
+    && 'deploy' || format('deploy-ineligible-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   deploy:
     name: deploy
+    # Manual dispatch always proceeds (to the approval gate). An automatic run proceeds
+    # only for a successful CI run triggered by a push to main; anything else is skipped
+    # before the environment gate, so it neither fails nor asks for approval.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: production
@@ -92,9 +128,15 @@ jobs:
       run:
         shell: bash
     env:
-      SHA: ${{ inputs.sha }}
-      ATTEMPT: ${{ inputs.attempt }}
-      XFF_BURST: ${{ inputs.xff_burst }}
+      # One set of values for both triggers; steps read only these, never inputs.* or
+      # github.event.* directly.
+      TRIGGER: ${{ github.event_name }}
+      SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.sha || github.event.workflow_run.head_sha }}
+      ATTEMPT: ${{ inputs.attempt || 1 }}
+      XFF_BURST: ${{ inputs.xff_burst || false }}
+      # Automatic runs: the CI run that triggered this one (verified directly below).
+      # Empty on workflow_dispatch.
+      TRIGGER_CI_RUN_ID: ${{ github.event.workflow_run.id }}
       REPOSITORY: ${{ github.repository }}
       RG: ${{ vars.AZURE_RESOURCE_GROUP }}
       APP: ${{ vars.ACA_APP_NAME }}
@@ -120,9 +162,10 @@ jobs:
         run: |
           set -euo pipefail
           # The workflow file that runs is the one on the dispatched ref; only main's
-          # reviewed copy may deploy.
+          # reviewed copy may deploy. A workflow_run run always uses the default
+          # branch, so REF is refs/heads/main there too; the guard applies to both.
           if [[ "$REF" != "refs/heads/main" ]]; then
-            echo "::error::deploy.yml must be dispatched from main (got $REF)"
+            echo "::error::deploy.yml must run from main (trigger ${TRIGGER}, got $REF)"
             exit 1
           fi
           if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -179,14 +222,30 @@ jobs:
             echo "::error::${SHA} is not on main (compare status: ${status})"
             exit 1
           fi
-          # A successful ci.yml run for exactly this SHA on main (push or manual dispatch).
-          run_id=$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&branch=main&status=success&per_page=1" \
-            --jq '.workflow_runs[0].id // empty')
-          if [[ -z "$run_id" ]]; then
-            echo "::error::no successful ci.yml run on main for ${SHA}"
-            exit 1
+          if [[ -n "${TRIGGER_CI_RUN_ID}" ]]; then
+            # Automatic run: verify the triggering CI run itself, independently of the
+            # event payload the job-level if: already checked.
+            run=$(gh api "repos/${REPOSITORY}/actions/runs/${TRIGGER_CI_RUN_ID}" \
+              --jq '{path, head_sha, head_branch, event, conclusion}')
+            if ! jq -e --arg sha "$SHA" '.path == ".github/workflows/ci.yml"
+                and .head_sha == $sha and .head_branch == "main"
+                and .event == "push" and .conclusion == "success"' <<<"$run" > /dev/null; then
+              echo "::error::triggering run ${TRIGGER_CI_RUN_ID} is not a successful ci.yml push run on main for ${SHA}: $(jq -c . <<<"$run")"
+              exit 1
+            fi
+            run_id="$TRIGGER_CI_RUN_ID"
+          else
+            # Manual dispatch: a successful ci.yml run for exactly this SHA on main (push
+            # or manual CI dispatch).
+            run_id=$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&branch=main&status=success&per_page=1" \
+              --jq '.workflow_runs[0].id // empty')
+            if [[ -z "$run_id" ]]; then
+              echo "::error::no successful ci.yml run on main for ${SHA}"
+              exit 1
+            fi
           fi
-          # The run's conclusion covers every job; assert the three that matter by name.
+          # The run's conclusion covers every job, and counts a SKIPPED publish job as
+          # success; assert the three that matter by name, each with conclusion success.
           jobs=$(gh api "repos/${REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
             --jq '[.jobs[] | select(.conclusion == "success") | .name]')
           for j in backend frontend "publish image to GHCR"; do
@@ -219,7 +278,7 @@ jobs:
       - name: Check out the deployed commit
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
           persist-credentials: false
 
       # ---- 2. Azure login (OIDC) ----------------------------------------------------------
@@ -516,6 +575,7 @@ jobs:
             echo ""
             echo "| | |"
             echo "|---|---|"
+            echo "| Trigger | ${TRIGGER} (approved in \`production\`) |"
             echo "| Image | \`${IMAGE:-n/a}\` |"
             echo "| CI run | ${CI_RUN_ID:-n/a} |"
             echo "| Mode | ${DEPLOY_MODE:-n/a} |"

@@ -5,11 +5,13 @@
 #     change, and no OneDrive sync Job update.
 #   - It uses no secret other than the built-in, per-run GITHUB_TOKEN (scoped to
 #     `packages: write` in the publish job only). There is no long-lived PAT here.
-#   - Deploying is a separate, manual, owner-approved workflow: deploy.yml
-#     (workflow_dispatch only, `production` environment; decision-log Entry 32).
-#     It deploys the image this workflow publishes as
+#   - Deploying is a separate, owner-approved workflow: deploy.yml (`production`
+#     environment; decision-log Entry 32). It starts automatically via
+#     `workflow_run` when a push-to-main run of this workflow succeeds, then waits
+#     for the owner's approval; manual workflow_dispatch remains the fallback. It
+#     deploys the image this workflow publishes as
 #     ghcr.io/<owner>/<repo>:<full-commit-sha>, and only for a SHA whose run
-#     here succeeded. Nothing in this file triggers it.
+#     here succeeded with the publish job green. This file itself has no deploy step.
 #
 # Jobs:
 #   backend  - ruff lint + format check, OpenAPI snapshot drift check, pytest
@@ -258,11 +260,13 @@ jobs:
             echo "| Image | \`${IMAGE}\` |"
             echo "| Digest | \`${DIGEST}\` |"
             echo ""
-            echo "Not deployed. To deploy this image:"
+            echo "Not deployed yet. For a push to main, deploy.yml starts automatically once this"
+            echo "run succeeds and waits for approval in the \`production\` environment."
+            echo "Manual fallback (retry, or a manual CI run), also approval-gated:"
             echo ""
             echo "\`\`\`"
             echo "gh workflow run deploy.yml --ref main -f sha=${SHA}"
             echo "\`\`\`"
             echo ""
-            echo "Approval required in the \`production\` environment; manual fallback: docs/deploy-cutover-runbook.md §6."
+            echo "Without Actions: docs/deploy-cutover-runbook.md §6."
           } >> "$GITHUB_STEP_SUMMARY"
