@@ -1,0 +1,47 @@
+/* Stop detail photos section (docs/design/screens/stop-detail.md §6-8). Tokens only. */
+.stop-photos,
+.stop-photos__strip,
+.stop-photos__empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.stop-photos {
+  gap: var(--space-4);
+}
+
+.stop-photos__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* Below 320 px the row wraps and the button goes full width under the heading. */
+@media (max-width: 319px) {
+  .stop-photos__head .btn {
+    width: 100%;
+  }
+}
+
+.stop-photos__empty {
+  align-items: flex-start;
+  color: var(--color-text-muted);
+}
+
+.stop-photos__actions,
+.stop-photos__save-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stop-photos__helper {
+  flex-basis: 100%;
+  font-size: var(--font-size-small);
+  line-height: var(--font-line-height-small);
+  color: var(--color-text-muted);
+}
